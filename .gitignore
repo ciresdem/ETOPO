@@ -5,6 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
+*.token
+
+# Don't upload data from the scratch directory, just leave there.
+scratch_data/*
 
 # Distribution / packaging
 .Python
