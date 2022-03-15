@@ -8,12 +8,16 @@ import dateparser
 import warnings
 # import sys
 
-import config
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+####################################3
+# import utils.config as config
 
 class ATL_granule:
     """Base class for other ATLXX granules, such as ATL03, ATL06, ATL08."""
     # Save the configuration file as a base class variable, shared one instance among all class instances.
-    config = config.config()
+    # config = config.config()
 
     beam_name_dict = {"gt1l": 0, "gt1r": 1, "gt2l": 2, "gt2r": 3, "gt3l": 4, "gt3r": 5}
     beam_code_dict = {0: "gt1l", 1: "gt1r", 2: "gt2l", 3: "gt2r", 4: "gt3l", 5: "gt3r"}
@@ -416,80 +420,8 @@ class ATL08_granule (ATL_granule):
 
         return surf_mask # & next_msak & other_mask ...
 
-    # def get_ATL08_photon_data(self, beam=None): #, photon_type="ground", filter_out_bad_points=True):
-    #     """Get photon data to identify ATL03 photons in this analysis.
 
-    #     photon_type = the typecode used in /[gtx]/signal_photons/classed_pc_flag
-    #         valid values:
-    #             0 or 'noise',
-    #             1 or 'ground',
-    #             2 or 'canopy',
-    #             3 or 'top of canopy',
-    #             None or 'all'
-    #     """
-
-    #     # # Get the photon class code, what type of photons do we want to identify here.
-    #     # try:
-    #     #     photon_class_code = int(photon_type)
-    #     # except TypeError:
-    #     #     try:
-    #     #         photon_type_lower = photon_type.strip().lower()
-    #     #         photon_class_code = {'noise'        : 0,
-    #     #                              'ground'       : 1,
-    #     #                              'canopy'       : 2,
-    #     #                              'top of canopy': 3}[photon_type_lower]
-
-    #     #     except Exception as e:
-    #     #         print("Unknown photon_type '{photon_type}'.", file=sys.stderr)
-    #     #         raise e
-
-    #     photon_classes  = self.get_data('/[gtx]/signal_photons/classed_pc_flag', beam=beam)
-    #     photon_segments = self.get_data('/[gtx]/signal_photons/ph_segment_id', beam=beam)
-    #     photon_indices  = self.get_data('/[gtx]/signal_photons/classed_pc_indx', beam=beam)
-
-    #     return photon_classes, photon_segments, photon_indices
-
-        # TODO: Finish getting data to retrieve ATL03 photons from the appropriate granule.
-
-    def create_lat_lon_elev_dataframe(self, beam=None, filter_out_bad_points=True):
-        """From a given granule, pull out all the latitudes, longitudes, elevations, specifically.,
-        and put them in a geopandas dataframe."""
-        if beam is None:
-            beams = ['gt1l','gt1r','gt2l','gt2r','gt3l','gt3r']
-        elif type(beam) == str:
-            beams = [beam.lower()]
-        elif type(beam) in (list, tuple):
-            beams = [b.lower() for b in beam]
-
-        # TODO: Finish this up.
-        # 1. Columns to have:
-        # granule_ID    String
-        # beam          String
-        # -- Reference Parameters (of the track)
-        # delta_time    Float
-        # latitude      Float
-        # longitude     Float
-        # night_flag    Integer
-        # terrain_flg   Integer
-        # segment_watermask Integer4
-        # segment_landcover Integer4
-        # segment_snowcover Integer4
-        # urban_flag    Integer
-        # -- Terrain Parameters
-        # h_te_mean     Float
-        # h_te_median   Float
-        # h_te_min      Float
-        # h_te_max      Float
-        # h_te_mode     Float
-        # h_te_skew     Float
-        # n_te_photons  Integer
-        # h_te_interp   Float
-        # h_te_std      Float
-        # h_te_uncertainty Float
-        # terrain_slope Float
-        # h_te_best_fit Float
-
-# Standalone functions that don't need the
+# Standalone functions that don't need the class encapsulation
 def granule_id_to_intx2(granule_id):
     """Convert the granule_ID to 2x int64 integers. Far easier to store in a searchable database that way."""
     granule_id = os.path.split(granule_id)[1]

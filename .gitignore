@@ -7,8 +7,11 @@ __pycache__/
 *.so
 *.token
 
-# Don't upload data from the scratch directory, just leave there.
+# Don't upload data from the scratch directory, just leave anything I put in there, there.
 scratch_data/*
+
+# File to save encrypted credentials for NASA NSIDC
+.nsidc_credentials
 
 # Distribution / packaging
 .Python

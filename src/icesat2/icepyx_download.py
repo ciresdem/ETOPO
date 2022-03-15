@@ -8,10 +8,15 @@ import datetime
 import sys
 import ast
 import numpy
-import subprocess
-import progress_bar
+# import subprocess
 
-import config
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+####################################3
+import utils.progress_bar as progress_bar
+# Use config file to get the encrypted credentials.
+import utils.config as config
 my_config = config.config()
 
 def icepyx_download(variables_list=[],
@@ -37,8 +42,11 @@ def icepyx_download(variables_list=[],
     else:
         args.region = region
     # The command-line interface doesn't seem to like arguments separated by commas (treats them as separate arguments unless encompassed by brackets.)
-    if args.region.find(",") >= 0 and args.region[0] not in ("(", "["):
+    if args.region.find(",") >= 0 and args.region[0] not in ("["):
         args.region = "[" + args.region + "]"
+    # Strip out any spaces that may have made it through.
+    args.region = args.region.replace(" ", "")
+    # print(args.region)
 
     if (type(dates) != str) and (len(dates) > 1):
         args.dates = ",".join([str(d) for d in dates])

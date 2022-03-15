@@ -3,21 +3,22 @@
 
 import os
 import numpy
-# import geopandas
-import datetime
 
-import config
-import progress_bar
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+####################################3
+import utils.progress_bar as progress_bar
 import atl_granules
 
 class ATL_dataset:
-    # Save the configuration file as a class variable, shared among all instances.
-    config = config.config()
-
-    def __init__(self):
+    def __init__(self, dirname):
         """Initialize."""
         self.config = ATL_dataset.config
         self.dataframe_dict = {}
+        self.granules_dir = dirname
+
+        self._granule_dict = {}
 
     def _cache_granule(self, granule_obj):
         """Save the granule object into a dictionary if it's not already there."""
@@ -30,36 +31,21 @@ class ATL_dataset:
         try:
             return self._granule_dict[gid]
         except KeyError:
-            granule = atl_granules.ATL08_granule(gid)
+            # Check if this is an ATL08 or another datasets granule (ATL03, 06, etc)
+            gid_upper = gid.upper()
+
+            if gid_upper.find("ATL03") > -1:
+                granule = atl_granules.ATL03_granule(gid)
+            elif gid_upper.find("ATL06") > -1:
+                granule = atl_granules.ATL08_granule(gid)
+            elif gid_upper.find("ATL08") > -1:
+                granule = atl_granules.ATL08_granule(gid)
+            else:
+                raise ValueError("Uknown granule type '{0}'. Does not contain 'ATL03' or 'ATL08'. Other data types have not yet been implemented.")
+
             if cache:
                 self._granule_dict[gid] = granule
             return granule
-
-    def create_spatial_indices(self):
-        """Create a spatial index of the ATL08 granules."""
-        # TODO: FINISH. Use the atl08_spatial_index.py module for this.
-
-
-    def download_new_ATL_files(self, time_start = datetime.datetime(2018,10,18),
-                                     time_end = datetime.datetime.today(),
-                                     dataset = 'ATL03',
-                                     bounding_box = '',
-                                     polygon = '',
-                                     filename_filter = ''):
-        """Download new ATL03/06/08 files with certain criteria to the "data_raw" directory.
-
-        If the file already exists, it is skipped.
-        NOTE: This does not delete previous files. It also does not update the
-        spatial indices. After calling this, if new files were downloaded, the
-        "create_spatial_indices()" method should be re-called in order to overwrite
-        and re-create the spatial indices for searching purposes.
-
-        Return value
-        ------------
-        A list of new files successfully downloaded.
-        """
-        # TODO: FINISH
-        pass
 
     def print_missing_granule_files(self, dirname = None):
         """Check to ensure all granules have all files needed.
@@ -72,7 +58,7 @@ class ATL_dataset:
         This will miss any files where both the .h5 and .iso.xml files are simultaneously missing. No matter.
         """
         if dirname is None:
-            dirname = self.config.atl08_dir_raw
+            dirname = self.granules_dir
 
         walk_tuple = tuple(os.walk(dirname))
         fnames = walk_tuple[0][2]
@@ -117,17 +103,15 @@ class ATL_dataset:
                                    bounding_box = None,
                                    start_date = None,
                                    end_date = None):
-        """Get a list of all the .h5 filename granules in the data_raw directory.
-
-        For the full path, append the config.atl08_dir_raw director to it.
-        The ATL08_granule creator can append the path, do not need to supply it there.
+        """Get a list of all the .h5 filename granules in the data directory.
 
         If bounding_box is a 4-tuple of (xmin, ymin, xmax, ymax):
             filter out only granules whose data overlaps that bounding box.
 
+        Technically this just finds all the
         """
         if dirname is None:
-            dirname = ATL_dataset.config.atl08_dir_raw
+            dirname = self.granules_dir
 
         walk_tuple = tuple(os.walk(dirname))
         fnames = walk_tuple[0][2]

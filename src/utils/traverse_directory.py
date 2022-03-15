@@ -29,9 +29,10 @@ def _list_files_recurse(dirname, regex_match = None):
     return file_list
 
 if __name__ == "__main__":
+    pass
     # Just test this out:
-    dirname = "/home/mmacferrin/Research/DATA/DEMs/AW3D30/data/tiles"
-    regex_search = "\A\w*DSM\.tif"
-    file_list = list_files(dirname, regex_match=regex_search, ordered=True, include_directory=False)
-    print(len(file_list))
-    print(file_list[:10])
+    # dirname = "/home/mmacferrin/Research/DATA/DEMs/AW3D30/data/tiles"
+    # regex_search = "\A\w*DSM\.tif"
+    # file_list = list_files(dirname, regex_match=regex_search, ordered=True, include_directory=False)
+    # print(len(file_list))
+    # print(file_list[:10])
