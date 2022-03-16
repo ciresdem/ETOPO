@@ -1,0 +1,15 @@
+cryptography==3.4.7
+Shapely==1.7.1
+numpy==1.21.2
+h5py==3.4.0
+geopandas==0.10.1
+icepyx==0.4.0
+pandas==1.3.3
+GDAL==3.3.2
+psutil==5.8.0
+dateparser==1.0.0
+pexpect==4.8.0
+matplotlib==3.4.3
+cudem==1.6.1
+osgeo==0.0.1
+rich==11.2.0
