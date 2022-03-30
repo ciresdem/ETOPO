@@ -17,7 +17,7 @@ import geopandas
 
 # Import the parent directory so I can import anything else I need.
 import import_parent_dir
-import_parent_dir.import_parent_dir_via_pythonpath()
+import_parent_dir.import_src_dir_via_pythonpath()
 import utils.traverse_directory
 
 class DatasetGeopackage:

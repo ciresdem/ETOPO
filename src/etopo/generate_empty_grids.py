@@ -12,9 +12,15 @@ from osgeo import gdal, osr, ogr
 import os
 import numpy
 
-# import config
+###############################################################
+# Quick code for importing the parent /src/ directory, to access other modules.
+import import_parent_dir
+import_parent_dir.import_src_dir_via_pythonpath()
+###############################################################
 
-# my_config = config.config()
+import utils.configfile
+
+my_config = utils.configfile.config()
 # ETOPO_datatype = gdal.GDT_Float32
 # ETOPO_source_datatype = gdal.GDT_Byte
 
@@ -59,7 +65,7 @@ def create_empty_tiles(directory,
     if dtype_lower not in dtypes_accepted:
         raise TypeError("Unknown value for dtype: '{0}'. Accepted dtype values are:".format(dtype), " ".join(dtypes_accepted))
     else:
-        dtype = dtype_lower()
+        dtype = dtype_lower
 
     # From the with in degrees and the resolution in seconds, find the number of pixels in each dimension
     # NOTE: This is assuming lat/lon geographic coordinate systems here. It should still work if we're doing something else.
@@ -67,6 +73,8 @@ def create_empty_tiles(directory,
     # This should be a whole number division here. If not, warn the user.
     if int(file_dim_size) != file_dim_size:
         raise UserWarning("The tile size {0}-deg is not evenly divislble by the resolution {1}-sec. Results not guaranteed to work well.".format(tile_width_deg, resolution_s))
+    # Convert to an int to not break the numpy.zeros command 2 lines down.
+    file_dim_size = int(file_dim_size)
 
     tuple_list = create_list_of_tile_tuples(resolution=resolution_s)
     # fname_metadata_template = config_obj.etopo_metadata_template
@@ -107,7 +115,7 @@ def create_empty_tiles(directory,
         ds.SetProjection(projection.ExportToWkt())
         band = ds.GetRasterBand(1)
         band.WriteArray(empty_array)
-        band.SetNoDataValue(emptyval)
+        band.SetNoDataValue(ndv)
         # band.GetStatistics(0,1)
         ds.FlushCache() # Save to disk
         band = None
@@ -135,8 +143,8 @@ def create_empty_tiles(directory,
         # band2 = None
         # ds2 = None
 
-        if verbose:
-            print(fname_source, "written.")
+        # if verbose:
+        #     print(fname_source, "written.")
 
     # # Now, generate a shapefile with teh boundaries list.
     # create_tile_shapefile(shapefile_name,
@@ -146,7 +154,6 @@ def create_empty_tiles(directory,
     #                       verbose = verbose)
 
     return
-
 
 def create_tile_shapefile(shapefile_name,
                           tile_boundaries_list,
@@ -219,8 +226,12 @@ def create_list_of_tile_tuples(resolution = 15,
     assert resolution in (1,15)
 
     if resolution == 1:
-        copernicus_dir = my_config.copernicus_dem_data_dir
+        # Import the Copernicus source dataset, and get the datafiles directory from it.
+        import datasets.CopernicusDEM.source_dataset_CopernicusDEM as copernicus
+        copds = copernicus.source_dataset_CopernicusDEM()
+        copernicus_dir = os.path.abspath(os.path.join(os.path.split(copds.config._configfile)[0], copds.config.source_datafiles_directory))
         print(copernicus_dir)
+
         fnames = [f for f in os.listdir(copernicus_dir) if os.path.splitext(f)[-1] == ".tif"]
         fnames.sort()
 

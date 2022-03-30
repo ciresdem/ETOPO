@@ -6,7 +6,7 @@ import urllib.request, urllib.parse
 import argparse
 
 # Add this line to give this file access to the whole code tree from the base directory.
-import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 
 import datasets.download_dataset
 

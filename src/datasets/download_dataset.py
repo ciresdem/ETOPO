@@ -278,7 +278,7 @@ class DatasetDownloader_BaseClass:
         the directory already.
         """
         data_dir = self.local_data_dir
-        fnames = os.listdir(data_dir)
+        fnames = sorted(os.listdir(data_dir))
         if fname_regex_filter:
             fnames = [fn for fn in fnames if re.search(fname_regex_filter, fn) != None]
 
@@ -292,18 +292,18 @@ class DatasetDownloader_BaseClass:
                 assert ext2.lower() == ".tar"
                 command = "tar -xf"
 
-            command = command + " " + fname
+            command = command + " " + os.path.join(data_dir, fname)
 
+            subdir = os.path.join(data_dir, base)
             if to_subdirs:
-                subdir = os.path.join(data_dir, base)
                 if os.path.exists(subdir):
                     if not os.path.isdir(subdir):
                         print("Cannot unzip", fname, "to", base + ". A file exists with that name.")
                         continue
                 else:
-                    os.mkdir(base)
+                    os.mkdir(subdir)
 
-                command = command + " --directory " + base
+                command = command + " --directory " + subdir
 
             if overwrite:
                 command = command + " -o"
