@@ -13,14 +13,14 @@ import re
 
 ####################################
 # Include the base /src/ directory of thie project, to add all the other modules.
-import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################
 import validate_dem
 import icepyx_download
 import classify_icesat2_photons
 import granule_shapefile
 import plot_validation_results
-import etopo_grid.coastline_mask as coastline_mask
+import etopo.coastline_mask as coastline_mask
 
 def read_or_create_photon_h5(dem_list,
                              photon_h5,

@@ -9,7 +9,14 @@ import os
 import collections
 import six
 
-import validate_dem
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+####################################3
+import utils.configfile
+my_config = utils.configfile.config()
+
+# import validate_dem
 
 # Our picklefiles output from validate_dem.validate_dem_parallel
 # freeport_dem_copernicus = "/home/mmacferrin/Research/DATA/DEMs/CopernicusDEM/data/30m_WGS84/Copernicus_DSM_COG_10_N26_00_W079_00_DEM_WGS84.tif"
@@ -47,7 +54,7 @@ def iterable(obj):
             and not isinstance(obj, six.string_types))
 
 def get_data_from_h5_or_list(h5_name_or_list,
-                             empty_val = validate_dem.EMPTY_VAL,
+                             empty_val = my_config.etopo_ndv,
                              verbose=True):
     """Return the data either from a single hdf5 results file, or a list of them. Filter out empty (bad data) values."""
     if type(h5_name_or_list) == str:
@@ -82,7 +89,7 @@ def get_data_from_h5_or_list(h5_name_or_list,
 
 def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
                                             output_figure_name,
-                                            empty_val = validate_dem.EMPTY_VAL,
+                                            empty_val = my_config.etopo_ndv,
                                             place_name=None,
                                             figsize=None,
                                             verbose=True):
@@ -257,7 +264,7 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
 
 
 
-def plot_histograms(results_h5_name_or_list, empty_val = validate_dem.EMPTY_VAL):
+def plot_histograms(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     data = get_data_from_h5_or_list(results_h5_name_or_list, empty_val = empty_val)
 
     meddiff         = data['diff_median']
@@ -394,7 +401,7 @@ def plot_histograms(results_h5_name_or_list, empty_val = validate_dem.EMPTY_VAL)
     # plt.close()
     # fig.show()
 
-def plot_error_stats(results_h5_name_or_list, empty_val = validate_dem.EMPTY_VAL):
+def plot_error_stats(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     # print(fname)
     data = get_data_from_h5_or_list(results_h5_name_or_list, empty_val = empty_val)
 
