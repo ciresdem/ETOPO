@@ -41,6 +41,7 @@ vdd_lookup_dict = {
            "egm2008" : 3855,  # Earth Gravitational Model 2008
            "egm96"   : 5733,  # Earth Gravitational Model 1996
            "egm84"   : 5798,  # Earth Gravitational Model 1984 (not currently implemented.) NOTE: Can use/resample the EGM84 global grid and do it myself if we want.
+           "msl"     : 5174,  # Mean Sea Level
            }
 
 vdd_descriptions_dict = {
@@ -53,6 +54,7 @@ vdd_descriptions_dict = {
            "egm2008" : "Earth Gravitational Model of 2008, vertical heights. EPSG: 3855",
            "egm96"   : "Earth Gravitational Model of 1996, vertical heights. EPSG: 5733",
            "egm84"   : "Earth Gravitational Model of 1984, vertical heights. EPSG: 5798 (not currently implemented)",
+           "msl"     : "Mean Sea Level. EPSG: 5174"
            }
 
 # A list of all supported vdatum names and values in this module. Useful for other

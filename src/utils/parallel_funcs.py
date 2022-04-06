@@ -39,7 +39,7 @@ def physical_cpu_count():
         return mp.cpu_count()
 
 # A dictionary for converting numpy array dtypes into carray identifiers.
-# For integers & floats, does not hangle character/string arrays.
+# For integers & floats... does not hangle character/string arrays.
 # Reference: https://docs.python.org/3/library/array.html
 dtypes_dict = {numpy.int8:    'b',
                numpy.uint8:   'B',

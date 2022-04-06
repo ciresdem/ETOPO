@@ -22,7 +22,7 @@ THIS_DIR = os.path.split(__file__)[0]
 ##############################################################################
 # Code for importing the /src directory so that other modules can be accessed.
 import import_parent_dir
-import_parent_dir.import_parent_dir_via_pythonpath()
+import_parent_dir.import_src_dir_via_pythonpath()
 ##############################################################################
 
 import src.datasets.etopo_source_dataset as etopo_source_dataset
@@ -106,4 +106,5 @@ def populate_all_source_datasets(overwrite=True):
         populate_dataset_module(subdir, overwrite=True)
 
 if __name__ == "__main__":
-    populate_all_source_datasets()
+    # populate_all_source_datasets()
+    populate_dataset_module("EMODnet")

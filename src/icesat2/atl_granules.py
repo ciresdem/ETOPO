@@ -10,14 +10,14 @@ import warnings
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
-import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################3
-# import utils.config as config
+import utils.configfile as configfile
 
 class ATL_granule:
     """Base class for other ATLXX granules, such as ATL03, ATL06, ATL08."""
     # Save the configuration file as a base class variable, shared one instance among all class instances.
-    # config = config.config()
+    config = configfile.config()
 
     beam_name_dict = {"gt1l": 0, "gt1r": 1, "gt2l": 2, "gt2r": 3, "gt3l": 4, "gt3r": 5}
     beam_code_dict = {0: "gt1l", 1: "gt1r", 2: "gt2l", 3: "gt2r", 4: "gt3l", 5: "gt3r"}

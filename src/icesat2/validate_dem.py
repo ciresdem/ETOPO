@@ -13,18 +13,19 @@ Created on Tue Jun 22 16:06:21 2021
 #     from cudem import waffles
 # except:
 #     raise ModuleNotFoundError("Module 'cudem/waffles.py' required. Update paths, or refer to https://github.com/ciresdem/cudem for installation instructions.")
-EMPTY_VAL = -9999
+# EMPTY_VAL = -9999
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
-import import_parent_dir; import_parent_dir.import_parent_dir_via_pythonpath()
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################3
 import utils.progress_bar as progress_bar
 import utils.parallel_funcs as parallel_funcs
-import etopo_grid.convert_vdatum as convert_vdatum
-import icesat2.icepyx_download as icepyx_download
-import etopo_grid.coastline_mask as coastline_mask
+import utils.configfile
+import etopo.convert_vdatum as convert_vdatum
+import etopo.coastline_mask as coastline_mask
 import classify_icesat2_photons
+import icepyx_download
 import plot_validation_results
 
 # import subprocess
@@ -35,6 +36,9 @@ import numpy
 import pandas
 import multiprocessing as mp
 import time
+
+etopo_config = utils.configfile.config(os.path.join(os.path.split(__file__)[0], "..", "..", "config.ini"))
+EMPTY_VAL = etopo_config.etopo_ndv
 
 # 1: DEM Preprocessing:
     # a) For Worldview, apply the bitmask and matchtag filters to get rid of noise

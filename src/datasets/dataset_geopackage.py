@@ -22,7 +22,7 @@ import utils.traverse_directory
 
 class DatasetGeopackage:
     """A class for handling geopackage collections of DEMs from various sources."""
-    def __init_(self, filename, base_dir=None):
+    def __init__(self, filename, base_dir=None):
         self.filename = filename
         # If we are given a directory of files, save it.
         if base_dir:
@@ -35,15 +35,15 @@ class DatasetGeopackage:
         self.default_layer_name = "DEMs"
 
     def get_gdf(self, verbose=True):
-        if self.gdf:
+        if not self.gdf is None:
             return self.gdf
-        elif os.path.exists(self.gdf):
+        elif os.path.exists(self.filename):
             self.gdf = geopandas.read_file(self.filename, layer=self.default_layer_name)
             if verbose:
                 print(self.filename, "read.")
         else:
-            self.gdf = self.create_dataset_geopackage(dir_or_list_of_files=self.filename,
-                                                      geopackage_to_write=self.base_dir,
+            self.gdf = self.create_dataset_geopackage(dir_or_list_of_files=self.base_dir,
+                                                      geopackage_to_write=self.filename,
                                                       verbose=verbose)
 
         return self.gdf
@@ -174,7 +174,7 @@ class DatasetGeopackage:
         """Given a shapely polygon object, return all records that intersect the polygon."""
         gdf = self.get_gdf()
 
-        if check_if_same_crs:
+        if check_if_same_crs and polygon_crs != None:
             # TODO: Check to see if this is robust or not. May not be even if
             # the CRS's are basically the same. Perhaps get the EPSG number of each CRS and see if *those* are the same.
             # But for now, this quick check will suffice unless it starts breaking erroneously.

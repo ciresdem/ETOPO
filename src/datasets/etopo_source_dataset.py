@@ -16,6 +16,7 @@ than having them all hard-coded."""
 # This defines the methods that all the child sub-classes should use.
 
 import os
+import geopandas
 
 ###############################################################################
 # Import the project /src directory into PYTHONPATH, in order to import all the
@@ -39,7 +40,7 @@ class ETOPO_source_dataset:
 
         # Local variables.
         self.dataset_name = dataset_name
-        self.geopackage_filename = self.config.geopackage_filename
+        self.geopackage_filename = self.config._abspath(self.config.geopackage_filename)
         self.default_ranking_score = self.config.default_ranking_score
 
         # The geodataframe of all the tile outlines in the dataset.
@@ -55,8 +56,9 @@ class ETOPO_source_dataset:
         If it doesn't exist, create it.
         """
         if not self.geopkg:
-            self.geopkg = dataset_geopackage.DatasetGeopackage(self.geopackage_filename,
-                                                               base_dir = self.config.source_datafiles_directory)
+            self.geopkg = dataset_geopackage.DatasetGeopackage(
+                    self.geopackage_filename,
+                    base_dir = self.config._abspath(self.config.source_datafiles_directory))
         return self.geopkg
 
     def get_geodataframe(self, verbose=True):
@@ -75,8 +77,18 @@ class ETOPO_source_dataset:
                                           check_if_same_crs=True)
         return list(subset["filename"])
 
-    def create_intermediate_grids(self, include_ranking = True,
+    def vdatum_shift_original_tiles(self, input_tile_fname,
+                                          output_tile_fname,
+                                          output_vdatum):
+        """If a source tile is not in the needed vertical datum, first shift it before
+        regridding it."""
+        
+
+    def create_intermediate_grids(self, etopo_config_obj,
+                                        include_ranking = True,
                                         resolution_s = 1,
+                                        vdatum_out = "irtf2014",
+                                        overwrite = False,
                                         verbose = True):
         """Generate intermeiate grid files from the source dataset.
         This will take the source topo data, re-grid it (using 'waffles') into
@@ -89,10 +101,41 @@ class ETOPO_source_dataset:
         These intermediate grids will be combined together (using the ranking scores
         of each source dataset) to create the final ETOPO grids.
         """
-        # TODO: Finish
         # Step 2: Get the GPKG for each source dataset
+        # ds_df = self.get_geodataframe(verbose=verbose)
+        # print(ds_df)
+
         # Step 3: Get the GPKG for the ETOPO grids dataset (from the empty grids.)
+        etopo_gpkg = etopo_config_obj.etopo_tile_geopackage_1s if resolution_s == 1 else \
+                     etopo_config_obj.etopo_tile_geopackage_15s
+
+        etopo_df = geopandas.read_file(etopo_gpkg)
+
+        # Sort the tiles first by lon, then by lat. This optimizes the ICESat-2 validation later.
+        etopo_df.sort_values(['xleft', 'ytop'], ascending=[True, True], inplace=True)
+        # print(etopo_df)
+
+        # print([col for col in ds_df.columns])
+        # print([col for col in etopo_df.columns])
+
         # Step 4: Loop through each ETOPO grids dataset feature (each empty-tile DEM)
+        etopo_files = etopo_df['filename'].tolist()
+        etopo_geometries = etopo_df['geometry'].tolist()
+
+        for i,(efile, egeo) in enumerate(zip(etopo_files, etopo_geometries)):
+            # print(i, efile, egeo)
+            print('\t',self.retrieve_list_of_datafiles_within_polygon(egeo,
+                                                                      polygon_crs=etopo_df.crs,
+                                                                      verbose=verbose))
+            source_files = [os.path.join(self.config.source_datafiles_directory, fn) \
+                            for fn in self.retrieve_list_of_datafiles_within_polygon(egeo,
+                                                                                     polygon_crs=etopo_df.crs,
+                                                                                     verbose=verbose)
+                           ]
+
+            # Resample each source dataset into the ETOPO grid, and combine to make a tile from it, with
+            if i>15:
+                break
         # Step 5: Check the vertical datum, change it if needed (into a temp file)
         # Step 6: Regrid (waffles) the source dataset to the ETOPO grid.
         #    - Save in the intermediate files directory.

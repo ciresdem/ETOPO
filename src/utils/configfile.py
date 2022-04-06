@@ -19,6 +19,18 @@ class config:
         # if I need to use different sections separately.
         self._parse_config_into_attrs()
 
+    def _abspath(self, path, only_if_actual_path_doesnt_exist=True):
+        """In this project, absolute paths are relative to the location of the
+        configfile. In this case. join them with the path to the config file and
+        return an absolute path rather than a relative path."""
+        # If we've specified to do this only if the path doesn't exist in its current location,
+        # and the path does exist in its current location (either the filename, or the parent directory),
+        # then just return the path as-is
+        if only_if_actual_path_doesnt_exist and (os.path.exists(path) or os.path.exists(os.path.split(path)[0])):
+            return path
+
+        return os.path.abspath(os.path.join(os.path.split(self._configfile)[0], path))
+
     def _parse_config_into_attrs(self):
         """Read all the config lines, put into object attributes.
 

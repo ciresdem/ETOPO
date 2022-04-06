@@ -17,6 +17,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import generate_empty_grids
 import utils.configfile
+import datasets.dataset_geopackage
 
 class ETOPO_Generator:
     # Tile naming conventions. ETOPO_2022_v1_N15E175.tif, e.g.
@@ -27,12 +28,14 @@ class ETOPO_Generator:
     # This file resides in [project_basedir]/src/etopo
     project_basedir = os.path.abspath(os.path.join(os.path.split(__file__)[0], "..", ".."))
 
-    etopo_configfile = utils.configfile.config(os.path.join(project_basedir, "config.ini"), )
+    etopo_config = utils.configfile.config(os.path.join(project_basedir, "config.ini"), )
 
     # Note, still need to add resolution "1s" or "15s" directory.
-    empty_tiles_directory = etopo_configfile.etopo_empty_tiles_directory
-    intermediate_tiles_directory = etopo_configfile.etopo_intermediate_tiles_directory # Same as above
-    finished_tiles_directory = etopo_configfile.etopo_finished_tiles_directory # Same as above
+    empty_tiles_directory = etopo_config.etopo_empty_tiles_directory
+    intermediate_tiles_directory = etopo_config.etopo_intermediate_tiles_directory # Same as above
+    finished_tiles_directory = etopo_config.etopo_finished_tiles_directory # Same as above
+    etopo_gpkg_1s  = etopo_config.etopo_tile_geopackage_1s
+    etopo_gpkg_15s = etopo_config.etopo_tile_geopackage_15s
 
     def __init__(self):
         """Read the configuration file, get the info about our grid locations."""
@@ -64,8 +67,25 @@ class ETOPO_Generator:
                                                     tile_width_deg=res,
                                                     resolution_s=res,
                                                     also_write_geopackage=True,
-                                                    ndv = ETOPO_Generator.etopo_configfile.etopo_ndv,
+                                                    ndv = ETOPO_Generator.etopo_config.etopo_ndv,
                                                     verbose=verbose)
+
+    def create_etopo_geopackages(self, verbose=True):
+        """Create geopackages for all the tiles of the ETOPO dataset, at 1s and 15s
+        resolutions. SHould run the "create_empty_grids() routine first."""
+        for res in ("1s", "15s"):
+            gtifs_directory = os.path.join(ETOPO_Generator.empty_tiles_directory, res)
+            gpkg_fname = ETOPO_Generator.etopo_gpkg_1s if (res=="1s") \
+                         else ETOPO_Generator.etopo_gpkg_15s
+
+
+            datasets.dataset_geopackage.DatasetGeopackage(gpkg_fname).create_dataset_geopackage(\
+                                            dir_or_list_of_files = gtifs_directory,
+                                            geopackage_to_write = gpkg_fname,
+                                            recurse_directory = False,
+                                            file_filter_regex=r"\.tif\Z",
+                                            verbose=verbose)
+
 
     def create_intermediate_grids(self, source = "all",
                                         resolution_s=1,
@@ -98,8 +118,10 @@ class ETOPO_Generator:
             assert len(datasets) == 1
 
         for dataset_obj in datasets:
+            print("Processing", dataset_obj.dataset_name + "...")
             # Create the intermediate grids for each dataset.
-            dataset_obj.create_intermediate_grids(include_rankings = True,
+            dataset_obj.create_intermediate_grids(ETOPO_Generator.etopo_config,
+                                                  include_ranking = True,
                                                   resolution_s = resolution_s,
                                                   overwrite = overwrite,
                                                   verbose = verbose)
@@ -186,4 +208,6 @@ class ETOPO_Generator:
 
 if __name__ == "__main__":
     EG = ETOPO_Generator()
-    EG.create_empty_grids()
+    # EG.create_empty_grids()
+    # EG.create_etopo_geopackages()
+    EG.create_intermediate_grids(source="FABDEM", resolution_s=1)

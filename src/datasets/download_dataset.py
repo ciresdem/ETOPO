@@ -5,6 +5,8 @@ import re
 import pexpect
 import subprocess
 
+
+
 class DatasetDownloader_BaseClass:
     """A base class for downloading datasets from various websites, usually presented
     as a list of links on a web page (sometimes at an FTP site, sometimes with a whole host of sub-directories)
@@ -269,6 +271,7 @@ class DatasetDownloader_BaseClass:
 
     def unzip_downloaded_files(self,
                                to_subdirs=True,
+                               recurse_directory=True,
                                fname_regex_filter = "\.zip\Z",
                                overwrite=True,
                                verbose=True):
@@ -278,7 +281,10 @@ class DatasetDownloader_BaseClass:
         the directory already.
         """
         data_dir = self.local_data_dir
-        fnames = sorted(os.listdir(data_dir))
+        if recurse_directory:
+            fnames =
+        else:
+            fnames = sorted(os.listdir(data_dir))
         if fname_regex_filter:
             fnames = [fn for fn in fnames if re.search(fname_regex_filter, fn) != None]
 
@@ -305,10 +311,10 @@ class DatasetDownloader_BaseClass:
 
                 command = command + " --directory " + subdir
 
-            if overwrite:
-                command = command + " -o"
-            else:
-                command = command + " -n"
+            # if overwrite:
+            #     command = command + " -o"
+            # else:
+            #     command = command + " -n"
 
             if verbose:
                 print(command, end="")
@@ -320,3 +326,9 @@ class DatasetDownloader_BaseClass:
                     print( " ... success." )
                 else:
                     print( " ... ERROR: Return code", proc.returncode)
+
+if __name__ == "__main__":
+    dirname = os.path.abspath(os.path.join(os.path.split(__file__)[0], "../../../DEMs/EMODnet/data/msl"))
+    print(dirname)
+    dl = DatasetDownloader_BaseClass("foobar", dirname)
+    dl.unzip_downloaded_files(to_subdirs=False, overwrite=False)
