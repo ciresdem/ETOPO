@@ -138,7 +138,7 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
         figsize = matplotlib.rcParams['figure.figsize']
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=600, figsize=figsize, tight_layout=True)
 
-    nbins = 300
+    nbins = 1000
     #############################################################################
     # Plot 1, differences from iceast-2 mean.
     ax1.hist(meandiff, bins=nbins)

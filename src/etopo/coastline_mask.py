@@ -20,6 +20,7 @@ from osgeo import gdal, osr
 import rich.console
 import subprocess
 import argparse
+import pyproj
 
 def is_this_run_in_ipython():
     """Tell whether we're running in an IPython console or not. Useful for rich.print()."""
@@ -42,13 +43,6 @@ def get_bounding_box_and_step(gdal_dataset, invert_for_waffles=False):
     xmax = xmin + (xstep * x_size)
     ymax = ymin + (ystep * y_size)
 
-    try:
-        epsilon = xstep * 1e-6
-        assert (abs(xstep) - abs(ystep)) < epsilon
-    except AssertionError as e:
-        print("X- and Y-increments don't match: ({xstep}, {ystep})")
-        raise e
-
     # The geotransform can be based on any corner with negative step-sizes.
     # Get the actual min/max by taking the min() & max() of each pair.
     if invert_for_waffles:
@@ -70,17 +64,20 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
     """Get the projection EPSG value from the dataset, if it's defined."""
 
     # Testing some things out.
-    prj=gdal_dataset.GetProjection()
+    wkt=gdal_dataset.GetProjection()
+    prj = pyproj.crs.CRS(wkt)
+
+    return prj.to_epsg()
     # print(prj)
-    assert prj.lower().find("authority") >= 0
+    # assert prj.lower().find("authority") >= 0
 
-    srs=osr.SpatialReference(wkt=prj)
+    # srs=osr.SpatialReference(wkt=prj)
 
-    # Under the AUTHORITY tag, it should have "ESPG" as the first value.
-    assert srs.GetAttrValue('authority', 0).strip().upper() == "EPSG"
+    # # Under the AUTHORITY tag, it should have "ESPG" as the first value.
+    # assert srs.GetAttrValue('authority', 0).strip().upper() == "EPSG"
 
-    # Get the EPSG number as the second value, converted to an integer.
-    return int(srs.GetAttrValue('authority', 1))
+    # # Get the EPSG number as the second value, converted to an integer.
+    # return int(srs.GetAttrValue('authority', 1))
 
 
 def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,

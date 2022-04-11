@@ -15,7 +15,10 @@ import shapely
 # import timeit
 # from osgeo import ogr, osr
 
-import atl_granules
+try:
+    import atl_granules
+except ImportError:
+    import icesat2.atl_granules as atl_granules
 # import progress_bar
 
 # LISTS OF VARIABLES NEEDED FROM EACH ATL DATASET FOR THE "get_photon_data" routine.
@@ -52,13 +55,12 @@ def classify_photon_data_multiple_granules(gid_list,
                                            bounding_box = None,
                                            bbox_converter = None,
                                            parallelize=True,
-                                          verbose=True):
+                                           verbose=True):
     if parallelize:
         # TODO: call get_photon_data_multiple_granules_parallel and return that array, once that's implemented.
         pass
 
     array_list = [None] * len(gid_list)
-    # print(gid_list, array_list)
 
     # THIS TAKES A WHILE.
     # TODO: Parallelize this. Would be easy to do. Put in separate dataframe picklefiles and save them separately,

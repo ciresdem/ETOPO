@@ -8,9 +8,10 @@ import socket
 import base64
 
 class config:
-    def __init__(self, configfile= os.path.abspath( os.path.join( os.path.dirname(os.path.realpath(__file__)),"..","..","config.ini"))):
+    def __init__(self, configfile= os.path.abspath( os.path.join( os.path.dirname(os.path.realpath(__file__)),"..","..","etopo_config.ini"))):
 
-        self._configfile = configfile
+        self._configfile = os.path.abspath(configfile)
+        # print(self._configfile)
         self._config = configparser.ConfigParser()
         self._config.read(configfile)
 
@@ -18,6 +19,7 @@ class config:
         # This does not handle sections separately. Change this functionality
         # if I need to use different sections separately.
         self._parse_config_into_attrs()
+
 
     def _abspath(self, path, only_if_actual_path_doesnt_exist=True):
         """In this project, absolute paths are relative to the location of the

@@ -12,7 +12,7 @@ import import_parent_dir
 import_parent_dir.import_src_dir_via_pythonpath()
 ##############################################################################
 
-import src.datasets.etopo_source_dataset as etopo_source_dataset
+import datasets.etopo_source_dataset as etopo_source_dataset
 
 class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""

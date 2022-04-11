@@ -63,11 +63,11 @@ def icepyx_download(variables_list=[],
 def build_child_process_command(args, print_files=False):
     proc_str = "{0} {1} --child".format(sys.executable, __file__)
     if args.dataset_name:
-        proc_str += " -dataset_name " + args.dataset_name
+        proc_str += " -dataset_name " + args.dataset_name.replace(" ", "\ ")
     if args.region:
         proc_str += " -region " + args.region
     if args.local_dir:
-        proc_str += " -local_dir " + args.local_dir
+        proc_str += " -local_dir " + args.local_dir.replace(" ", "\ ") # Make sure to handle spaces in the directory paths.
     if args.dates:
         proc_str += " -dates " + args.dates
     if args.overwrite:
@@ -78,7 +78,7 @@ def build_child_process_command(args, print_files=False):
         proc_str += " --print_files"
     if args.crop_to_region:
         proc_str += " --crop_to_region"
-    if args.variables:
+    if (not args.variables is None) and (len(args.variables) > 0):
         proc_str += ' ' + " ".join(args.variables)
 
     return proc_str
@@ -243,7 +243,7 @@ def icepyx_download_child_process(args):
     uname, pwd = my_config._read_credentials()
     if (uname, pwd) == (None, None):
         # TODO: handle entering NSIDC credentials the first time. Then prompt to save it.
-        raise FileNotFoundError("NSIDC credentials file '{}' not found.".my_config.nsidc_cred_file)
+        raise FileNotFoundError("NSIDC credentials file '{}' not found.", my_config.nsidc_cred_file)
 
     else:
         # Password will be sent by the parent process. Just leave it for now.
@@ -412,10 +412,10 @@ def args_from_editor_NE_DEMS():
 def args_from_editor():
     # I can edit & use this function at will when I don't feel like doing it from command-line args.
     args = argparse.Namespace
-    args.dataset_name = "ATL03"
-    args.region = "[-72,41,-70,43]"
-    args.local_dir = "../data/"
-    args.dates="2020-04-01,2020-10-01"
+    args.dataset_name = "ATL08"
+    args.region = "[19,0,20,1]"
+    args.local_dir = "../../scratch_data/sample_tiles_list/Congo/icesat2"
+    args.dates="2021-01-01,2022-01-01"
     args.verbose = True
     args.print_files = True
     args.variables = []

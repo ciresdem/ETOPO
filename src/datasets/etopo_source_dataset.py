@@ -17,16 +17,27 @@ than having them all hard-coded."""
 
 import os
 import geopandas
+import importlib
 
 ###############################################################################
 # Import the project /src directory into PYTHONPATH, in order to import all the
 # other modules appropriately.
-import import_parent_dir
-import_parent_dir.import_src_dir_via_pythonpath()
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ###############################################################################
 
 import utils.configfile
 import datasets.dataset_geopackage as dataset_geopackage
+
+def get_source_dataset_object(dataset_name):
+    """Given the name of a dataset, import the dataset object from the subdirectory that contains that derived object.
+    Using ETOPO source naming convention, the source code will reside in
+    datasets.[name].source_dataset_[name].py:source_dataset_[name]"""
+    dname = dataset_name.strip()
+    module_name = "datasets.{0}.source_dataset_{0}".format(dname)
+    module = importlib.import_module(module_name)
+    class_obj = getattr(module, "source_dataset_{0}".format(dname))()
+    return class_obj
+
 
 class ETOPO_source_dataset:
     # The base directory of the project is two levels up. Retrieve the absolute path to it on this machine.
@@ -41,10 +52,15 @@ class ETOPO_source_dataset:
         # Local variables.
         self.dataset_name = dataset_name
         self.geopackage_filename = self.config._abspath(self.config.geopackage_filename)
+        # print(self.geopackage_filename)
+        # foobar
         self.default_ranking_score = self.config.default_ranking_score
 
         # The geodataframe of all the tile outlines in the dataset.
         self.geopkg = None
+
+        # The Coordinte Reference System of this dataset. NOTE: All files within the dataset
+        # should have the same coordainte reference system.
 
     def is_active(self):
         """A switch to see if thais dataset is yet being used."""
@@ -55,10 +71,8 @@ class ETOPO_source_dataset:
         """Get the dataset_geopackage.DatasetGeopackage object associated with this dataset.
         If it doesn't exist, create it.
         """
-        if not self.geopkg:
-            self.geopkg = dataset_geopackage.DatasetGeopackage(
-                    self.geopackage_filename,
-                    base_dir = self.config._abspath(self.config.source_datafiles_directory))
+        if self.geopkg is None:
+            self.geopkg = dataset_geopackage.DatasetGeopackage(self.config)
         return self.geopkg
 
     def get_geodataframe(self, verbose=True):
@@ -68,13 +82,19 @@ class ETOPO_source_dataset:
         geopkg = self.get_geopkg_object(verbose=verbose)
         return geopkg.get_gdf(verbose=verbose)
 
-    def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs=None, verbose=True):
+    def get_crs(self, as_epsg=True):
+        """Get the CRS or EPSG of the coordinate reference system associated with this dataset."""
+        gdf = self.get_geodataframe(verbose=False)
+        if as_epsg:
+            return gdf.crs.to_epsg()
+        else:
+            return gdf.crs
+
+    def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs, verbose=True):
         """Given a shapely polygon object, return a list of source data files that
         intersect that polygon (even if only partially)."""
         geopkg = self.get_geopkg_object(verbose=verbose)
-        subset = geopkg.subset_by_polygon(polygon,
-                                          polygon_crs=polygon_crs,
-                                          check_if_same_crs=True)
+        subset = geopkg.subset_by_polygon(polygon, polygon_crs)
         return list(subset["filename"])
 
     def vdatum_shift_original_tiles(self, input_tile_fname,
@@ -82,7 +102,7 @@ class ETOPO_source_dataset:
                                           output_vdatum):
         """If a source tile is not in the needed vertical datum, first shift it before
         regridding it."""
-        
+
 
     def create_intermediate_grids(self, etopo_config_obj,
                                         include_ranking = True,
@@ -152,3 +172,6 @@ class ETOPO_source_dataset:
         # TODO: Use ICESat-2 to calculate accuracies, provide a ranking score spatially through
         # the dataset.
         return self.default_ranking_score
+
+# if __name__ == "__main__":
+#     print(get_source_dataset_object("CopernicusDEM"))

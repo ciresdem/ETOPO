@@ -39,9 +39,10 @@ vdd_lookup_dict = {
            "asvd02"  : 6643,  # American Samoa 2002
            "prvd02"  : 6641,  # Puerto Rico 2002
            "egm2008" : 3855,  # Earth Gravitational Model 2008
-           "egm96"   : 5733,  # Earth Gravitational Model 1996
+           "egm96"   : 5773,  # Earth Gravitational Model 1996
            "egm84"   : 5798,  # Earth Gravitational Model 1984 (not currently implemented.) NOTE: Can use/resample the EGM84 global grid and do it myself if we want.
            "msl"     : 5174,  # Mean Sea Level
+           "wgs_84(g1150)": 7660,
            }
 
 vdd_descriptions_dict = {
@@ -54,7 +55,8 @@ vdd_descriptions_dict = {
            "egm2008" : "Earth Gravitational Model of 2008, vertical heights. EPSG: 3855",
            "egm96"   : "Earth Gravitational Model of 1996, vertical heights. EPSG: 5733",
            "egm84"   : "Earth Gravitational Model of 1984, vertical heights. EPSG: 5798 (not currently implemented)",
-           "msl"     : "Mean Sea Level. EPSG: 5174"
+           "msl"     : "Mean Sea Level. EPSG: 5174",
+           "wgs84(g1150)" : "WGS 84 vertical datum, using G1150 iteration.",
            }
 
 # A list of all supported vdatum names and values in this module. Useful for other
@@ -116,8 +118,8 @@ def convert_vdatum(input_dem,
     command_template = "vertical_datum_convert.py -i {0:d} -o {1:d} {2:s} {3:s}"
     command = command_template.format(input_vertical_datum,
                                       output_vertical_datum,
-                                      input_dem,
-                                      output_dem)
+                                      input_dem.replace(" ", "\ "),
+                                      output_dem.replace(" ", "\ "))
     if verbose:
         print("Running:", command)
     retproc = subprocess.run(cmd_smart_split(command), capture_output=not verbose)

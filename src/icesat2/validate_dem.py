@@ -24,9 +24,9 @@ import utils.parallel_funcs as parallel_funcs
 import utils.configfile
 import etopo.convert_vdatum as convert_vdatum
 import etopo.coastline_mask as coastline_mask
-import classify_icesat2_photons
-import icepyx_download
-import plot_validation_results
+import icesat2.icepyx_download as icepyx_download
+import icesat2.plot_validation_results as plot_validation_results
+import icesat2.classify_icesat2_photons as classify_icesat2_photons
 
 # import subprocess
 from osgeo import gdal, osr
@@ -37,7 +37,7 @@ import pandas
 import multiprocessing as mp
 import time
 
-etopo_config = utils.configfile.config(os.path.join(os.path.split(__file__)[0], "..", "..", "config.ini"))
+etopo_config = utils.configfile.config()
 EMPTY_VAL = etopo_config.etopo_ndv
 
 # 1: DEM Preprocessing:
@@ -398,9 +398,9 @@ def validate_dem_parallel(dem_name,
         assert coastline_mask_array.shape == dem_array.shape
 
         # Assert that the both the dem vertical datum and the output vertical datum are valid values.
-        dem_vertical_datum = dem_vertical_datum.strip().lower()
-        SUPPORTED_VDATUMS = convert_vdatum.SUPPORTED_VDATUMS
-        assert dem_vertical_datum in SUPPORTED_VDATUMS
+        if type(dem_vertical_datum) == str:
+            dem_vertical_datum = dem_vertical_datum.strip().lower()
+        assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
         output_vertical_datum = output_vertical_datum.strip().lower()
         # We do not (yet) have the capacity nor the need to convert icesat-2 points to egm96 heights.
         # if "egm96" in SUPPORTED_VDATUMS:
@@ -408,13 +408,6 @@ def validate_dem_parallel(dem_name,
         # if 5773 in SUPPORTED_VDATUMS:
         #     SUPPORTED_VDATUMS.remove(5773)
         # assert output_vertical_datum in SUPPORTED_VDATUMS
-
-        # TODO: Check if these conversions are still necessary?
-        if dem_vertical_datum in ("ellipsoid", "4326", 4326): dem_vertical_datum = "wgs84"
-        if dem_vertical_datum in ("geoid", "3855", 3855) : dem_vertical_datum = "egm2008"
-        if dem_vertical_datum in ("5773", 5773): dem_vertical_datum = "egm96"
-        if output_vertical_datum in ("ellipsoid", "4326", 4326) : output_vertical_datum = "wgs84"
-        if output_vertical_datum in ("geoid", "3855", 3855) : output_vertical_datum = "egm2008"
 
         # Convert the vdatum of the input dem to be the same as the output process.
         if dem_vertical_datum != output_vertical_datum:

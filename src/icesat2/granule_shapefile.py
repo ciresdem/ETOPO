@@ -11,7 +11,10 @@ import os
 from osgeo import osr, ogr
 import numpy
 
-import atl_granules
+try:
+    import atl_granules
+except ModuleNotFoundError:
+    import icesat2.atl_granules as atl_granules
 
 def output_shapefile_of_granules(shapefile_name,
                                  granule_ids_or_dir,

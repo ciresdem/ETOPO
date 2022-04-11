@@ -7,12 +7,6 @@ __pycache__/
 *.so
 *.token
 
-# Don't upload data from the scratch directory, just leave anything I put in there, there.
-scratch_data/*
-
-# File to save encrypted credentials for NASA NSIDC
-.nsidc_credentials
-
 # Distribution / packaging
 .Python
 build/
@@ -135,6 +129,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# ETOPO DATA FILES
+# ETOPO DATA FILES and other things to ignore in my directory specific to ETOPO
 data/*.tif
 data/*.gpkg
+.nsidc_credentials
+scratch_data/*

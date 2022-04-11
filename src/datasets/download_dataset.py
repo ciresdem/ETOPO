@@ -5,7 +5,12 @@ import re
 import pexpect
 import subprocess
 
-
+###############################################################################
+# Import the project /src directory into PYTHONPATH, in order to import all the
+# other modules appropriately.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+###############################################################################
+import utils.traverse_directory
 
 class DatasetDownloader_BaseClass:
     """A base class for downloading datasets from various websites, usually presented
@@ -282,7 +287,7 @@ class DatasetDownloader_BaseClass:
         """
         data_dir = self.local_data_dir
         if recurse_directory:
-            fnames =
+            fnames = utils.traverse_directory.list_files(self.local_data_dir, regex_match=fname_regex_filter)
         else:
             fnames = sorted(os.listdir(data_dir))
         if fname_regex_filter:
@@ -328,7 +333,7 @@ class DatasetDownloader_BaseClass:
                     print( " ... ERROR: Return code", proc.returncode)
 
 if __name__ == "__main__":
-    dirname = os.path.abspath(os.path.join(os.path.split(__file__)[0], "../../../DEMs/EMODnet/data/msl"))
+    dirname = os.path.abspath(os.path.join(os.path.split(__file__)[0], "../../../DEMs/TanDEM-X/data/90mdem/DEM"))
     print(dirname)
-    dl = DatasetDownloader_BaseClass("foobar", dirname)
+    dl = DatasetDownloader_BaseClass("TanDEMX", dirname)
     dl.unzip_downloaded_files(to_subdirs=False, overwrite=False)

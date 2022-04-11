@@ -13,26 +13,36 @@ import os, os.path
 import argparse
 from osgeo import gdal
 import shapely.geometry
+import shapely.ops
 import geopandas
+import pyproj
 
 # Import the parent directory so I can import anything else I need.
 import import_parent_dir
 import_parent_dir.import_src_dir_via_pythonpath()
 import utils.traverse_directory
+import utils.progress_bar
+import utils.configfile
 
 class DatasetGeopackage:
     """A class for handling geopackage collections of DEMs from various sources."""
-    def __init__(self, filename, base_dir=None):
-        self.filename = filename
-        # If we are given a directory of files, save it.
-        if base_dir:
-            self.base_dir = base_dir
-        # Otherwise, assume that the directory in which the geopackage is being placed is where we should search.
+    def __init__(self, dataset_configfile):
+        """Create the base class. Provide either the config object associated with
+        the source dataset, or the name of the configfile .ini file and a config
+        object will be created."""
+        if type(dataset_configfile) == utils.configfile.config:
+            dset_config = dataset_configfile
         else:
-            self.base_dir = os.path.split(filename)[0]
+            dset_config = utils.configfile.config(configfile=dataset_configfile)
+
+        self.config = dset_config
+        self.filename = self.config._abspath(self.config.geopackage_filename)
+        # Save the directory with files in it.
+        self.base_dir = self.config._abspath(self.config.source_datafiles_directory)
 
         self.gdf = None
         self.default_layer_name = "DEMs"
+        self.regex_filter = self.config.datafiles_regex
 
     def get_gdf(self, verbose=True):
         if not self.gdf is None:
@@ -42,18 +52,18 @@ class DatasetGeopackage:
             if verbose:
                 print(self.filename, "read.")
         else:
+            if verbose:
+                print(self.filename, "does not exist. Creating...")
             self.gdf = self.create_dataset_geopackage(dir_or_list_of_files=self.base_dir,
-                                                      geopackage_to_write=self.filename,
                                                       verbose=verbose)
+            if verbose:
+                print("Done.")
 
         return self.gdf
 
-    def create_dataset_geopackage(self,
-                                  dir_or_list_of_files = None,
-                                  geopackage_to_write = None,
-                                  recurse_directory = True,
-                                  file_filter_regex=r"\.tif\Z",
-                                  verbose=True):
+    def create_dataset_geopackage(self, dir_or_list_of_files = None,
+                                        recurse_directory = True,
+                                        verbose = True):
         """Open a list of files and/or traverse a directory of raster files and create a geopackage of their bounding boxes.
 
         Use 'file_filter_regex' to filter out any subset of files you want, ignoring others.
@@ -63,21 +73,20 @@ class DatasetGeopackage:
 
         If geopackage_to_write is given, writes out the geopackage."""
         if not dir_or_list_of_files:
-            dir_or_list_of_files = self.filename
+            dir_or_list_of_files = self.base_dir
 
-        if not geopackage_to_write:
-            geopackage_to_write = self.base_dir
+        # geopackage_to_write = self.base_dir
 
         if type(dir_or_list_of_files) == str:
             if os.path.isdir(dir_or_list_of_files):
                 # We were given a directory. Get the list of all dataset files from the directory (recursively, or not)
                 if recurse_directory:
                     list_of_files = utils.traverse_directory.list_files(dir_or_list_of_files,
-                                                                        regex_match=file_filter_regex,
+                                                                        regex_match=self.regex_filter,
                                                                         ordered=True,
                                                                         include_base_directory=True)
                 else:
-                    list_of_files = [os.path.join(dir_or_list_of_files, fn) for fn in os.listdir(dir_or_list_of_files) if re.search(file_filter_regex, fn) != None]
+                    list_of_files = [os.path.join(dir_or_list_of_files, fn) for fn in os.listdir(dir_or_list_of_files) if re.search(self.regex_filter, fn) != None]
             elif os.path.exists(dir_or_list_of_files):
                 # We were given a file (not a directory). Just put this as the file.
                 list_of_files = [dir_or_list_of_files]
@@ -98,7 +107,7 @@ class DatasetGeopackage:
                     "geometry": []}
 
         dset_crs = None
-        for fname in list_of_files:
+        for i,fname in enumerate(list_of_files):
             # Get the bounding box of each file.
             try:
                 polygon, crs, xleft, ytop, xres, yres, xsize, ysize = \
@@ -126,7 +135,7 @@ class DatasetGeopackage:
                 # - the x,y resolution
                 # - the x,y size
                 # - the geometry
-            gdf_dict["filename"].append(os.path.split(fname)[1])
+            gdf_dict["filename"].append(fname)
             gdf_dict["xleft"].append(xleft)
             gdf_dict["ytop"].append(ytop)
             gdf_dict["xres"].append(xres)
@@ -135,17 +144,18 @@ class DatasetGeopackage:
             gdf_dict["ysize"].append(ysize)
             gdf_dict["geometry"].append(polygon)
 
+            if verbose:
+                utils.progress_bar.ProgressBar(i+1, len(list_of_files))
+
         # Save the output file as a GeoDataFrame.
         gdf = geopandas.GeoDataFrame(gdf_dict, geometry="geometry", crs=dset_crs)
 
         # Save the output file as a GeoPackage.
-        if geopackage_to_write:
-            gdf.to_file(geopackage_to_write, layer=self.default_layer_name, driver="GPKG")
-            if verbose:
-                print(geopackage_to_write, "written with {0} data tile outlines.".format(len(gdf.index)))
+        gdf.to_file(self.filename, layer=self.default_layer_name, driver="GPKG")
+        if verbose:
+            print(self.filename, "written with {0} data tile outlines.".format(len(gdf.index)))
 
         return gdf
-
 
     def create_outline_geometry_of_geotiff(self, gtif_name):
         """Given a geotiff file name, return a shapely.geometry.Polygon object of the outline and return it.
@@ -170,22 +180,31 @@ class DatasetGeopackage:
         return polygon, proj, xleft, ytop, xres, yres, xsize, ysize
 
 
-    def subset_by_polygon(self, polygon, polygon_crs=None, check_if_same_crs=True):
-        """Given a shapely polygon object, return all records that intersect the polygon."""
+    def subset_by_polygon(self, polygon, polygon_crs):
+        """Given a shapely polygon object, return all records that intersect the polygon.
+
+        If the polygon_crs does not match the geopackage crs, conver the polygon into
+        the geopackage CRS before performing the intersection.
+        """
         gdf = self.get_gdf()
 
-        if check_if_same_crs and polygon_crs != None:
-            # TODO: Check to see if this is robust or not. May not be even if
-            # the CRS's are basically the same. Perhaps get the EPSG number of each CRS and see if *those* are the same.
-            # But for now, this quick check will suffice unless it starts breaking erroneously.
-            assert gdf.crs == polygon_crs
+        gdf_crs_obj  = pyproj.crs.CRS(gdf.crs)
+        poly_crs_obj = pyproj.crs.CRS(polygon_crs)
+        # If the CRS's are the same, use the polygon as-is
+        if gdf_crs_obj.equals(poly_crs_obj):
+            polygon_to_use = polygon
+        # If the CRS's are not the same, convert the polygon into
+        # the geopackage CRS and go from there.
+        else:
+            project = pyproj.Transformer.from_crs(poly_crs_obj, gdf_crs_obj, always_xy=True).transform
+            polygon_to_use = shapely.ops.transform(project, polygon)
 
-        return gdf[gdf.intersects(polygon)]
+        return gdf[gdf.intersects(polygon_to_use)]
 
     def subset_by_geotiff(self, gtif_file):
         """Given a geotiff file, return all records that intersect the bounding-box outline of this geotiff."""
         polygon, crs, _, _, _, _, _, _ = self.create_outline_geometry_of_geotiff(gtif_file)
-        return self.subset_by_polygon(polygon, polygon_crs=crs, check_if_same_crs=True)
+        return self.subset_by_polygon(polygon, crs)
 
     def print_full_gdf(self):
         """Print a full geodataframe, with all rows and columnns. Resets display options back to defaults afterward."""

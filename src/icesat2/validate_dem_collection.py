@@ -15,11 +15,11 @@ import re
 # Include the base /src/ directory of thie project, to add all the other modules.
 import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################
-import validate_dem
-import icepyx_download
-import classify_icesat2_photons
-import granule_shapefile
-import plot_validation_results
+import icesat2.validate_dem as validate_dem
+import icesat2.icepyx_download as icepyx_download
+import icesat2.classify_icesat2_photons as classify_icesat2_photons
+import icesat2.granule_shapefile as granule_shapefile
+import icesat2.plot_validation_results as plot_validation_results
 import etopo.coastline_mask as coastline_mask
 
 def read_or_create_photon_h5(dem_list,
@@ -122,7 +122,8 @@ def read_or_create_photon_h5(dem_list,
                     # or if it needs to be in WGS84 (ESPG:4326)
                     # FOR NOW, just convert the bbox into ESPG 4326, and send it as polygon
                     # points in ESPG 4236 projection.This is fine for now, but THIS WILL BREAK
-                    # when dealing with polar stereo projections that include the N or S poles.
+                    # when dealing with polar stereo projections that include the N or S poles,
+                    # or which overlaps the -180/180 longitude line (which many do).
                     # A box that includes one of the poles in polar stereo will not do so in
                     # geogrphic coordinates.
                     # Update this code later to deal with it more elegantly.
@@ -155,6 +156,7 @@ def read_or_create_photon_h5(dem_list,
 
         # If we're using a bounding box and it's not in WGS84 projection, then we must provide a
         # converter for the data to fit within the bounding box.
+
         if bbox != None and dset_epsg != 4326:
             icesat2_srs = osr.SpatialReference()
             icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
@@ -201,6 +203,7 @@ def read_or_create_photon_h5(dem_list,
 
 def validate_list_of_dems(dem_list_or_dir,
                           photon_h5,
+                          results_h5=None,
                           fname_filter=".tif\Z",
                           fname_omit=None,
                           output_dir=None,
@@ -210,9 +213,10 @@ def validate_list_of_dems(dem_list_or_dir,
                           overwrite=False,
                           place_name = None,
                           create_individual_results = False,
-                          date_range=["2020-01-01","2020-12-31"],
+                          date_range=["2021-01-01","2021-12-31"],
                           skip_icesat2_download=False,
                           delete_datafiles=False,
+                          write_result_tifs=False,
                           verbose=True):
     """Take a list of DEMs, presumably in a single area, and output validation files for those DEMs.
 
@@ -280,7 +284,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                            interim_data_dir = icesat2_dir,
                                            overwrite=overwrite,
                                            delete_datafiles = delete_datafiles,
-                                           write_result_tifs = True,
+                                           write_result_tifs = write_result_tifs,
                                            write_summary_stats = create_individual_results,
                                            skip_icesat2_download = True,
                                            plot_results = create_individual_results,
@@ -322,6 +326,11 @@ def validate_list_of_dems(dem_list_or_dir,
                                                                     place_name=place_name,
                                                                     verbose=verbose)
 
+    if not results_h5 is None:
+        total_results_df.to_hdf(results_h5, "results")
+        if verbose:
+            print(results_h5, "written.")
+
 def define_and_parse_args():
     parser = argparse.ArgumentParser(
         description="Tool for validating a list or directory of DEMs against ICESat-2 photon data.")
@@ -344,6 +353,9 @@ def define_and_parse_args():
     parser.add_argument("-photon_h5", "-h5", type=str, default=None,
         help="Name of the ICESat-2 photon dataframe file to create or use for this analysis. Will use existing files unless 'overwrite' is specified.")
 
+    parser.add_argument("-results_h5", type=str, default=None,
+        help="Name of an output .h5 file to store the compiled grid-cell-level results for the entire dataset. Default: Just stores the summary without the actual results .h5")
+
     parser.add_argument("-input_vdatum", "-ivd", default="wgs84",
         help="The vertical datum of the input DEMs. [TODO: List possibilities here.] Default: 'wgs84'")
 
@@ -351,7 +363,7 @@ def define_and_parse_args():
         help="The vertical datume of the output analysis. Must be a vdatum compatible with Icesat-2 granules. Default: Use the same vdatum as the input files.")
 
     parser.add_argument("-date_range", nargs=2, default=["2021-01-01", "2022-01-01"],
-        help="Input a pair of date ranges to searcvh for ICESat-2 data, in yyyy-mm-dd format. Defaults to calendar year 2021.")
+        help="Input a pair of date ranges to searcvh for ICESat-2 data, in yyyy-mm-dd format. Defaults to calendar year 2021, or '2021-01-01 2021-12-31'.")
 
     parser.add_argument("-place_name", "-name", type=str, default=None,
         help="Readable name of the location being validated. Will be used in output summary plots and validation report.")
@@ -370,6 +382,9 @@ def define_and_parse_args():
 
     parser.add_argument("--delete_datafiles", "--del", action="store_true", default=False,
         help="By default, all data files generted in this process are kept. If this option is chosen, delete them.")
+
+    parser.add_argument("--write_result_tifs", action='store_true', default=False,
+                        help=""""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
 
     parser.add_argument("--quiet", "-q", action="store_true", default=False,
         help="Suppress output.")
@@ -432,6 +447,7 @@ def main():
 
     validate_list_of_dems(args.directory_or_files,
                           args.photon_h5,
+                          results_h5=args.results_h5,
                           fname_filter=args.fname_filter,
                           output_dir=args.output_dir,
                           icesat2_dir = args.data_dir,
@@ -443,6 +459,7 @@ def main():
                           place_name = args.place_name,
                           delete_datafiles = args.delete_datafiles,
                           create_individual_results = args.individual_results,
+                          write_result_tifs=args.write_result_tifs,
                           verbose=not args.quiet)
 
 if __name__ == "__main__":
