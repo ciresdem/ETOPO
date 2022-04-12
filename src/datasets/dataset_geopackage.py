@@ -219,6 +219,15 @@ class DatasetGeopackage:
         geopandas.set_option('max_columns', orig_max_cols_opt)
         return
 
+class ETOPO_Geopackage(DatasetGeopackage):
+    # Inherited from the DatasetGeopackage, slightly modified interface to handle specifically the ETOPO source files.
+    def __init__(self, resolution):
+        pass
+        # TODO: Get the source geopackage file name from etopo_config.ini
+        # TODO: Set the other member variables too.
+        # The __init__ should be the only function I need to change the API for in this case.
+
+
 def create_and_parse_args():
     parser = argparse.ArgumentParser(description="Create a GeoDataFrame and GeoPackage from a directory of geotiffs.")
     parser.add_argument("directory_name", type=str, help="Name of the directory to collect raster data files.")

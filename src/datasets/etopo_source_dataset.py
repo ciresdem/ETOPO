@@ -104,65 +104,65 @@ class ETOPO_source_dataset:
         regridding it."""
 
 
-    def create_intermediate_grids(self, etopo_config_obj,
-                                        include_ranking = True,
-                                        resolution_s = 1,
-                                        vdatum_out = "irtf2014",
-                                        overwrite = False,
-                                        verbose = True):
-        """Generate intermeiate grid files from the source dataset.
-        This will take the source topo data, re-grid it (using 'waffles') into
-        the same grids at the ETOPO dataset, and use the ETOPO empty values for
-        all no-data regions.
+    # def create_intermediate_grids(self, etopo_config_obj,
+    #                                     include_ranking = True,
+    #                                     resolution_s = 1,
+    #                                     vdatum_out = "irtf2014",
+    #                                     overwrite = False,
+    #                                     verbose = True):
+    #     """Generate intermeiate grid files from the source dataset.
+    #     This will take the source topo data, re-grid it (using 'waffles') into
+    #     the same grids at the ETOPO dataset, and use the ETOPO empty values for
+    #     all no-data regions.
 
-        If 'include_ranking' is set (default True), it will also create an idential
-        grid of ranking for the dataset values.
+    #     If 'include_ranking' is set (default True), it will also create an idential
+    #     grid of ranking for the dataset values.
 
-        These intermediate grids will be combined together (using the ranking scores
-        of each source dataset) to create the final ETOPO grids.
-        """
-        # Step 2: Get the GPKG for each source dataset
-        # ds_df = self.get_geodataframe(verbose=verbose)
-        # print(ds_df)
+    #     These intermediate grids will be combined together (using the ranking scores
+    #     of each source dataset) to create the final ETOPO grids.
+    #     """
+    #     # Step 2: Get the GPKG for each source dataset
+    #     # ds_df = self.get_geodataframe(verbose=verbose)
+    #     # print(ds_df)
 
-        # Step 3: Get the GPKG for the ETOPO grids dataset (from the empty grids.)
-        etopo_gpkg = etopo_config_obj.etopo_tile_geopackage_1s if resolution_s == 1 else \
-                     etopo_config_obj.etopo_tile_geopackage_15s
+    #     # Step 3: Get the GPKG for the ETOPO grids dataset (from the empty grids.)
+    #     etopo_gpkg = etopo_config_obj.etopo_tile_geopackage_1s if resolution_s == 1 else \
+    #                  etopo_config_obj.etopo_tile_geopackage_15s
 
-        etopo_df = geopandas.read_file(etopo_gpkg)
+    #     etopo_df = geopandas.read_file(etopo_gpkg)
 
-        # Sort the tiles first by lon, then by lat. This optimizes the ICESat-2 validation later.
-        etopo_df.sort_values(['xleft', 'ytop'], ascending=[True, True], inplace=True)
-        # print(etopo_df)
+    #     # Sort the tiles first by lon, then by lat. This optimizes the ICESat-2 validation later.
+    #     etopo_df.sort_values(['xleft', 'ytop'], ascending=[True, True], inplace=True)
+    #     # print(etopo_df)
 
-        # print([col for col in ds_df.columns])
-        # print([col for col in etopo_df.columns])
+    #     # print([col for col in ds_df.columns])
+    #     # print([col for col in etopo_df.columns])
 
-        # Step 4: Loop through each ETOPO grids dataset feature (each empty-tile DEM)
-        etopo_files = etopo_df['filename'].tolist()
-        etopo_geometries = etopo_df['geometry'].tolist()
+    #     # Step 4: Loop through each ETOPO grids dataset feature (each empty-tile DEM)
+    #     etopo_files = etopo_df['filename'].tolist()
+    #     etopo_geometries = etopo_df['geometry'].tolist()
 
-        for i,(efile, egeo) in enumerate(zip(etopo_files, etopo_geometries)):
-            # print(i, efile, egeo)
-            print('\t',self.retrieve_list_of_datafiles_within_polygon(egeo,
-                                                                      polygon_crs=etopo_df.crs,
-                                                                      verbose=verbose))
-            source_files = [os.path.join(self.config.source_datafiles_directory, fn) \
-                            for fn in self.retrieve_list_of_datafiles_within_polygon(egeo,
-                                                                                     polygon_crs=etopo_df.crs,
-                                                                                     verbose=verbose)
-                           ]
+    #     for i,(efile, egeo) in enumerate(zip(etopo_files, etopo_geometries)):
+    #         # print(i, efile, egeo)
+    #         print('\t',self.retrieve_list_of_datafiles_within_polygon(egeo,
+    #                                                                   polygon_crs=etopo_df.crs,
+    #                                                                   verbose=verbose))
+    #         source_files = [os.path.join(self.config.source_datafiles_directory, fn) \
+    #                         for fn in self.retrieve_list_of_datafiles_within_polygon(egeo,
+    #                                                                                  polygon_crs=etopo_df.crs,
+    #                                                                                  verbose=verbose)
+    #                        ]
 
-            # Resample each source dataset into the ETOPO grid, and combine to make a tile from it, with
-            if i>15:
-                break
-        # Step 5: Check the vertical datum, change it if needed (into a temp file)
-        # Step 6: Regrid (waffles) the source dataset to the ETOPO grid.
-        #    - Save in the intermediate files directory.
-        #    - Fill in empty space with the default nodata value.
-        # Step 7: Create empty tile (w/ 16-bit float) for ranking score.
-        #    - Fill in non-empty spaces with ranking score.
-        pass
+    #         # Resample each source dataset into the ETOPO grid, and combine to make a tile from it, with
+    #         if i>15:
+    #             break
+    #     # Step 5: Check the vertical datum, change it if needed (into a temp file)
+    #     # Step 6: Regrid (waffles) the source dataset to the ETOPO grid.
+    #     #    - Save in the intermediate files directory.
+    #     #    - Fill in empty space with the default nodata value.
+    #     # Step 7: Create empty tile (w/ 16-bit float) for ranking score.
+    #     #    - Fill in non-empty spaces with ranking score.
+    #     pass
 
     def get_dataset_ranking_score(self, region):
         """Given a polygon region, compute the quality (i.e. ranking) score of the dataset in that region.
