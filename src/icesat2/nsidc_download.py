@@ -41,7 +41,7 @@
 from __future__ import print_function
 
 import base64
-import getopt
+# import getopt
 import itertools
 import json
 import math
@@ -509,18 +509,6 @@ def main(short_name=None,
         version = args.version
         filename_filter = args.fname_filter
         query_only = args.query_only
-
-    # # Supply some default search parameters, just for testing purposes.
-    # # These are only used if the parameters aren't filled in up above.
-    # if 'short_name' in short_name:
-    #     short_name = 'ATL06'
-    #     version = '003'
-    #     time_start = '2018-10-14T00:00:00Z'
-    #     time_end = '2021-01-08T21:48:13Z'
-    #     bounding_box = ''
-    #     polygon = ''
-    #     filename_filter = '*ATL06_2020111121*'
-    #     url_list = []
 
     try:
         url_list = cmr_search(short_name, version, time_start, time_end,

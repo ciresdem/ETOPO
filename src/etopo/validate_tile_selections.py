@@ -212,16 +212,17 @@ if __name__ == "__main__":
     if len(args.dataset_name) == 0:
         args.dataset_name = ["NASADEM", "CopernicusDEM", "FABDEM", "GEBCO", "TanDEMX", "AW3D30", "ArcticDEM", "REMA"] #, "EMODnet"]
 
-    for dset in args.dataset_name:
-        print(dset)
-        plot_dataset_results(dset)
+    # for dset in args.dataset_name:
+    #     print(dset)
+    #     plot_dataset_results(dset)
 
     # if args.reverse:
     #     args.dataset_name.reverse()
 
-    # for dataset in args.dataset_name:
-    #     print(dataset)
-    #     validate_tile_selections(source_dataset=dataset)
+    for dataset in args.dataset_name:
+        print("\n========================================================")
+        print(dataset)
+        validate_tile_selections(source_dataset=dataset)
 
     # print(read_tile_list_csv())
     # print("NASADEM")
