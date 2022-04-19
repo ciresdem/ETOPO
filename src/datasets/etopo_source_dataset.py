@@ -185,6 +185,39 @@ class ETOPO_source_dataset:
         return
 
 
+    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, verbose=True, weight=None):
+        """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
+        of all tile entries that would appear in a CUDEM datalist. If no source
+        tiles overlap the polygon, return an empty list [].
+
+        Each datalist entry is a 3-value string, as such:
+        [filename/path] [format] [weight]
+        In this case, format will always be 200 for raster. Weight will the weights
+        returned by self.get_dataset_ranking_score().
+
+        If polygon_crs can be a pyproj.crs.CRS object, or an ESPG number.
+        If poygon_crs is None, we will use the CRS
+        from the source dataset geopackage.
+
+        If weight is None, use the weight returned by self.get_dataset_ranking_score.
+        Else use the weight provided in "weight" for all entries.
+        """
+        if polygon_crs is None:
+            polygon_crs = self.get_crs(as_epsg=False)
+
+        if weight is None:
+            weight = self.get_dataset_ranking_score()
+
+        # Do a command-line "waffles -h" call to see datalist options. The datalist
+        # type for raster files is "200"
+        DTYPE_CODE = 200
+
+        list_of_overlapping_files = self.retrieve_list_of_datafiles_within_polygon(polygon,
+                                                                                   polygon_crs,
+                                                                                   verbose=verbose)
+
+        return ["{0} {1} {2}".format(fname, DTYPE_CODE, weight) \
+                for fname in list_of_overlapping_files]
     # def create_intermediate_grids(self, etopo_config_obj,
     #                                     include_ranking = True,
     #                                     resolution_s = 1,
@@ -224,7 +257,7 @@ class ETOPO_source_dataset:
 if __name__ == "__main__":
 
     GEBCO = get_source_dataset_object("GEBCO")
-    GEBCO.create_waffles_datalist()
+    # GEBCO.create_waffles_datalist()
 
     # FAB = get_source_dataset_object("FABDEM")
 

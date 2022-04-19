@@ -117,6 +117,48 @@ class ETOPO_Generator:
             dset_obj = datasets_dict[dset_name]
             dset_obj.create_waffles_datalist(verbose=verbose)
 
+    def generate_etopo_tile_datalist(self, resolution=1,
+                                           etopo_tile_fname = None,
+                                           active_sources_only = True,
+                                           verbose=True):
+        """For each ETOPO tile (or just the one given), produce a waffles datalist of
+        all the source tiles that overlap it (and thus would be included with it),
+
+        Resolution can be 1 or 15.
+
+        Put the datalist in the etopo_config.etopo_datalist_directory directory, under the
+        '1s' or '15s' subdir, respectively, depending upon the resolution.
+
+        Provide etopo_tile_fname if we only want one file done. Otherwise, do them all
+        (for that resolution).
+        """
+        etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
+        etopo_gdf = etopo_geopkg_obj.get_gdf(verbose=verbose)
+
+        # TODO list:
+        # 0. Get the ETOPO datalist folder.
+        # 1. If etopo_tile_fname is being used, get the one row corresponding to that fname.
+        # 2. Get all the ETOPO source dataset objects.
+        # 3. For each tile in the gdf, create a datalist name for that tile in the datalist folder.
+        # 4. Get the polygon of the ETOPO tile.
+        # 5. Get all the datalist entries from that dataset object. Use the function for that.
+        # 6. Put all the datalist entries together, write as lines to the datalist.
+        # 7. Test out the waffles -M stacks command to see if it runs faster now.
+
+        # Sample (complete) waffles command.
+        """waffles -M stacks:supercede=True:keep_weights=True
+        -R -67.0000000/-66.0000000/18.0000000/19.0000000
+        -E 0.000277777777778
+        -N -99999
+        -w
+        -a
+        -k
+        -P EPSG:4326
+        -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
+        -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
+        /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
+        # ^ Except, use the source_tile_datalist created here for that entry.
+
     def generate_etopo_source_master_dlist(self,
                                            active_only=True,
                                            verbose=True):
