@@ -176,7 +176,7 @@ class DatasetGeopackage:
                                             [xright, ybottom],
                                             [xleft, ybottom]])
 
-        # Return the geometry, and if requested, the projection wkt as well.
+        # Return the geometry, and the projection wkt as well.
         return polygon, proj, xleft, ytop, xres, yres, xsize, ysize
 
 
@@ -220,12 +220,55 @@ class DatasetGeopackage:
         return
 
 class ETOPO_Geopackage(DatasetGeopackage):
-    # Inherited from the DatasetGeopackage, slightly modified interface to handle specifically the ETOPO source files.
+    """Inherited from the DatasetGeopackage, slightly modified __init__()
+    interface to handle specifically the ETOPO source files."""
     def __init__(self, resolution):
-        pass
-        # TODO: Get the source geopackage file name from etopo_config.ini
-        # TODO: Set the other member variables too.
-        # The __init__ should be the only function I need to change the API for in this case.
+        assert resolution in (1,15)
+
+        ## These member variables are the same as the ones initiated in DatasetGeopackage.__init__()
+
+        # The default configfile points to the etopo_config.ini in the project base directory
+        self.config = utils.configfile.config()
+
+        self.filename = self.config.etopo_tile_geopackage_1s if resolution == 1 else \
+                        self.config.etopo_tile_geopackage_15s
+
+        self.base_dir = self.config._abspath(os.path.join(self.config.etopo_empty_tiles_directory, str(resolution) + "s"))
+
+        self.gdf = None
+        self.default_layer_name = "DEMs"
+        self.regex_filter = r"ETOPO_(\d){4}_v(\d)_(\d){1,2}s_(\w){7}\.tif\Z"
+
+        ## These member variables are unique to the ETOPO grids specifically.
+
+        self.dlist_dir = self.config.etopo_dlist_directory
+
+    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, verbose=True):
+        """Add a 'dlist' column to the geodataframe that lists the location of the
+        approrpriate source-datasets dlist for each ETOPO tile.
+
+        Return the gdf with this new field.
+
+        If "save_to_file_if_not_already_there", save this datalsit to the file
+        if it doesn't already exist in the geodataframe."""
+        gdf = self.get_gdf(verbose=verbose)
+
+        # If the "dlist" column already exists, just return it.
+        if 'dlist' in gdf.columns:
+            return gdf
+
+        # Little lambda function for converting the grid filename to a dlist filename.
+        dlist_func = lambda fn: os.path.join(self.dlist_dir, os.path.splitext(os.path.split(fn)[1])[0] + ".datalist")
+
+        # Apply the function to every cell of the 'filename' column.
+        # Put it in a new "dilst" column.
+        gdf["dlist"] = gdf['filename'].apply(dlist_func)
+
+        # Save the output file as a GeoPackage.
+        if save_to_file_if_not_already_there:
+            gdf.to_file(self.filename, layer=self.default_layer_name, driver="GPKG")
+            if verbose:
+                print(self.filename, "written with {0} data tile outlines.".format(len(gdf.index)))
 
 
 def create_and_parse_args():
@@ -239,6 +282,12 @@ def create_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
+    # ET1 = ETOPO_Geopackage(1)
+    # print(ET1.get_gdf())
+    # print(ET1.get_gdf().columns)
+    # import sys
+    # sys.exit(0)
+
     args = create_and_parse_args()
     dataset_object = DatasetGeopackage(args.geopackage_file,
                                        base_dir=args.directory_name)

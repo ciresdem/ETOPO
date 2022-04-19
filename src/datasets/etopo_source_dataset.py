@@ -18,6 +18,7 @@ than having them all hard-coded."""
 import os
 import geopandas
 import importlib
+from osgeo import gdal
 
 ###############################################################################
 # Import the project /src directory into PYTHONPATH, in order to import all the
@@ -26,6 +27,7 @@ import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ###############################################################################
 
 import utils.configfile
+import utils.progress_bar as progress_bar
 import datasets.dataset_geopackage as dataset_geopackage
 
 def get_source_dataset_object(dataset_name):
@@ -90,6 +92,33 @@ class ETOPO_source_dataset:
         else:
             return gdf.crs
 
+    def create_waffles_datalist(self, verbose=True):
+        """Create a datalist file for the dataset, useful for cudem "waffles" processing.
+        It will use the same name as the geopackage
+        object, just substituting '.gpkg' for '.datalist'.
+        """
+        datalist_fname = self.get_datalist_fname()
+
+        gdf = self.get_geodataframe(verbose=verbose)
+        filenames = gdf['filename'].tolist()
+        DLIST_DTYPE = 200 # Datalist rasters are data-type #200
+        ranking_score = self.get_dataset_ranking_score()
+
+        dlist_lines = ["{0} {1} {2}".format(fname, DLIST_DTYPE, ranking_score) for fname in filenames]
+        dlist_text = "\n".join(dlist_lines)
+
+        with open(datalist_fname, 'w') as f:
+            f.write(dlist_text)
+            f.close()
+            if verbose:
+                print(datalist_fname, "written.")
+
+    def get_datalist_fname(self):
+        """Derive the source datalist filename from the geopackage filename.
+        Just substitute .gpkg or .datalist
+        """
+        return os.path.splitext(self.config._abspath(self.config.geopackage_filename))[0] + ".datalist"
+
     def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs, verbose=True):
         """Given a shapely polygon object, return a list of source data files that
         intersect that polygon (even if only partially)."""
@@ -102,6 +131,58 @@ class ETOPO_source_dataset:
                                           output_vdatum):
         """If a source tile is not in the needed vertical datum, first shift it before
         regridding it."""
+
+    def set_ndv(self, verbose=True, fail_if_different=True):
+        """Some datasets have a nodata value but it isn't listed in the GeoTIFF.
+        If [DATASET]_config.ini file has a .dem_ndv attribute in it, go ahead and open all the source
+        datasets and forcefully insert the nodata-value so that it will behave properly in waffles.
+        """
+        if not hasattr(self.config, "dem_ndv"):
+            if verbose:
+                print("No manual NDV is set in", self.config._configfile + ".", "Exiting.")
+            return
+        filenames = self.get_geodataframe()['filename'].tolist()
+        NDV = self.config.dem_ndv
+
+        if verbose:
+            print("Setting NDVs for {0:,} {1} DEM tiles to {2}.".format(len(filenames), self.dataset_name, NDV))
+        for i, fname in enumerate(filenames):
+            self.set_ndv_individual_tile(fname, NDV, fail_if_different=fail_if_different)
+            if verbose:
+                progress_bar.ProgressBar(i+1, len(filenames), suffix = "{0:,}/{1:,}".format(i+1, len(filenames)))
+
+    def set_ndv_individual_tile(self, fname, ndv_value, fail_if_different=True):
+        """For an individual source tile, set the ndv if it doesn't have one.
+
+        If it already has one, ignore it and just close the file. If that previous value is different than
+        the ndv_value and warn_if_different is set, then print a warning when doing it.
+        """
+        dset = gdal.Open(fname, gdal.GA_Update)
+        band = dset.GetRasterBand(1)
+        existing_ndv = band.GetNoDataValue()
+        if fail_if_different and (existing_ndv != None) and (existing_ndv != ndv_value):
+            print(f"Warning in {fname}: existing NDV ({existing_ndv}) != new NDV ({ndv_value}).\n" + \
+                  "New data will NOT be written.")
+            band = None
+            dset = None
+            return
+
+        band.SetNoDataValue(ndv_value)
+        # Write out the dataset to this NDV sticks before we re-compute stats.
+        dset.FlushCache()
+        # Re-generate the statistics on the file.
+        # "GetStatistics()" only overwrites the stats if they don't already exist.
+        # If they do already exist, we need to compute them again (force it) and
+        # write them in there using "SetStatistics()"
+        band.SetStatistics(*band.ComputeStatistics(0))
+
+        # stats = band.GetStatistics(0,1)
+        # print(stats)
+
+        dset.FlushCache()
+        band = None
+        dset = None
+        return
 
 
     # def create_intermediate_grids(self, etopo_config_obj,
@@ -121,50 +202,17 @@ class ETOPO_source_dataset:
     #     These intermediate grids will be combined together (using the ranking scores
     #     of each source dataset) to create the final ETOPO grids.
     #     """
-    #     # Step 2: Get the GPKG for each source dataset
-    #     # ds_df = self.get_geodataframe(verbose=verbose)
-    #     # print(ds_df)
+    #     # TODO: For each source dataset, create an ETOPO grid for each ETOPO grid-cell.
+    #     # Use waffles, and the datalist for that dataset to do so.
+    #     # Fill in empty values for NDV cells (figure out how to do this).
 
-    #     # Step 3: Get the GPKG for the ETOPO grids dataset (from the empty grids.)
-    #     etopo_gpkg = etopo_config_obj.etopo_tile_geopackage_1s if resolution_s == 1 else \
-    #                  etopo_config_obj.etopo_tile_geopackage_15s
+    #     # Then, open up the grids 1-by-1, in increasing order of priority (lowest priority to start)
+    #     # overlay the values into an ETOPO grid for that grid-cell. The intermediate tiles will
+    #     # already be on the same grid with same dimensions, making this a simple numpy array operation.
+    #     # Also do the same for the source-tile code designations.
 
-    #     etopo_df = geopandas.read_file(etopo_gpkg)
 
-    #     # Sort the tiles first by lon, then by lat. This optimizes the ICESat-2 validation later.
-    #     etopo_df.sort_values(['xleft', 'ytop'], ascending=[True, True], inplace=True)
-    #     # print(etopo_df)
-
-    #     # print([col for col in ds_df.columns])
-    #     # print([col for col in etopo_df.columns])
-
-    #     # Step 4: Loop through each ETOPO grids dataset feature (each empty-tile DEM)
-    #     etopo_files = etopo_df['filename'].tolist()
-    #     etopo_geometries = etopo_df['geometry'].tolist()
-
-    #     for i,(efile, egeo) in enumerate(zip(etopo_files, etopo_geometries)):
-    #         # print(i, efile, egeo)
-    #         print('\t',self.retrieve_list_of_datafiles_within_polygon(egeo,
-    #                                                                   polygon_crs=etopo_df.crs,
-    #                                                                   verbose=verbose))
-    #         source_files = [os.path.join(self.config.source_datafiles_directory, fn) \
-    #                         for fn in self.retrieve_list_of_datafiles_within_polygon(egeo,
-    #                                                                                  polygon_crs=etopo_df.crs,
-    #                                                                                  verbose=verbose)
-    #                        ]
-
-    #         # Resample each source dataset into the ETOPO grid, and combine to make a tile from it, with
-    #         if i>15:
-    #             break
-    #     # Step 5: Check the vertical datum, change it if needed (into a temp file)
-    #     # Step 6: Regrid (waffles) the source dataset to the ETOPO grid.
-    #     #    - Save in the intermediate files directory.
-    #     #    - Fill in empty space with the default nodata value.
-    #     # Step 7: Create empty tile (w/ 16-bit float) for ranking score.
-    #     #    - Fill in non-empty spaces with ranking score.
-    #     pass
-
-    def get_dataset_ranking_score(self, region):
+    def get_dataset_ranking_score(self, fname=None):
         """Given a polygon region, compute the quality (i.e. ranking) score of the dataset in that region.
         If the dataset contains no files in that region, return the 'default_ranking_score' of
         the dataset, provided in the constructor."""
@@ -173,5 +221,22 @@ class ETOPO_source_dataset:
         # the dataset.
         return self.default_ranking_score
 
-# if __name__ == "__main__":
+if __name__ == "__main__":
+
+    GEBCO = get_source_dataset_object("GEBCO")
+    GEBCO.create_waffles_datalist()
+
+    # FAB = get_source_dataset_object("FABDEM")
+
+    # FAB.set_ndv(verbose=True, fail_if_different=False)
+
+
+    # COP = get_source_dataset_object("CopernicusDEM")
+
+    # COP.set_ndv(verbose=True)
+
+    # Test out the NDV writing on one tile to begin.
+    # print(COP.config.dem_ndv)
+    # COP.set_ndv_individual_tile("/home/mmacferrin/Research/DATA/DEMs/CopernicusDEM/data/30m/COP30_hh/Copernicus_DSM_COG_10_N00_00_E006_00_DEM.tif",
+    #                             COP.config.dem_ndv)
 #     print(get_source_dataset_object("CopernicusDEM"))

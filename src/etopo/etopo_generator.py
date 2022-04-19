@@ -28,7 +28,7 @@ class ETOPO_Generator:
     # This file resides in [project_basedir]/src/etopo
     project_basedir = os.path.abspath(os.path.join(os.path.split(__file__)[0], "..", ".."))
 
-    etopo_config = utils.configfile.config(os.path.join(project_basedir, "config.ini"), )
+    etopo_config = utils.configfile.config(os.path.join(project_basedir, "etopo_config.ini"), )
 
     # Note, still need to add resolution "1s" or "15s" directory.
     empty_tiles_directory = etopo_config.etopo_empty_tiles_directory
@@ -88,7 +88,10 @@ class ETOPO_Generator:
                                            file_filter_regex=r"\.tif\Z",
                                            verbose=verbose)
 
-    def generate_tile_source_dlists(self, source = "all", active_only=True, resolution=1, verbose=True):
+    def generate_tile_source_dlists(self, source = "all",
+                                          active_only=True,
+                                          # resolution=1,
+                                          verbose=True):
         """For each of the ETOPO dataset tiles, generate a DLIST of all the
         source datasets that overlap that tile, along with their relative ranking.
 
@@ -100,83 +103,48 @@ class ETOPO_Generator:
         Resolution can be 1 or 15 (seconds).
         """
         # Get the dictionary of source datasets
-        datasets = self.fetch_etopo_source_dataset_objects(active_only = active_only,
-                                                           verbose=verbose)
+        datasets_dict = self.fetch_etopo_source_datasets(active_only = active_only,
+                                                         return_type=dict,
+                                                         verbose=verbose)
 
-        assert resolution in (1,15)
+        if source.strip().lower() == "all":
+            datasets_list = sorted(datasets_dict.keys())
+        else:
+            datasets_list = [source]
 
-        # Get the appropriate ETOPO geopackage.
-        etopo_gpkg_name = self.etopo_config.etopo_tile_geopackage_1s \
-                          if resolution == 1 else \
-                          self.etopo_config.etopo_tile_geopackage_15s
+        for dset_name in datasets_list:
+            print("-------", dset_name, ":")
+            dset_obj = datasets_dict[dset_name]
+            dset_obj.create_waffles_datalist(verbose=verbose)
 
-        # Use the
+    def generate_etopo_source_master_dlist(self,
+                                           active_only=True,
+                                           verbose=True):
+        """Create a master datalist that lists all the datasets from which ETOPO is derived.
+        It will be a datalist of datalists from each of the etopo_source_dataset datalists."""
+        datasets_dict = self.fetch_etopo_source_datasets(active_only = active_only,
+                                                         return_type=dict,
+                                                         verbose=verbose)
 
-    # def create_intermediate_tiles(self, source = "all",
-    #                                     resolution_s=1,
-    #                                     overwrite=False,
-    #                                     verbose=True):
-    #     """For the given source dataset (or all active datasets if source="all"),
-    #     regride the source grids into the intermediate_tiles directory for each source
-    #     dataset. Additionally, a "ranking" grid file will be generated for each intermediate
-    #     tile, for use in the final gridding.
+        dlist_lines = []
+        DATALIST_DTYPE = -1 # The Waffles code for a datalist used recursively.
+        for (dset_name, dset_obj) in datasets_dict.items():
+            dset_dlist_fname = dset_obj.get_datalist_fname()
+            dset_ranking_number = dset_obj.get_dataset_ranking_score()
+            text_line = "{0} {1} {2}".format(dset_dlist_fname, DATALIST_DTYPE, dset_ranking_number)
+            dlist_lines.append(text_line)
 
-    #     resolution_s is the resolution of the destination grids to create.
-    #     ETOPO currently supports 1 or 15.
+        dlist_text = "\n".join(dlist_lines)
 
-    #     If 'overwrite', overwrite existing datasets. Defaults to False,
-    #     which will skip grids already created and just create new ones.
-    #     """
-    #     datasets = self.fetch_etopo_source_dataset_objects(verbose=verbose)
-    #     if source.strip().lower() != "all":
-    #         # If we've selected only one dataset, use that.
-    #         datasets = [dset for dset in sorted(datasets.keys()) if dset.dataset_name == source]
-    #         if len(datasets) == 0:
-    #             if verbose:
-    #                 print("In ETOPO_Generator::create_intermediate_grids():\n" +
-    #                       "\tNo active dataset exists named '{0}'. Check the dataset".format(source) +
-    #                       " spelling, and to see wheter the 'is_active' flag is set in" +
-    #                       " {0}_config.ini.".format(source)
-    #                       )
-    #             return None
-    #         # Should be no more than one dataset by any given name. Do a sanity check here.
-    #         assert len(datasets) == 1
+        with open(self.etopo_config.etopo_sources_datalist, 'w') as f:
+            f.write(dlist_text)
+            f.close()
+            if verbose:
+                print(self.etopo_config.etopo_sources_datalist, "written.")
 
-    #     for dataset_obj in datasets:
-    #         print("Processing", dataset_obj.dataset_name + "...")
-    #         # Create the intermediate grids for each dataset.
-    #         dataset_obj.create_intermediate_grids(ETOPO_Generator.etopo_config,
-    #                                               include_ranking = True,
-    #                                               resolution_s = resolution_s,
-    #                                               overwrite = overwrite,
-    #                                               verbose = verbose)
+        return self.etopo_config.etopo_sources_datalist
 
-    #     return
-
-    # def delete_intermediate_files(self):
-    #     """Delete all the intermediate tiles generated from source datasets."""
-    #     tile_dir = self.intermediate_tiles_directory
-    #     # We will clear out the "1s" and "15s" directories, but leave those put.
-    #     subdirs = [os.path.join(tile_dir, "1s"), os.path.join(tile_dir, "15s")]
-
-    #     # First, clear out any files that aren't in the designated subdirs directories.
-    #     files_in_base_dir = [os.path.join(tile_dir, fn) for fn in os.listdir(tile_dir) if fn not in ("1s", "15s")]
-    #     for path in files_in_base_dir:
-    #         shutil.rmtree(path)
-
-    #     for subdir in subdirs:
-    #         if os.path.exists(subdir):
-    #             # Delete all the files and directories in each subdir.
-    #             files_in_subdir = [os.path.join(subdir, fn) for fn in os.listdir(subdir)]
-    #             for path in files_in_subdir:
-    #                 shutil.rmtree(path)
-    #         else:
-    #             # If for some reason the '1s' or '15s' directory doesn't exist, make it.
-    #             os.mkdir(subdir)
-
-    #     return
-
-    def fetch_etopo_source_dataset_objects(self, active_only=True, verbose=True):
+    def fetch_etopo_source_datasets(self, active_only=True, verbose=True, return_type=dict):
         """Look through the /src/datasets/ directory, and get a list of the input datasets to use.
         This list will be saved to self.source_datasets, and will be instances of
         the datasets.source_dataset class, or sub-classes thereof.
@@ -187,6 +155,9 @@ class ETOPO_Generator:
         Any dataset that does not have a sub-class defined in such a file, will simply
         be instantiated with the parent class defined in source_dataset.py. Also if
         the dataset's 'is_active()' routeine is False, the dataset will be skipped.
+
+        type_out can  be list, tuple, or dict. If dict, the keys will be the dataset names, the value the objects.
+        For list and tuple, just a list of the objects is fine.
         """
         # The the list of dataset objects already exists, just return it.
         if self.datasets_dict:
@@ -224,15 +195,20 @@ class ETOPO_Generator:
             else:
                 continue
 
-        self.datasets = dataset_objects_dict
+        self.datasets_dict = dataset_objects_dict
 
         if verbose:
-            print("Datasets active:", ", ".join([d.dataset_name for d in self.datasets]))
+            print("Datasets active:", ", ".join([d for d in sorted(self.datasets_dict.keys())]))
 
-        return self.datasets
+        if return_type == dict:
+            return self.datasets_dict
+        else:
+            return return_type(self.datasets_dict.values())
 
 if __name__ == "__main__":
     EG = ETOPO_Generator()
+    # EG.generate_tile_source_dlists(source="all",active_only=True,verbose=True)
+    EG.generate_etopo_source_master_dlist()
     # EG.create_empty_grids()
     # EG.create_etopo_geopackages()
-    EG.create_intermediate_grids(source="FABDEM", resolution_s=1)
+    # EG.create_intermediate_grids(source="FABDEM", resolution_s=1)

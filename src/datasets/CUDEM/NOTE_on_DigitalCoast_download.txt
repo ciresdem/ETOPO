@@ -1,0 +1,5 @@
+NOTE: Digital Coast does't like robot wget commands. On Chris A's advice, use these flags to get around that:
+
+wget -np -r -nH -L -e robots=off --no-check-certificate  --cut-dirs=3 
+
+https://chs.coast.noaa.gov/htdata/raster2/elevation/NCEI_ninth_Topobathy_2014_8483/
