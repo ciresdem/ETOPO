@@ -229,6 +229,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         # The default configfile points to the etopo_config.ini in the project base directory
         self.config = utils.configfile.config()
+        self.resolution = resolution
 
         self.filename = self.config.etopo_tile_geopackage_1s if resolution == 1 else \
                         self.config.etopo_tile_geopackage_15s
@@ -241,7 +242,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         ## These member variables are unique to the ETOPO grids specifically.
 
-        self.dlist_dir = self.config.etopo_dlist_directory
+        self.dlist_dir = self.config.etopo_datalist_directory
 
     def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
@@ -258,7 +259,9 @@ class ETOPO_Geopackage(DatasetGeopackage):
             return gdf
 
         # Little lambda function for converting the grid filename to a dlist filename.
-        dlist_func = lambda fn: os.path.join(self.dlist_dir, os.path.splitext(os.path.split(fn)[1])[0] + ".datalist")
+        dlist_func = lambda fn: os.path.join(self.dlist_dir,
+                                             str(self.resolution) + "s",
+                                             os.path.splitext(os.path.split(fn)[1])[0] + ".datalist")
 
         # Apply the function to every cell of the 'filename' column.
         # Put it in a new "dilst" column.
@@ -269,6 +272,8 @@ class ETOPO_Geopackage(DatasetGeopackage):
             gdf.to_file(self.filename, layer=self.default_layer_name, driver="GPKG")
             if verbose:
                 print(self.filename, "written with {0} data tile outlines.".format(len(gdf.index)))
+
+        return gdf
 
 
 def create_and_parse_args():
@@ -284,6 +289,7 @@ def create_and_parse_args():
 if __name__ == "__main__":
     # ET1 = ETOPO_Geopackage(1)
     # print(ET1.get_gdf())
+    # ET1.add_dlist_paths_to_gdf()
     # print(ET1.get_gdf().columns)
     # import sys
     # sys.exit(0)
