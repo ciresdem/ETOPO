@@ -143,7 +143,7 @@ def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
                    "-E", str("{0:.16f}/{1:.16f}".format(step_xy[0], step_xy[1])),
                    "-D", etopo_config.etopo_cudem_cache_directory,
                    "--keep-cache",
-                   "--nodata", etopo_config.etopo_ndv]
+                   "--nodata", str(etopo_config.etopo_ndv)]
 
     if verbose:
         console.print("Running: [bold green]" + waffle_args[0] + "[/bold green] " + " ".join(waffle_args[1:]))
