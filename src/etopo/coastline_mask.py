@@ -16,11 +16,21 @@ except:
     raise ModuleNotFoundError("Module 'cudem/waffles.py' required. Update paths, or refer to https://github.com/ciresdem/cudem for installation instructions.")
 
 import os
-from osgeo import gdal, osr
+from osgeo import gdal
 import rich.console
 import subprocess
 import argparse
 import pyproj
+
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+####################################3
+# import utils.progress_bar as progress_bar
+# Use config file to get the encrypted credentials.
+import utils.configfile as configfile
+etopo_config = configfile.config()
+
 
 def is_this_run_in_ipython():
     """Tell whether we're running in an IPython console or not. Useful for rich.print()."""
@@ -122,7 +132,6 @@ def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
 
     # Run a rich-text console for the output.
     console = rich.console.Console(force_jupyter=(True if is_this_run_in_ipython() else None))
-
     # Sometimes waffles can give some rounding error effects if the boundaries aren't exactly right.
     # If we round up half a pixel on each file extent size, it can ensure we
 
@@ -131,7 +140,10 @@ def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
                    "-R", "{0}/{1}/{2}/{3}".format(*bbox),
                    "-O", os.path.abspath(output_filepath_base),
                    "-P", "epsg:{0:d}".format(epsg),
-                   "-E", str("{0:.16f}/{1:.16f}".format(step_xy[0], step_xy[1]))]
+                   "-E", str("{0:.16f}/{1:.16f}".format(step_xy[0], step_xy[1])),
+                   "-D", etopo_config.etopo_cudem_cache_directory,
+                   "--keep-cache",
+                   "--nodata", etopo_config.etopo_ndv]
 
     if verbose:
         console.print("Running: [bold green]" + waffle_args[0] + "[/bold green] " + " ".join(waffle_args[1:]))

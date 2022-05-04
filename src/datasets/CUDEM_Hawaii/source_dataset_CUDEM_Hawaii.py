@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Source code for the CUDEM ETOPO source dataset class."""
+"""Source code for the CUDEM_Hawaii ETOPO source dataset class."""
 
 import os
 
@@ -14,10 +14,10 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import datasets.etopo_source_dataset as etopo_source_dataset
 
-class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
+class source_dataset_CUDEM_Hawaii(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
     def __init__(self,
-                 configfile = os.path.join(THIS_DIR, "CUDEM_config.ini" )):
-        """Initialize the CUDEM source dataset object."""
+                 configfile = os.path.join(THIS_DIR, "CUDEM_Hawaii_config.ini" )):
+        """Initialize the CUDEM_Hawaii source dataset object."""
 
-        super(source_dataset_CUDEM, self).__init__("CUDEM", configfile)
+        super(source_dataset_CUDEM_Hawaii, self).__init__("CUDEM_Hawaii", configfile)

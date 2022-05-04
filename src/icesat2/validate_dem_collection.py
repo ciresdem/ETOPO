@@ -16,7 +16,8 @@ import re
 import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################
 import icesat2.validate_dem as validate_dem
-import icesat2.icepyx_download as icepyx_download
+# import icesat2.icepyx_download as icepyx_download
+import icesat2.nsidc_download as nsidc_download
 import icesat2.classify_icesat2_photons as classify_icesat2_photons
 import icesat2.granule_shapefile as granule_shapefile
 import icesat2.plot_validation_results as plot_validation_results
@@ -27,150 +28,211 @@ def read_or_create_photon_h5(dem_list,
                              output_dir=None,
                              icesat2_dir=None,
                              dates=["2021-01-01","2022-01-01"],
-                             create_shapefile=True,
+                             create_shapefile=False,
                              shapefile_name=None,
                              skip_icesat2_download=False,
                              overwrite=False,
                              verbose=True):
-    """If the photon_h5 file exists, read it. Else, create one from the large bounding box of the DEMs."""
+    """If the photon_h5 file exists, read it. Else, create one from the large bounding box of the DEMs.
 
-
+    If create_shapefile is set, create a shapefile of the granule paths. (Sometimes useful for debugging or visualization).
+    Note: If the dataframe already exists (and is just being read), 'create_shapefile' is ignored.
+    """
     # If the photon hdf5 file already exists, read it and return the dataframe.
-    if os.path.exists(photon_h5):
+    if os.path.exists(photon_h5) and not overwrite:
         if verbose:
             print("Reading", photon_h5 + "...", end="")
         photon_df = pandas.read_hdf(photon_h5, mode='r')
         if verbose:
             print("Done.")
-        bbox = None
+        return photon_df
 
     # Otherwise, generate a large bounding box, and download icesat-2 data into the photon bounding box.
+    if icesat2_dir is None:
+        icesat2_dir = os.path.dirname(photon_h5)
+
+    # 1. Get the "master" bounding box of all the DEMs in this set.
+    # NOTE OF WARNING: This will not work if DEM's straddle the longitudinal dateline (+/- 180* longitude).
+    # We are presuming they don't. This will break if that is not true.
+    # Start with nonsense min/max values.
+    xmin_total = numpy.inf
+    xmax_total = -numpy.inf
+    ymin_total = numpy.inf
+    ymax_total = -numpy.inf
+
+    # Set empty variables for the DEM projection and EPSG values.
+    dset_projection = None
+    dset_epsg = None
+    # Loop through the DEMs to get an emcompassing bounding box.
+    for dem_name in dem_list:
+        if not os.path.exists(dem_name):
+            print("File", dem_name, "does not appear to exist at the location specified. Skipping.")
+            continue
+
+        dset = gdal.Open(dem_name, gdal.GA_ReadOnly)
+        gtf = dset.GetGeoTransform()
+        xsize, ysize = dset.RasterXSize, dset.RasterYSize
+        this_dset_projection = dset.GetProjection()
+        xleft, xres, xskew, ytop, yskew, yres = gtf
+        xright = xleft + (xsize*xres)
+        ybottom = ytop + (ysize*yres)
+        this_dset_epsg = coastline_mask.get_dataset_epsg(dset)
+
+        # Check to make sure this DEM is in the same projection & EPSG as the others. Quit if not.
+        if dset_projection != None and ((this_dset_projection != dset_projection) or (this_dset_epsg != dset_epsg)):
+            raise Exception("Not all dems in 'dem_list' are in the same projection. Cannot create a global bounding box.")
+        else:
+            dset_projection = this_dset_projection
+            dset_epsg = this_dset_epsg
+
+        # Set the bounding box to the outer edge of the previous bounding box plus this DEM.
+        xmin_total = min(xleft, xright, xmin_total)
+        xmax_total = max(xleft, xright, xmax_total)
+        ymin_total = min(ytop, ybottom, ymin_total)
+        ymax_total = max(ytop, ybottom, ymax_total)
+
+
+    # If we'd set the boundaries, create the bounding box.
+    if (xmin_total != numpy.inf) and (xmax_total != -numpy.inf) and \
+       (ymin_total != numpy.inf) and (ymax_total != -numpy.inf):
+
+        bbox = (xmin_total, ymin_total, xmax_total, ymax_total)
+    # Otherwise just don't use one.
     else:
-        if icesat2_dir is None:
-            icesat2_dir = os.path.split(photon_h5)[0]
+        raise Exception("Failed to create bounding box from listed DEMs.")
 
-        # 1. Get the "master" bounding box of all the DEMs in this set.
-        # NOTE OF WARNING: This will not work if DEM's straddle the longitudinal dateline (+/- 180* longitude).
-        # We are presuming they don't. This will break if that is not true.
-        # Start with nonsense min/max values.
-        xmin_total = numpy.inf
-        xmax_total = -numpy.inf
-        ymin_total = numpy.inf
-        ymax_total = -numpy.inf
+    # if bbox is None:
+    #     # If there's no bounding box, there should be no dataset projection gathered either.
+    #     # This is just a logical sanity check to make sure that's true. If we ever
+    #     # fail this assertion, come back here and figure out what odd logic is going on.
+    #     assert dset_projection == None and dset_epsg == None
 
-        # Set empty variables for the DEM projection and EPSG values.
-        dset_projection = None
-        dset_epsg = None
-        # Loop through the DEMs to get an emcompassing bounding box.
-        for dem_name in dem_list:
-            if not os.path.exists(dem_name):
-                print("File", dem_name, "does not appear to exist at the location specified. Skipping.")
-                continue
+    #     if verbose:
+    #         print("Warning: No valid DEMs were provided to create a bounding box in {0}.read_or_create_photon_h5(). No ICESat-2 data downloaded.")
+    #     # Theoretically, there still could be ICESat-2 data already in the data directory,
+    #     # and the function could still succeed even without any newly downloaded data,
+    #     # so I'm not raising an exception here. If there is indeed no data in the
+    #     # directory, the call to classify_icesat2_photons.save_photon_data_from_directory() below
+    #     # should return None, which will be passed back to calling function.
 
-            dset = gdal.Open(dem_name, gdal.GA_ReadOnly)
-            gtf = dset.GetGeoTransform()
-            xsize, ysize = dset.RasterXSize, dset.RasterYSize
-            this_dset_projection = dset.GetProjection()
-            xleft, xres, xskew, ytop, yskew, yres = gtf
-            xright = xleft + (xsize*xres)
-            ybottom = ytop + (ysize*yres)
-            this_dset_epsg = coastline_mask.get_dataset_epsg(dset)
+    # else:
+    # If the projection is not in WGS84 as icesat is, we need to convert.
+    if dset_epsg != 4326:
+        # TODO: Perhaps create a shapefile of the bounding box with its projection?
+        # We would need to test whether or not a projected shapefile works in the icepyx API,
+        # or if it needs to be in WGS84 (ESPG:4326)
+        # FOR NOW, just convert the bbox into ESPG 4326, and send it as polygon
+        # points in ESPG 4236 projection.This is fine for now, but THIS WILL BREAK
+        # when dealing with polar stereo projections that include the N or S poles,
+        # or which overlaps the -180/180 longitude line (which many do).
+        # A box that includes one of the poles in polar stereo will not do so in
+        # geogrphic coordinates.
+        # Update this code later to deal with it more elegantly.
+        icesat2_srs = osr.SpatialReference()
+        icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
+        dem_srs = osr.SpatialReference(wkt=dset_projection)
+        # Convert bbox points from DEM projection into
+        proj_to_wgs84 = osr.CoordinateTransformation(dem_srs, icesat2_srs)
 
-            # Check to make sure this DEM is in the same projection & EPSG as the others. Quit if not.
-            if dset_projection != None and ((this_dset_projection != dset_projection) or (this_dset_epsg != dset_epsg)):
-                raise Exception("Not all dems in 'dem_list' are in the same projection. Cannot create a global bounding box.")
-            else:
-                dset_projection = this_dset_projection
-                dset_epsg = this_dset_epsg
-
-            # Set the bounding box to the outer edge of the previous bounding box plus this DEM.
-            xmin_total = min(xleft, xright, xmin_total)
-            xmax_total = max(xleft, xright, xmax_total)
-            ymin_total = min(ytop, ybottom, ymin_total)
-            ymax_total = max(ytop, ybottom, ymax_total)
-
-
-        # If we'd set the boundaries, create the bounding box.
-        if (xmin_total != numpy.inf) and (xmax_total != -numpy.inf) and \
-           (ymin_total != numpy.inf) and (ymax_total != -numpy.inf):
-
-            bbox = (xmin_total, ymin_total, xmax_total, ymax_total)
-        # Otherwise just don't use one.
-        else:
-            bbox = None
-
-        if not skip_icesat2_download:
-            if bbox is None:
-                # If there's no bounding box, there should be no dataset projection gathered either.
-                # This is just a logical sanity check to make sure that's true. If we ever
-                # fail this assertion, come back here and figure out what odd logic is going on.
-                assert dset_projection == None and dset_epsg == None
-
-                if verbose:
-                    print("Warning: No valid DEMs were provided to create a bounding box in {0}.read_or_create_photon_h5(). No ICESat-2 data downloaded.")
-                # Theoretically, there still could be ICESat-2 data already in the data directory,
-                # and the function could still succeed even without any newly downloaded data,
-                # so I'm not raising an exception here. If there is indeed no data in the
-                # directory, the call to classify_icesat2_photons.save_photon_data_from_directory() below
-                # should return None, which will be passed back to calling function.
-
-            else:
-                # If the projection is not in WGS84 as icesat is, we need to convert.
-                if dset_epsg != 4326:
-                    # TODO: Perhaps create a shapefile of the bounding box with its projection?
-                    # We would need to test whether or not a projected shapefile works in the icepyx API,
-                    # or if it needs to be in WGS84 (ESPG:4326)
-                    # FOR NOW, just convert the bbox into ESPG 4326, and send it as polygon
-                    # points in ESPG 4236 projection.This is fine for now, but THIS WILL BREAK
-                    # when dealing with polar stereo projections that include the N or S poles,
-                    # or which overlaps the -180/180 longitude line (which many do).
-                    # A box that includes one of the poles in polar stereo will not do so in
-                    # geogrphic coordinates.
-                    # Update this code later to deal with it more elegantly.
-                    icesat2_srs = osr.SpatialReference()
-                    icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
-                    dem_srs = osr.SpatialReference(wkt=dset_projection)
-                    # Convert bbox points from DEM projection into
-                    proj_to_wgs84 = osr.CoordinateTransformation(dem_srs, icesat2_srs)
-
-                    # Create a list of bbox points in counter-clockwise order.
-                    xmin, ymin, xmax, ymax = bbox
-                    points = [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin), (xmin, ymin)]
-                    output_points = proj_to_wgs84.TransformPoints(points)
-                    bbox_wgs84 = [(p[0], p[1]) for p in output_points]
-                else:
-                    bbox_wgs84 = bbox
+        # Create a list of bbox points in counter-clockwise order.
+        xmin, ymin, xmax, ymax = bbox
+        points = [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin), (xmin, ymin)]
+        output_points = proj_to_wgs84.TransformPoints(points)
+        bbox_wgs84 = [(p[0], p[1]) for p in output_points]
+    else:
+        bbox_wgs84 = bbox
 
 
-                for dset_name in ["ATL03", "ATL08"]:
-                    icepyx_download.icepyx_download(variables_list=[],
-                                                    dataset_name = dset_name,
-                                                    region= bbox_wgs84,
-                                                    local_dir=icesat2_dir,
-                                                    dates=dates,
-                                                    overwrite=False,
-                                                    child=False,
-                                                    verbose=verbose,
-                                                    crop_to_region=False,
-                                                    print_files=False)
+    if skip_icesat2_download:
+        # ? What to fill in here? Should we query the NSIDC[ thing (how long does that take?)
+        urls = nsidc_download.main(short_name=["ATL03","ATL08"],
+                                   region=bbox_wgs84,
+                                   local_dir=icesat2_dir,
+                                   dates=dates,
+                                   version=validate_dem.etopo_config.nsidc_atl_version,
+                                   fname_python_regex=r"\.h5\Z",
+                                   force=False,
+                                   query_only=True, # IMPORTANT: we're just querying to see what ATL03 granules are within this bbox, not actually downloading them.
+                                   quiet=False)
 
-        # If we're using a bounding box and it's not in WGS84 projection, then we must provide a
-        # converter for the data to fit within the bounding box.
+        atl_fnames = [url.split("/")[-1] for url in urls]
+        atl03_granules_list = [os.path.join(icesat2_dir, fname) for fname in atl_fnames if fname.find("ATL03") > -1]
+        atl08_granules_list = [os.path.join(icesat2_dir, fname) for fname in atl_fnames if fname.find("ATL08") > -1]
 
-        if bbox != None and dset_epsg != 4326:
-            icesat2_srs = osr.SpatialReference()
-            icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
-            dem_srs = osr.SpatialReference(wkt=dset_projection)
-            bbox_converter = osr.CoordinateTransformation(icesat2_srs, dem_srs)
-        else:
-            bbox_converter = None
+        # Only get names of files that actually exist locally on disk.
+        atl03_granules_list = [fn for fn in atl03_granules_list if os.path.exists(fn)]
+        atl08_granules_list = [fn for fn in atl08_granules_list if os.path.exists(fn)]
 
-        # Read the point cloud photon data into an HDF5 dataset.
-        photon_df = classify_icesat2_photons.save_photon_data_from_directory(icesat2_dir,
-                                                                             photon_h5 = photon_h5,
-                                                                             bounding_box=bbox,
-                                                                             bbox_converter = bbox_converter,
-                                                                             verbose=verbose)
+    else:
+        # for dset_name in ["ATL03", "ATL08"]:
+        #     icepyx_download.icepyx_download(variables_list=[],
+        #                                     dataset_name = dset_name,
+        #                                     region= bbox_wgs84,
+        #                                     local_dir=icesat2_dir,
+        #                                     dates=dates,
+        #                                     overwrite=False,
+        #                                     child=False,
+        #                                     verbose=verbose,
+        #                                     crop_to_region=False,
+        #                                     print_files=False)
+
+        granules_list = nsidc_download.main(short_name=["ATL03","ATL08"],
+                                            region=bbox_wgs84,
+                                            local_dir=icesat2_dir,
+                                            version=validate_dem.etopo_config.nsidc_atl_version,
+                                            dates = dates,
+                                            fname_python_regex="\.h5\Z", # Only download H5 files, not XML files.
+                                            force=False,
+                                            quiet=not verbose)
+
+        # print("Granules:", len(granules_list), "\n", granules_list)
+
+        atl03_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL03") > -1]
+        atl08_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL08") > -1]
+
+        # atl08_granules_list = nsidc_download.main(short_name="ATL08",
+        #                                           region=bbox_wgs84,
+        #                                           local_dir=icesat2_dir,
+        #                                           version=validate_dem.etopo_config.nsidc_atl_version,
+        #                                           dates = dates,
+        #                                           fname_filter="*.h5",
+        #                                           force=False,
+        #                                           quiet=not verbose)
+
+    # Get a list of the common granules between the ATL03 and ATL08 datasets (usually the same list, but occasionally
+    # a granule in the corner of the search box may be included in one dataset's NSIDC query but omitted from another.)
+    common_granule_ids = []
+    atl08_fnames = [os.path.split(a8)[1] for a8 in atl08_granules_list]
+    atl03_fnames = [os.path.split(a3)[1] for a3 in atl03_granules_list]
+    # print("ATL03:", len(atl03_fnames), "\n", atl03_fnames)
+    # print("ATL08:", len(atl08_fnames), "\n", atl08_fnames)
+    for atl03_path, atl03_gid in zip(atl03_granules_list, atl03_fnames):
+        if atl03_gid.replace("ATL03", "ATL08") in atl08_fnames:
+            common_granule_ids.append(atl03_path)
+
+    # Make sure we actually have some files to use here.
+    if len(common_granule_ids) == 0:
+        raise Exception("No common ATL03/08 ICESat-2 granules exist within the bounding box of the DEMs, within the {0} directory.".format(icesat2_dir))
+
+    # If we're using a bounding box and it's not in WGS84 projection, then we must provide a
+    # converter for the data to fit within the bounding box.
+
+    if bbox != None and dset_epsg != 4326:
+        icesat2_srs = osr.SpatialReference()
+        icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
+        dem_srs = osr.SpatialReference(wkt=dset_projection)
+        bbox_converter = osr.CoordinateTransformation(icesat2_srs, dem_srs)
+    else:
+        bbox_converter = None
+
+    # Read the point cloud photon data into an HDF5 dataset.
+    # NOTE: This doesn't work if we're using the cache directory with *all* the icesat-2 photons.
+    # Must use the list of photons provided above.
+    photon_df = classify_icesat2_photons.save_photon_data_from_directory_or_list_of_granules(common_granule_ids,
+                                                                                             photon_h5 = photon_h5,
+                                                                                             bounding_box=bbox,
+                                                                                             bbox_converter = bbox_converter,
+                                                                                             verbose=verbose)
 
     if create_shapefile:
         if shapefile_name is None:
@@ -204,7 +266,7 @@ def read_or_create_photon_h5(dem_list,
 def validate_list_of_dems(dem_list_or_dir,
                           photon_h5,
                           results_h5=None,
-                          fname_filter=".tif\Z",
+                          fname_filter=r"\.tif\Z",
                           fname_omit=None,
                           output_dir=None,
                           icesat2_dir=None,
@@ -217,11 +279,55 @@ def validate_list_of_dems(dem_list_or_dir,
                           skip_icesat2_download=False,
                           delete_datafiles=False,
                           write_result_tifs=False,
+                          shapefile_name = None,
                           verbose=True):
     """Take a list of DEMs, presumably in a single area, and output validation files for those DEMs.
 
     DEMs should encompass a contiguous area so as to use the same set of ICESat-2 granules for
     validation."""
+
+    if output_dir is None:
+        stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
+    else:
+        stats_and_plots_dir = output_dir
+
+    if place_name is None:
+        stats_and_plots_base = "summary_results"
+    else:
+        stats_and_plots_base = place_name + "_results"
+
+    statsfile_name = os.path.join(stats_and_plots_dir, stats_and_plots_base + ".txt")
+    plot_file_name = os.path.join(stats_and_plots_dir, stats_and_plots_base + ".png")
+
+    # If the .h5 results file already exists but not the other files, just
+    # create them and exit.
+    if (not overwrite) and (results_h5 is not None) and os.path.exists(results_h5):
+        results_df = None
+
+        if not os.path.exists(statsfile_name):
+            results_df = pandas.read_hdf(results_h5)
+            if verbose:
+                print(results_df, "read.")
+            validate_dem.write_summary_stats_file(results_df,
+                                                  statsfile_name,
+                                                  verbose=verbose)
+
+        if not os.path.exists(plot_file_name):
+            if results_df is None:
+                results_df = pandas.read_hdf(results_h5)
+                if verbose:
+                    print(results_df, "read.")
+            plot_validation_results.plot_histogram_and_error_stats_4_panels(results_df,
+                                                                            plot_file_name,
+                                                                            place_name=place_name,
+                                                                            verbose=verbose)
+        if (results_df is None) and verbose:
+            print("Files '" + results_h5 + "',",
+                  "'" + statsfile_name + "', and '",
+                  plot_file_name + "' are all already written. There's nothing left to do here.\n",
+                  "To recompute them, run with --overwrite enabled, or delete output files as needed and re-run to create them again.\n",
+                  "Exiting.")
+        return
 
     path = dem_list_or_dir
     # If we have a one-item list here, get the item in that list.
@@ -237,22 +343,26 @@ def validate_list_of_dems(dem_list_or_dir,
         assert os.path.exists(path)
         dem_list = [path]
 
-
     # Filter for needed strings in filenames, such as "_wgs84.tif"
     if fname_filter != None:
+        # Include only filenames that MATCH the match string.
         dem_list = [fn for fn in dem_list if (re.search(fname_filter, fn) != None)]
 
     # Filter out unwanted filename strings.
     if fname_omit != None:
+        # Only include filenames that DO NOT MATCH the omission string.
         dem_list = [fn for fn in dem_list if (re.search(fname_omit, fn) == None)]
 
     # If a common photon dataframe already exists, open and use it.
+    # Otherwise, create it.
     read_or_create_photon_h5(dem_list,
                              photon_h5,
                              output_dir=output_dir,
                              icesat2_dir=icesat2_dir,
                              skip_icesat2_download = skip_icesat2_download,
                              overwrite=overwrite,
+                             create_shapefile = False if (shapefile_name is None) else True,
+                             shapefile_name = shapefile_name,
                              verbose=verbose)
 
     if not os.path.exists(photon_h5):
@@ -281,18 +391,20 @@ def validate_list_of_dems(dem_list_or_dir,
                                            granule_ids=None,
                                            results_dataframe_file = results_h5_file,
                                            icesat2_date_range = date_range,
-                                           interim_data_dir = icesat2_dir,
+                                           interim_data_dir = this_output_dir,
                                            overwrite=overwrite,
                                            delete_datafiles = delete_datafiles,
                                            write_result_tifs = write_result_tifs,
                                            write_summary_stats = create_individual_results,
                                            skip_icesat2_download = True,
                                            plot_results = create_individual_results,
-                                           return_photon_dataframe = False,
                                            quiet=not verbose)
 
         if os.path.exists(results_h5_file):
             list_of_results_dfs.append(results_h5_file)
+
+    # An extra newline is appreciated here just for readability's sake.
+    print()
 
     if len(list_of_results_dfs) == 0:
         if verbose:
@@ -303,33 +415,24 @@ def validate_list_of_dems(dem_list_or_dir,
     total_results_df = plot_validation_results.get_data_from_h5_or_list(list_of_results_dfs,
                                                                         verbose=verbose)
 
-    if output_dir is None:
-        stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
-    else:
-        stats_and_plots_dir = output_dir
-
-    if place_name is None:
-        stats_and_plots_base = "summary_results"
-    else:
-        stats_and_plots_base = place_name + "_results"
 
     # Output the statistics summary file.
-    statsfile_name = os.path.join(stats_and_plots_dir, stats_and_plots_base + ".txt")
     validate_dem.write_summary_stats_file(total_results_df,
                                           statsfile_name,
                                           verbose=verbose)
 
     # Output the validation results plot.
-    plot_file_name = os.path.join(stats_and_plots_dir, stats_and_plots_base + ".png")
     plot_validation_results.plot_histogram_and_error_stats_4_panels(total_results_df,
                                                                     plot_file_name,
                                                                     place_name=place_name,
                                                                     verbose=verbose)
 
-    if not results_h5 is None:
+    if results_h5 is not None:
         total_results_df.to_hdf(results_h5, "results")
         if verbose:
             print(results_h5, "written.")
+
+    return
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(
@@ -338,8 +441,8 @@ def define_and_parse_args():
     parser.add_argument("directory_or_files", type=str, nargs='+',
         help="A directory path, or a list of individual DEM tiles. Defaults to the same as the input directory, or the directory in which the first DEM resides.")
 
-    parser.add_argument("-fname_filter", "-ff", type=str, default=".tif\Z",
-        help="A regex string to search for in all DEM file names, to use as a filter. Defaults to '.tif\Z', indicating .tif at the end of the file name. Helps elimiate files that shouldn't be considered.")
+    parser.add_argument("-fname_filter", "-ff", type=str, default=r"\.tif\Z",
+        help="A regex string to search for in all DEM file names, to use as a filter. Defaults to r'\.tif\Z', indicating .tif at the end of the file name. Helps elimiate files that shouldn't be considered.")
 
     parser.add_argument("-fname_omit", "-fo", type=str, default=None,
         help="A regex string to search for and OMIT if it contains a match in the file name. Useful for avoiding derived datasets (such as converted DEMs) in the folder.")
@@ -347,14 +450,14 @@ def define_and_parse_args():
     parser.add_argument("-output_dir", "-od", type=str, default=None,
         help="Directory to output results (and intermittent data, if no data_dir is specified).")
 
-    parser.add_argument("-data_dir", "-dd", type=str, default=None,
-        help="Directory to put intermittent data, such as ICESat-2 granules and coastal masks. Default: Use the output_dir.")
+    parser.add_argument("-icesat2_dir", "-is2d", type=str, default=None,
+        help="Directory to put ICESat-2 granules. Default: Use the output_dir.")
 
     parser.add_argument("-photon_h5", "-h5", type=str, default=None,
         help="Name of the ICESat-2 photon dataframe file to create or use for this analysis. Will use existing files unless 'overwrite' is specified.")
 
     parser.add_argument("-results_h5", type=str, default=None,
-        help="Name of an output .h5 file to store the compiled grid-cell-level results for the entire dataset. Default: Just stores the summary without the actual results .h5")
+        help="Name of an output .h5 file to store the compiled grid-cell-level results for the entire dataset. Default: Just stores the summary without the actual results h5 file.")
 
     parser.add_argument("-input_vdatum", "-ivd", default="wgs84",
         help="The vertical datum of the input DEMs. [TODO: List possibilities here.] Default: 'wgs84'")
@@ -367,6 +470,9 @@ def define_and_parse_args():
 
     parser.add_argument("-place_name", "-name", type=str, default=None,
         help="Readable name of the location being validated. Will be used in output summary plots and validation report.")
+
+    parser.add_argument("-shapefile", "-shp", type=str, default=None,
+        help="Name of a shapefile to save locations of the granule paths. Default: No shapefile created.")
 
     parser.add_argument("--overwrite", "-o", action="store_true", default=False,
         help="Overwrite all files, including intermittent data files. Default: False (skips re-computing already-computed reseults.")
@@ -384,7 +490,7 @@ def define_and_parse_args():
         help="By default, all data files generted in this process are kept. If this option is chosen, delete them.")
 
     parser.add_argument("--write_result_tifs", action='store_true', default=False,
-                        help=""""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
+        help=""""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
 
     parser.add_argument("--quiet", "-q", action="store_true", default=False,
         help="Suppress output.")
@@ -403,14 +509,14 @@ def main():
             args.output_dir = os.path.split(path)[0]
             assert type(args.output_dir) == str
 
-    if args.data_dir is None:
+    if args.icesat2_dir is None:
         # Default: set the data directory to the same as the output directory
-        args.data_dir = args.output_dir
+        args.icesat2_dir = args.output_dir
 
     if args.photon_h5 is None:
         # Default: sat the photon H5 file to a file in the data directory with th same name as the data directory.
-        dirname = os.path.split(os.path.abspath(args.data_dir))[1]
-        args.photon_h5 = os.path.join(args.data_dir, dirname + ".h5")
+        dirname = os.path.split(os.path.abspath(args.icesat2_dir))[1]
+        args.photon_h5 = os.path.join(args.icesat2_dir, dirname + ".h5")
         if not args.quiet:
             print ("ICESat-2 photon data will be stored in", args.photon_h5 + ".")
 
@@ -426,14 +532,14 @@ def main():
         else:
             raise FileNotFoundError("Output directory '{0}' does not exist. Create directory or use the --create_folders flag upon execution.".format(args.output_dir))
 
-    if not os.path.exists(args.data_dir):
+    if not os.path.exists(args.icesat2_dir):
         if args.create_folders:
-            os.makedirs(args.data_dir)
+            os.makedirs(args.icesat2_dir)
         else:
-            raise FileNotFoundError("Data directory '{0}' does not exist. Create directory or use the --create_folders flag upon execution.".format(args.data_dir))
+            raise FileNotFoundError("ICESat-2 data directory '{0}' does not exist. Create directory or use the --create_folders flag upon execution.".format(args.icesat2_dir))
 
     h5_dir, h5_file = os.path.split(args.photon_h5)
-    if not os.path.exists(h5_dir):
+    if h5_dir != "" and not os.path.exists(h5_dir):
         if args.create_folders:
             os.makedirs(h5_dir)
         else:
@@ -447,20 +553,22 @@ def main():
 
     validate_list_of_dems(args.directory_or_files,
                           args.photon_h5,
-                          results_h5=args.results_h5,
-                          fname_filter=args.fname_filter,
-                          output_dir=args.output_dir,
-                          icesat2_dir = args.data_dir,
-                          input_vdatum=args.input_vdatum,
-                          output_vdatum=args.output_vdatum,
-                          overwrite=args.overwrite,
-                          date_range=args.date_range,
-                          skip_icesat2_download = args.skip_icesat2_download,
-                          place_name = args.place_name,
-                          delete_datafiles = args.delete_datafiles,
+                          results_h5                = args.results_h5,
+                          fname_filter              = args.fname_filter,
+                          fname_omit                = args.fname_omit,
+                          output_dir                = args.output_dir,
+                          icesat2_dir               = args.icesat2_dir,
+                          input_vdatum              = args.input_vdatum,
+                          output_vdatum             = args.output_vdatum,
+                          overwrite                 = args.overwrite,
+                          date_range                = args.date_range,
+                          skip_icesat2_download     = args.skip_icesat2_download,
+                          place_name                = args.place_name,
+                          delete_datafiles          = args.delete_datafiles,
                           create_individual_results = args.individual_results,
-                          write_result_tifs=args.write_result_tifs,
-                          verbose=not args.quiet)
+                          write_result_tifs         = args.write_result_tifs,
+                          shapefile_name            = args.shapefile,
+                          verbose                   = not args.quiet)
 
 if __name__ == "__main__":
     main()

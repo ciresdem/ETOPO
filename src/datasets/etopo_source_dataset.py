@@ -160,6 +160,10 @@ class ETOPO_source_dataset:
         dset = gdal.Open(fname, gdal.GA_Update)
         band = dset.GetRasterBand(1)
         existing_ndv = band.GetNoDataValue()
+        # If they are already the same, just move along.
+        if existing_ndv == ndv_value:
+            return
+
         if fail_if_different and (existing_ndv != None) and (existing_ndv != ndv_value):
             print(f"Warning in {fname}: existing NDV ({existing_ndv}) != new NDV ({ndv_value}).\n" + \
                   "New data will NOT be written.")
@@ -175,9 +179,6 @@ class ETOPO_source_dataset:
         # If they do already exist, we need to compute them again (force it) and
         # write them in there using "SetStatistics()"
         band.SetStatistics(*band.ComputeStatistics(0))
-
-        # stats = band.GetStatistics(0,1)
-        # print(stats)
 
         dset.FlushCache()
         band = None
@@ -256,12 +257,12 @@ class ETOPO_source_dataset:
 
 if __name__ == "__main__":
 
-    GEBCO = get_source_dataset_object("GEBCO")
+    # GEBCO = get_source_dataset_object("GEBCO")
     # GEBCO.create_waffles_datalist()
 
-    # FAB = get_source_dataset_object("FABDEM")
+    FAB = get_source_dataset_object("FABDEM")
 
-    # FAB.set_ndv(verbose=True, fail_if_different=False)
+    FAB.set_ndv(verbose=True, fail_if_different=False)
 
 
     # COP = get_source_dataset_object("CopernicusDEM")

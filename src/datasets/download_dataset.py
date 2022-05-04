@@ -4,6 +4,7 @@ import os
 import re
 import pexpect
 import subprocess
+import urllib
 
 ###############################################################################
 # Import the project /src directory into PYTHONPATH, in order to import all the
@@ -79,17 +80,47 @@ class DatasetDownloader_BaseClass:
 
         return None
 
+    def query_for_remote_filesize(self, url, data_dir):
+        """Use the 'wget --spider [url]' command to query for a remote file size."""
+
+        sizecheck_command = "wget --spider " + url
+        # print(command)
+        (command_output, exitstatus) = pexpect.run(sizecheck_command, cwd=data_dir, withexitstatus=True)
+
+        if exitstatus == 0:
+            # A typical query string looks like this:
+            #    Length: 151092250 (144M) [image/tiff]
+            # Here we're looking for the two words between 'Length: ' and the first "[". Those tell us the
+            # exact bite size (fsize_remove) and the short string for the file size (fsize_small)
+            try:
+                fsize_remote, fsize_small = re.search("(?<=Length: )[\w\(\) ]+(?=\[)", command_output.decode('utf-8')).group().split()
+            except AttributeError:
+                # If the regex search fails, at least print the output so I can debug it.
+                print("WARNING: String regex-match failed in query_for_remote_filesize()...")
+                print(sizecheck_command)
+                print(command_output.decode('utf-8'))
+                return exitstatus, None, None
+            fsize_small = fsize_small.strip("(),")
+            fsize_remote = int(fsize_remote)
+
+
+        return exitstatus, fsize_remote, fsize_small
+
     # NOTE: Before running this function, you should go into the sub-directory for the individual dataset and
     # use the create_list_of_links() function in there.
     def download_files(self,
                        N_subprocs=1,
                        include_speed_strings=False,
-                       check_sizes_of_existing_files=True):
+                       check_sizes_of_existing_files=True,
+                       wget_extra_args=None):
+        """wget_extra_args should be a single string with extra arguments to
+        feed to the wget command. Nothing will be added if None.
+        """
 
         file_of_urls = self.url_list
         data_dir = self.local_data_dir
-        # if not os.path.exists(file_of_urls):
-        #     create_list_of_links(file_to_save=file_of_urls)
+        if not os.path.exists(file_of_urls):
+            self.create_list_of_links()
 
         urls_ALL = [line.strip() for line in open(file_of_urls,'r').readlines() if len(line.strip()) > 0]
         N = len(urls_ALL)
@@ -109,27 +140,44 @@ class DatasetDownloader_BaseClass:
         print("Browsing existing files to look for needed downloads... ", end="")
         for i,url in enumerate( urls_ALL ):
 
-            command = "wget " + url
-            filename = os.path.split(url)[1]
-            local_filepath = os.path.join(data_dir, filename)
+            command = "wget " + ("" if (wget_extra_args is None) else (wget_extra_args + " ")) + url
+
+            num_dirs_to_cut = 0
+            if wget_extra_args.find("--cut-dirs=") >= 0:
+                num_dirs_to_cut = int(re.search("(?<=--cut-dirs\=)\d+", wget_extra_args).group())
+
+            url_dirs = urllib.parse.urlparse(url).path.strip("/").split("/")
+            subdirs = url_dirs[num_dirs_to_cut:]
+
+            local_filepath = os.path.join(data_dir, *subdirs)
+
+            # # THIS IS WRONG, THIS IS NOT HOW THE FILES ARE SAVED. LOOK IN SUBDIRS.
+            # filename = os.path.split(url)[1]
+            # local_filepath = os.path.join(data_dir, filename)
 
             # First check to see if the file already exists (did we already download it?)
             if os.path.exists(local_filepath):
                 # print(True, i)
                 # If we're checking the remote vs local file sizes to see if it already downloaded, try again.
                 if check_sizes_of_existing_files:
-                    # Run the command, get its output.
-                    command = "wget --spider " + url
-                    # print(command)
-                    (command_output, exitstatus) = pexpect.run(command, cwd=data_dir, withexitstatus=True)
+                    # Run the 'wget --spider' command to query the remove files size, get its output.
+                    # sizecheck_command = "wget --spider " + url
+                    # # print(command)
+                    # (command_output, exitstatus) = pexpect.run(sizecheck_command, cwd=data_dir, withexitstatus=True)
                     # print(command_output)
                     # print(exitstatus)
                     # print(command_output) #.decode('utf-8'))
                     # If the wget --spider command exited successfully.
+                    # if exitstatus == 0:
+                    #     # A typical query string looks like this:
+                    #     #    Length: 151092250 (144M) [image/tiff]
+                    #     # Here we're looking for the two words between 'Length: ' and the first "[". Those tell us the
+                    #     # exact bite size (fsize_remove) and the short string for the file size (fsize_small)
+                    #     fsize_remote, fsize_small = re.search("(?<=Length:\ )[\w\(\)\ ]+(?=\[)", command_output.decode('utf-8')).group().split()
+                    #     fsize_small = fsize_small.strip("(),")
+                    #     fsize_remote = int(fsize_remote)
+                    exitstatus, fsize_remote, fsize_small = self.query_for_remote_filesize(url, data_dir)
                     if exitstatus == 0:
-                        fsize_remote, fsize_small = re.search("(?<=Length: )[\w\(\)\.\, ]+(?= \[application)", command_output.decode('utf-8')).group().split()
-                        fsize_small = fsize_small.strip("(),")
-                        fsize_remote = int(fsize_remote)
                         fsize_local = os.path.getsize(local_filepath)
                         # print(url, fsize_remote, fsize_local)
                         if fsize_remote == fsize_local:
@@ -140,21 +188,23 @@ class DatasetDownloader_BaseClass:
                             # If part of the file already exists, we can remove it by using the "--continue" flag.
                             command = command + " --continue"
                             urls_to_download.append(url)
-                            # active_fsize_strings.append(fsize_small)
+                            active_fsize_strings.append(fsize_small)
                             wget_commands.append(command)
 
                     else:
                         # print("({0} of {1})".format(i+1, N), filename, "size query returned exit status {0}. Skipping.".format(exitstatus))
                         continue
                         urls_to_download.append(url)
-                        # active_fsize_strings.append(None)
+                        active_fsize_strings.append(None)
                         wget_commands.append(command)
                 else:
                     # print("({0} of {1})".format(i+1, N), filename, "already exists.")
+                    # File already exists and we're not checking any new ones, just go on to the next.
                     continue
             else:
+                # exitstatus, fsize_remote, fsize_small = self.query_for_remote_filesize(url, data_dir)
                 urls_to_download.append(url)
-                # active_fsize_strings.append(None)
+                active_fsize_strings.append(None)
                 wget_commands.append(command)
 
         print("Done.")
@@ -187,6 +237,10 @@ class DatasetDownloader_BaseClass:
                                   active_urls_list,
                                   status_strings)):
                     # The current process is alive. Get its status.
+                    if fsize_str in (None,""):
+                        _, _, fsize_str = self.query_for_remote_filesize(current_url, data_dir)
+                        active_fsize_strings[i] = fsize_str
+
                     if current_proc.isalive():
                         retval = current_proc.expect(["\r", pexpect.EOF, pexpect.TIMEOUT], timeout=0.001)
                         if retval == 0:
@@ -213,10 +267,16 @@ class DatasetDownloader_BaseClass:
                             pass
                     else:
                         # Remove it from the queue, print a confirmation message.
-                        active_procs_list.remove(current_proc)
-                        active_fsize_strings.remove(fsize_str)
-                        status_strings.remove(status_str)
-                        active_urls_list.remove(current_url)
+                        # Find the process in active_procs_list
+                        proc_idx = active_procs_list.index(current_proc)
+                        # active_procs_list.remove(current_proc)
+                        active_procs_list = active_procs_list[:proc_idx] + active_procs_list[proc_idx+1:]
+                        # active_fsize_strings.remove(fsize_str)
+                        active_fsize_strings = active_fsize_strings[:proc_idx] + active_fsize_strings[proc_idx+1:]
+                        # status_strings.remove(status_str)
+                        status_strings = status_strings[:proc_idx] + status_strings[proc_idx+1:]
+                        # active_urls_list.remove(current_url)
+                        active_urls_list = active_urls_list[:proc_idx] + active_urls_list[proc_idx+1:]
                         fname = os.path.split(current_url)[1]
                         num_finished += 1
                         str_to_print = "\r({0} of {1}) {2} complete. ({3})".format(
@@ -263,7 +323,7 @@ class DatasetDownloader_BaseClass:
                     status_strings.append("")
                     # Now, retrive the file size from the wget opening screen. Also, add to the various status strings.
                     try:
-                        size_strings = re.search("(?<=Length: )[\w\(\)\.\, ]+(?= \[application)", before).group().split()
+                        size_strings = re.search("(?<=Length: )[\w\(\)\.\, ]+(?=\[)", before).group().split()
                         active_fsize_strings.append(size_strings[1].strip("(),"))
                     except:
                         active_fsize_strings.append("")
@@ -333,7 +393,8 @@ class DatasetDownloader_BaseClass:
                     print( " ... ERROR: Return code", proc.returncode)
 
 if __name__ == "__main__":
-    dirname = os.path.abspath(os.path.join(os.path.split(__file__)[0], "../../../DEMs/TanDEM-X/data/90mdem/DEM"))
-    print(dirname)
-    dl = DatasetDownloader_BaseClass("TanDEMX", dirname)
-    dl.unzip_downloaded_files(to_subdirs=False, overwrite=False)
+    pass
+    # dirname = os.path.abspath(os.path.join(os.path.split(__file__)[0], "../../../DEMs/TanDEM-X/data/90mdem/DEM"))
+    # print(dirname)
+    # dl = DatasetDownloader_BaseClass("TanDEMX", dirname)
+    # dl.unzip_downloaded_files(to_subdirs=False, overwrite=False)

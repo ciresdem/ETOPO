@@ -33,12 +33,7 @@ class source_dataset_FOOBAR(etopo_source_dataset.ETOPO_source_dataset):
                  configfile = os.path.join(THIS_DIR, "FOOBAR_config.ini" )):
         \"""Initialize the FOOBAR source dataset object.\"""
 
-        etopo_source_dataset.ETOPO_source_dataset.__init__(self, "FOOBAR", configfile)
-
-    def is_active(self):
-        \"""A switch to see if thais dataset is yet being used.\"""
-        # Switch to 'True' when the .ini is filled out and this is ready to go.
-        return False
+        super(source_dataset_FOOBAR, self).__init__("FOOBAR", configfile)
 """
 
 import os
@@ -107,4 +102,9 @@ def populate_all_source_datasets(overwrite=True):
 
 if __name__ == "__main__":
     # populate_all_source_datasets()
-    populate_dataset_module("ETOPO1")
+    populate_dataset_module("CUDEM_CONUS")
+    populate_dataset_module("CUDEM_Hawaii")
+    populate_dataset_module("CUDEM_Guam")
+    populate_dataset_module("CUDEM_AmericanSamoa")
+    populate_dataset_module("CUDEM_PuertoRico")
+    populate_dataset_module("CUDEM_VirginIslands")

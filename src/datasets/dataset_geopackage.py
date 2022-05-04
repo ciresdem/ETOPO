@@ -223,7 +223,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
     """Inherited from the DatasetGeopackage, slightly modified __init__()
     interface to handle specifically the ETOPO source files."""
     def __init__(self, resolution):
-        assert resolution in (1,15)
+        assert resolution in (1,15,60)
 
         ## These member variables are the same as the ones initiated in DatasetGeopackage.__init__()
 
@@ -231,8 +231,12 @@ class ETOPO_Geopackage(DatasetGeopackage):
         self.config = utils.configfile.config()
         self.resolution = resolution
 
-        self.filename = self.config.etopo_tile_geopackage_1s if resolution == 1 else \
-                        self.config.etopo_tile_geopackage_15s
+        if resolution == 1:
+            self.filename = self.config.etopo_tile_geopackage_1s
+        elif resolution == 15:
+            self.filename = self.config.etopo_tile_geopackage_15s
+        else:
+            self.filename = self.config.etopo_tile_geopackage_60s
 
         self.base_dir = self.config._abspath(os.path.join(self.config.etopo_empty_tiles_directory, str(resolution) + "s"))
 
@@ -287,10 +291,10 @@ def create_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # ET1 = ETOPO_Geopackage(1)
-    # print(ET1.get_gdf())
+    # ET1 = ETOPO_Geopackage(60)
     # ET1.add_dlist_paths_to_gdf()
     # print(ET1.get_gdf().columns)
+    # print(ET1.get_gdf())
     # import sys
     # sys.exit(0)
 

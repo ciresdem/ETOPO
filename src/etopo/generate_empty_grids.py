@@ -79,7 +79,11 @@ def create_empty_tiles(directory,
     tuple_list = create_list_of_tile_tuples(resolution=resolution_s)
     # fname_metadata_template = config_obj.etopo_metadata_template
 
-    empty_array = numpy.zeros((file_dim_size, file_dim_size), dtype = dtypes_dict_numpy[dtype]) + ndv
+    if resolution_s == 60:
+        # For the 60s (1-arc-minute) array, we're covering 360*lon by 180*lat
+        empty_array = numpy.zeros((int(file_dim_size/2), file_dim_size), dtype = dtypes_dict_numpy[dtype]) + ndv
+    else:
+        empty_array = numpy.zeros((file_dim_size, file_dim_size), dtype = dtypes_dict_numpy[dtype]) + ndv
 
     if os.path.splitext(fname_template_tif)[1].lower() == ".tif":
         driver = gdal.GetDriverByName("GTiff")
@@ -94,7 +98,8 @@ def create_empty_tiles(directory,
     for i,tiletuple in enumerate(tuple_list):
         ymin = tiletuple[0]
         xmin = tiletuple[1]
-        ymax = ymin + tile_width_deg
+        ymax = ymin + (tile_width_deg if (resolution_s != 60) else tile_width_deg/2)
+        # foobar
 
         # if shapefile_only:
         #     continue
@@ -110,7 +115,10 @@ def create_empty_tiles(directory,
                                                                   )
                              )
 
-        ds = driver.Create(fname, file_dim_size, file_dim_size, 1, dtypes_dict_gdal[dtype], options=compression_options)
+        file_dim_x = file_dim_size
+        file_dim_y = int(file_dim_size/2) if (resolution_s == 60) else file_dim_size
+
+        ds = driver.Create(fname, file_dim_x, file_dim_y, 1, dtypes_dict_gdal[dtype], options=compression_options)
         ds.SetGeoTransform(geotransform)
         ds.SetProjection(projection.ExportToWkt())
         band = ds.GetRasterBand(1)
@@ -212,10 +220,6 @@ def create_tile_shapefile(shapefile_name,
 
     return
 
-def copy_empty_tiles_to_active_dir(resolution=15, config_obj = my_config, overwrite=True):
-    # TODO: finish
-    pass
-
 def create_list_of_tile_tuples(resolution = 15,
                                config_obj = my_config,
                                verbose=True):
@@ -223,7 +227,7 @@ def create_list_of_tile_tuples(resolution = 15,
 
     Each item will be a 2-tuple containing the (southernmost_latitude, westernmost_logitude).
     Add 1 to each number to get the (norternmost_latitude, easternmost_longitude) bbox coordinates."""
-    assert resolution in (1,15)
+    assert resolution in (1,15,60)
 
     if resolution == 1:
         # Import the Copernicus source dataset, and get the datafiles directory from it.
@@ -258,6 +262,11 @@ def create_list_of_tile_tuples(resolution = 15,
         lons_list = lons_list.flatten()
         lats_list = lats_list.flatten()
         dem_tuples = list(zip(lats_list, lons_list))
+
+    elif resolution == 60:
+        # For 60s resolution, we're literlaly just amking one big-assed tile of the whole world. Bottom corner is -180 lon, -90 lat
+        dem_tuples = [(-90,-180),]
+
     else:
         raise ValueError("Unhandles ETOPO resolution: {0}".format(resolution))
 

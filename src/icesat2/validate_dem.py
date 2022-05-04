@@ -24,7 +24,8 @@ import utils.parallel_funcs as parallel_funcs
 import utils.configfile
 import etopo.convert_vdatum as convert_vdatum
 import etopo.coastline_mask as coastline_mask
-import icesat2.icepyx_download as icepyx_download
+# import icesat2.icepyx_download as icepyx_download
+import icesat2.nsidc_download as nsidc_download
 import icesat2.plot_validation_results as plot_validation_results
 import icesat2.classify_icesat2_photons as classify_icesat2_photons
 
@@ -358,500 +359,533 @@ def validate_dem_parallel(dem_name,
                           skip_icesat2_download = True,
                           plot_results = True,
                           location_name = None,
-                          return_photon_dataframe = False,
+                          mark_empty_results = True,
                           quiet=False):
     """The main function. Do it all here. But do it on more than one processor.
-
-    For now, DEM datum choices are "ellipsoid" (or "WGS84") or "geoid" (or "EGM2008").
-    Any other vertical datums, we will need to convert to WGS84 ellispoid elevations.
-    (Not coded yet but on the "TODO" list.)
+    TODO: Document all these method parameters. There are a bunch and they need better explanation.
     """
-    # If the output file already exists and we aren't overwriting, just read it and spit out the data.
+    # Just get this variable defined so all the code-branches can use it.
     dem_ds = None
-    if results_dataframe_file != None and os.path.exists(results_dataframe_file) and not overwrite:
-        if not quiet:
-            print("Reading", results_dataframe_file, '...', end="")
-
-        results_dataframe =  read_dataframe_file(results_dataframe_file)
-
-        if not quiet:
-            print("done.")
-    else:
-
-        if results_dataframe_file is None:
-            results_dataframe_file = os.path.splitext(dem_name) + ".h5"
-
-        if interim_data_dir is None:
-            interim_data_dir = os.path.split(results_dataframe_file)[0]
-
-        # Collect the metadata from the DEM.
-        dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, \
-            coastline_mask_filename, coastline_mask_array = \
-            coastline_mask.get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir=interim_data_dir)
-
-        # print(dem_bbox, dem_epsg, dem_step_xy)
-
-        # Make sure everything is on the same-sized grid. It'll all break if it's not.
-        # print("coastline_mask_array:", coastline_mask_array.shape)
-        # print("dem_array:", dem_array.shape)
-        # if coastline_mask_array.shape != dem
-        assert coastline_mask_array.shape == dem_array.shape
-
-        # Assert that the both the dem vertical datum and the output vertical datum are valid values.
-        if type(dem_vertical_datum) == str:
-            dem_vertical_datum = dem_vertical_datum.strip().lower()
-        assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
-        output_vertical_datum = output_vertical_datum.strip().lower()
-        # We do not (yet) have the capacity nor the need to convert icesat-2 points to egm96 heights.
-        # if "egm96" in SUPPORTED_VDATUMS:
-        #     SUPPORTED_VDATUMS.remove("egm96")
-        # if 5773 in SUPPORTED_VDATUMS:
-        #     SUPPORTED_VDATUMS.remove(5773)
-        # assert output_vertical_datum in SUPPORTED_VDATUMS
-
-        # Convert the vdatum of the input dem to be the same as the output process.
-        if dem_vertical_datum != output_vertical_datum:
-            dem_base, dem_ext = os.path.splitext(os.path.split(dem_name)[1])
-            converted_dem_name = os.path.join(interim_data_dir, dem_base + "_" + output_vertical_datum + dem_ext)
-
-            if not os.path.exists(converted_dem_name):
-                retval = convert_vdatum.convert_vdatum(dem_name,
-                                                       converted_dem_name,
-                                                       input_vertical_datum=dem_vertical_datum,
-                                                       output_vertical_datum=output_vertical_datum,
-                                                       verbose=not quiet)
-                # This is the old convert_vdatum code.
-                # subprocess.run([os.path.join(os.path.split(__file__)[0], "convert_vdatum.py"),
-                #                 dem_name,
-                #                 "-output_dem", converted_dem_name,
-                #                 "-input_vdatum", dem_vertical_datum,
-                #                 "-output_vdatum", output_vertical_datum,
-                #                 "-tempdir", os.path.split(dem_base)[0],
-                #                 "-interp_method", "cubic",
-                #                 "" if delete_datafiles else "--keep_grids",
-                #                 "--quiet" if quiet else "",
-                #                 ])
-                if (retval != 0) or (not os.path.exists(converted_dem_name)):
-                    raise FileNotFoundError(f"{dem_name} not converted correctly to {converted_dem_name}. Aborting.")
-
-            # Get the dem array from the new dataset.
-            dem_ds = None
-            dem_ds = gdal.Open(converted_dem_name, gdal.GA_ReadOnly)
-            dem_array = dem_ds.GetRasterBand(1).ReadAsArray()
-        else:
-            converted_dem_name = None
-
-        # If we've been provided an open dataframe rather than just the name of the file, simply use it.
-        if isinstance(photon_dataframe_name, pandas.DataFrame):
-            photon_df = photon_dataframe_name
-
-        # If the photon dataframe file containing all the photons in this tile already exists, just use it.
-        elif skip_icesat2_download and os.path.exists(photon_dataframe_name) and overwrite==False:
-            if not quiet:
-                print("Reading", photon_dataframe_name + "...", end="")
-            photon_df = pandas.read_hdf(photon_dataframe_name)
-            if not quiet:
-                print("Done.")
-
-        elif granule_ids is None:
-            # If the granules already exist in the directory and we've planned to skip
-            # re-downloading them, then skip them!
-            granules_existing_in_directory = [os.path.join(interim_data_dir, fname) for fname in os.listdir(interim_data_dir) if (os.path.splitext(fname)[1].lower() == ".h5" and fname.upper().find("ATL") >= 0)]
-            if skip_icesat2_download and (len(granules_existing_in_directory) > 0):
-                atl03_granules_list = [fname for fname in granules_existing_in_directory if fname.upper().find("ATL03") >= 0]
-                atl08_granules_list = [fname for fname in granules_existing_in_directory if fname.upper().find("ATL08") >= 0]
-
-            else:
-                # If the DEM is in a projection other than WGS84, get the bbox coordinates and convert to WGS84
-                # NOTE: This will break in polar stereo projections, and perhaps others.
-                # TODO: Find a more elegant way of doing this that doesn't fuck up polar projections.
-                if dem_epsg != 4326:
-                    icesat2_srs = osr.SpatialReference()
-                    icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
-                    dem_srs = osr.SpatialReference(wkt=dem_ds.GetProjection())
-                    # Convert bbox points from DEM projection into
-                    proj_to_wgs84 = osr.CoordinateTransformation(dem_srs, icesat2_srs)
-
-                    # Create a list of bbox points in counter-clockwise order.
-                    xmin, ymin, xmax, ymax = dem_bbox
-                    points = [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin), (xmin, ymin)]
-                    output_points = proj_to_wgs84.TransformPoints(points)
-                    bbox_wgs84 = [(p[0], p[1]) for p in output_points]
-                else:
-                    bbox_wgs84 = dem_bbox
-
-                ATL03_variables = classify_icesat2_photons.ATL03_variables_needed
-                atl03_granules_list = icepyx_download.icepyx_download(ATL03_variables,
-                                                                      "ATL03",
-                                                                      region=bbox_wgs84,
-                                                                      local_dir=interim_data_dir,
-                                                                      dates = icesat2_date_range,
-                                                                      overwrite=overwrite,
-                                                                      verbose=not quiet,
-                                                                      print_files=False)
-
-                # print(atl03_granules_list)
-                # Add the path to the files name.
-                atl03_granules_list = [os.path.join(interim_data_dir, gr) for gr in atl03_granules_list]
-
-                ATL08_variables = classify_icesat2_photons.ATL08_variables_needed
-                # atl08_granules_list =
-                atl08_granules_list = icepyx_download.icepyx_download(ATL08_variables,
-                                                                      "ATL08",
-                                                                      region=bbox_wgs84,
-                                                                      local_dir=interim_data_dir,
-                                                                      dates = icesat2_date_range,
-                                                                      overwrite=overwrite,
-                                                                      verbose=not quiet,
-                                                                      print_files=False)
-                # print(atl08_granules_list)
-                atl08_granules_list = [os.path.join(interim_data_dir, gr) for gr in atl08_granules_list]
-
-            common_granule_ids = []
-            for atl03_gid in atl03_granules_list:
-                fpath, fname = os.path.split(atl03_gid)
-                if os.path.exists(os.path.join(fpath, fname.replace("ATL03","ATL08"))):
-                    common_granule_ids.append(atl03_gid)
-
-            if len(common_granule_ids) < 0.5*len(atl03_granules_list):
-                raise UserWarning("ICESat-2 ATL03 granules IDs are less than 50% in common with ATL08 granule ids over bounding box {0}, {1} of {2} matching.".format(
-                                  dem_bbox, len(common_granule_ids), len(atl03_granules_list)))
-
-            photon_df = None
-        else:
-            common_granule_ids = granule_ids
-            photon_df = None
-
-        # If the DEM is not in WGS84 coordaintes, create a conversion funtion to pass to sub-functions.
-        if dem_epsg != 4326:
-            dem_proj_wkt = dem_ds.GetProjection()
-            # print(dem_proj_wkt)
-            icesat2_srs = osr.SpatialReference()
-            icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
-            dem_srs = osr.SpatialReference(wkt=dem_proj_wkt)
-            is2_to_dem = osr.CoordinateTransformation(icesat2_srs, dem_srs)
-        else:
-            is2_to_dem = None
-
-
-        if photon_df is None:
-            # Get the photon data from the dataframe.
-            photon_df = collect_raw_photon_data(dem_bbox,
-                                                photon_dataframe_name,
-                                                granule_ids=common_granule_ids,
-                                                overwrite=overwrite,
-                                                dem_bbox_converter = is2_to_dem,
-                                                verbose = not quiet)
-
-        if not quiet:
-            print("{0:,}".format(len(photon_df)), "ICESat-2 photons present in photon dataframe.")
-
-        # When we choose the "return_photon_dataframe" option, we want to return the full dataframe with all the photons, not just the subset within this DEM bounding box.
-        # Save a copy of the full dataframe here.
-        photon_df_full = photon_df
-
-        # If the DEM coordinate system isn't WGS84 lat/lon, convert the icesat-2
-        # lat/lon data coordinates into the same CRS as the DEM
-        if dem_epsg != 4326:
-
-            lon_x = photon_df["longitude"]
-            lat_y = photon_df["latitude"]
-            # print(numpy.min(lon_x), numpy.mean(lon_x), numpy.max(lon_x))
-            # print(numpy.min(lat_y), numpy.mean(lat_y), numpy.max(lat_y))
-
-            # print(is2_to_dem.TransformPoint())
-
-            points = is2_to_dem.TransformPoints( list(zip(lon_x, lat_y)) )
-            p_x = numpy.array([p[0] for p in points])
-            p_y = numpy.array([p[1] for p in points])
-            photon_df["dem_x"] = p_x
-            photon_df["dem_y"] = p_y
-
-            ph_xcoords = p_x
-            ph_ycoords = p_y
-
-        # Subset the dataframe to photons within the DEM bounding box.
-        # Also, filter out all noise photons.
-        else:
-            ph_xcoords = photon_df["longitude"]
-            ph_ycoords = photon_df["latitude"]
-
-        # ph_bbox_mask = (ph_ycoords > dem_bbox[1]) & (ph_ycoords < dem_bbox[3]) & \
-        #                (ph_xcoords > dem_bbox[0]) & (ph_xcoords < dem_bbox[2]) & \
-        #                (photon_df["class_code"] >= 1)
-
-        # Compute the (i,j) indices into the array of all the photons collected.
-        # Transform photon lat/lons into DEM indices.
-        xstart, xstep, _, ystart, _, ystep = dem_ds.GetGeoTransform()
-        xend = xstart + (xstep * dem_array.shape[1])
-        yend = ystart + (ystep * dem_array.shape[0])
-
-        # On edge pixels, the boundaries can sometimes make for some edge pixel artifacts.
-        # Just use photons that do not lie on the edge of the grid. This will help.
-        ph_bbox_mask = (ph_xcoords >= min(xstart, xend)) & \
-                       (ph_xcoords < max(xstart, xend)) & \
-                       (ph_ycoords > min(ystart, yend)) & \
-                       (ph_ycoords <= max(ystart, yend)) & \
-                       (photon_df["class_code"] >= 1)
-
-        # Subset the dataframe to only provide pixels in-bounds for our DEM
-        photon_df = photon_df[ph_bbox_mask].copy() # Create a copy so as not to be assinging to a slice of the full dataframe.
-        ph_xcoords = ph_xcoords[ph_bbox_mask]
-        ph_ycoords = ph_ycoords[ph_bbox_mask]
-
-        photon_df["i"] = numpy.floor((ph_ycoords - ystart) / ystep).astype(int)
-        photon_df["j"] = numpy.floor((ph_xcoords - xstart) / xstep).astype(int)
-
-        # Get the nodata value for the array, if it exists.
-        dem_ndv = dem_ds.GetRasterBand(1).GetNoDataValue()
-        # Generate a mask of photons that are (1) on land, (2) within the bounding box, and (3) not no-data
-        if dem_ndv is None:
-            dem_goodpixel_mask = (coastline_mask_array > 0)
-        else:
-            dem_goodpixel_mask = (coastline_mask_array > 0) & (dem_array != dem_ndv)
-
-        # Create an (i,j) multi-index into the array.
-        photon_df = photon_df.set_index(["i", "j"], drop=False).sort_index()
-
-        # Make sure that we only look at cells that have at least 1 ground photon in them.
-        ph_mask_ground_only = (photon_df["class_code"] == 1)
-        # ph_in_bounds = (photon_df.i >= 0) & (photon_df.i < dem_array.shape[0]) & \
-        #                (photon_df.j >= 0) & (photon_df.j < dem_array.shape[1])
-
-        dem_mask_w_ground_photons = numpy.zeros(dem_array.shape, dtype=bool)
-        dem_mask_w_ground_photons[photon_df.i[ph_mask_ground_only],
-                                  photon_df.j[ph_mask_ground_only]] = 1
-        # dem_mask_w_ground_photons[photon_df.i[ph_mask_ground_only & ph_in_bounds],
-        #                           photon_df.j[ph_mask_ground_only & ph_in_bounds]] = 1
-
-        dem_overlap_mask = dem_goodpixel_mask & dem_mask_w_ground_photons
-
-        dem_overlap_i, dem_overlap_j = numpy.where(dem_overlap_mask)
-        dem_overlap_elevs = dem_array[dem_overlap_mask]
-        N = len(dem_overlap_i)
-
-        if not quiet:
-            num_goodpixels = numpy.count_nonzero(dem_goodpixel_mask)
-            print("{:,}".format(num_goodpixels), "nonzero land cells exist in the DEM.")
-            if num_goodpixels == 0:
-                print("No land cells found in DEM. Stopping and moving on.")
-                if return_photon_dataframe:
-                    return photon_df_full
-                else:
-                    return None
-            else:
-                print("{:,} ICESat-2 photons overlap".format(len(photon_df)),
-                  "{:,}".format(N),
-                  "DEM cells ({:0.2f}% of total DEM data).".format(numpy.count_nonzero(dem_overlap_mask) * 100 / num_goodpixels))
-
-        # If we have no data overlapping the valid land DEM cells, just return None
-        if numpy.count_nonzero(dem_overlap_mask) == 0:
-            if not quiet:
-                print("No overlapping ICESat-2 data with valid land cells. Stopping and moving on.")
-            if return_photon_dataframe:
-                return photon_df_full
-            else:
-                return None
-
-        elif not quiet:
-            print("Performing ICESat-2/DEM cell validation...")
-
-        # Results arrays. Will comment some out later, for now just keep them.
-        # r_mean = numpy.zeros((N,), dtype=float)
-        # r_median = numpy.zeros((N,), dtype=float)
-        # r_numphotons = numpy.zeros((N,), dtype=numpy.uint32)
-        # r_numphotons_intd = r_numphotons.copy()
-        # r_std = numpy.zeros((N,), dtype=float)
-        # r_interdecile = numpy.zeros((N,), float)
-        # r_range = numpy.zeros((N,), dem_array.dtype)
-        # r_10p = numpy.zeros((N,), float)
-        # r_90p = numpy.zeros((N,), float)
-        # r_canopy_fraction = numpy.zeros((N,), numpy.float16)
-        results_dataframes_list = []
-
-        t_start = time.perf_counter()
-
-        # Set up subprocessing data structures for parallelization.
-        cpu_count = parallel_funcs.physical_cpu_count()
-        dt_dict = parallel_funcs.dtypes_dict
-        with mp.Manager() as manager:
-
-            # Create a multiprocessing shared-memory objects for photon heights, i, j. and codes.
-            if output_vertical_datum in ("ellipsoid", "wgs84"):
-                height_field = photon_df.h_ellipsoid
-            elif output_vertical_datum in ("geoid", "egm2008"):
-                height_field = photon_df.h_geoid
-            elif output_vertical_datum == "meantide":
-                height_field = photon_df.h_meantide
-            else:
-                raise ValueError("Should not have gotten here. Unhandled vdatum: {}".format(output_vertical_datum))
-
-            height_array = manager.Array(dt_dict[height_field.dtype], height_field)
-            i_array = manager.Array(dt_dict[photon_df.i.dtype], photon_df.i)
-            j_array = manager.Array(dt_dict[photon_df.j.dtype], photon_df.j)
-            code_array = manager.Array(dt_dict[photon_df.class_code.dtype], photon_df.class_code)
-
-            running_procs     = [None] * cpu_count
-            open_pipes_parent = [None] * cpu_count
-            open_pipes_child  = [None] * cpu_count
-
-            counter_started = 0 # The number of data cells handed off to child processes.
-            counter_finished = 0 # The number of data cells completed by child processes.
-            num_chunks_started = 0
-            num_chunks_finished = 0
-            items_per_process_chunk = 20
-
-            # Set up the processes and pipes, then start them.
-            try:
-                # First, set up each child process and start it (importing arguments)
-                for i in range(cpu_count):
-                    if counter_started >= N:
-                        # DEBUG print statement
-                        # print(counter_started, N, "Delegated all the data before finishing setting up processes, now will go on to process it.")
-                        # Shorten the list of processes we are using.
-                        running_procs     = running_procs[:i]
-                        open_pipes_parent = open_pipes_parent[:i]
-                        open_pipes_child  = open_pipes_child[:i]
-                        break
-
-                    # Generate a new parallel subprocess to handle the data.
-                    running_procs[i], open_pipes_parent[i], open_pipes_child[i] = \
-                        kick_off_new_child_process(height_array, i_array, j_array, code_array)
-
-                    # Send the first batch of (i,j) pixel locations & elevs to processes now.
-                    # Kick off the computations.
-                    counter_chunk_end = min(counter_started + items_per_process_chunk, N)
-                    open_pipes_parent[i].send((dem_overlap_i[counter_started: counter_chunk_end],
-                                               dem_overlap_j[counter_started: counter_chunk_end],
-                                               dem_overlap_elevs[counter_started: counter_chunk_end]))
-                    counter_started = counter_chunk_end
-                    num_chunks_started += 1
-
-                # Delegate the work. Keep looping through until all processes have finished up.
-                # When everything is done, just send "STOP" connections to the remaining processes.
-                # while counter_finished < N:
-                while num_chunks_finished < num_chunks_started:
-                    # First, look for processes that have returned values.
-                    for i,(proc, pipe, pipe_child) in enumerate(zip(running_procs, open_pipes_parent, open_pipes_child)):
-
-                        if proc is None:
-                            continue
-
-                        elif not proc.is_alive():
-                            # If for some reason the child process has terminated (likely from an error), join it and kick off a new one.
-                            if not quiet:
-                                # raise UserWarning("Sub-process terminated unexpectedly. Some data may be missing. Restarting a new process.")
-                                print("\nSub-process terminated unexpectedly. Some data may be missing. Restarting a new process.")
-                            # Close out the dead process and its pipes
-                            proc.join()
-                            pipe.close()
-                            pipe_child.close()
-                            # Kick off a shiny new process
-                            proc, pipe, pipe_child = kick_off_new_child_process(height_array, i_array, j_array, code_array)
-                            # Put that process and pipes into the lists of active procs & pipes.
-                            running_procs[i] = proc
-                            open_pipes_parent[i] = pipe
-                            open_pipes_child[i] = pipe_child
-
-                            num_chunks_finished += 1
-
-                        # Check to see if our receive pipe has any data sitting in it.
-                        if pipe.poll():
-                            # Get the data from the pipe.
-                            chunk_result_df = pipe.recv()
-
-                            # Advance the "finished" counter.
-                            counter_finished += len(chunk_result_df)
-                            num_chunks_finished += 1
-                            results_dataframes_list.append(chunk_result_df)
-                            if not quiet:
-                                progress_bar.ProgressBar(counter_finished, N, suffix=("{0:>" +str(len(str(N))) + "d}/{1:d}").format(counter_finished, N))
-                                # DEBUG statements
-                                # print()
-                                # print("chunk_results_df", chunk_result_df)
-                                # print("num_chunks_finished", num_chunks_finished, "num_chunks_started", num_chunks_started)
-
-                            # If we still have more data to process, send another chunk along.
-                            if counter_started < N:
-                                # Send a new task to the child process, consisting of the i,j pairs to process now.
-                                counter_chunk_end = min(counter_started + items_per_process_chunk, N)
-                                # DEBUG statement
-                                # print("counter_started:", counter_started, "counter_chunk_end", counter_chunk_end)
-                                pipe.send((dem_overlap_i[counter_started: counter_chunk_end],
-                                           dem_overlap_j[counter_started: counter_chunk_end],
-                                           dem_overlap_elevs[counter_started: counter_chunk_end]))
-                                # Increment the "started" counter. Let it run free on the data.
-                                counter_started = counter_chunk_end
-                                num_chunks_started += 1
-                            else:
-                                # Nothing more to send. Send a "STOP" command to the child proc.
-                                pipe.send(("STOP", None, None))
-                                proc.join()
-                                pipe.close()
-                                pipe_child.close()
-                                running_procs[i] = None
-                                open_pipes_parent[i] = None
-                                open_pipes_child[i] = None
-
-                        # else:
-                            # DEBUG print statement
-                            # print("Waiting on proc #", i)
-
-            except Exception as e:
-                if not quiet:
-                    print("\nException encountered in ICESat-2 processing loop. Exiting.")
-                clean_procs_and_pipes(running_procs, open_pipes_parent, open_pipes_child)
-                print(e)
-                return None
-
-        t_end = time.perf_counter()
-        if not quiet:
-            print("{0:0.1f} seconds total, ({1:0.4f} s/iteration)".format((t_end - t_start), ( ((t_end - t_start)/N) if N>0 else 0)))
-
-        clean_procs_and_pipes(running_procs, open_pipes_parent, open_pipes_child)
-        # Concatenate all the results dataframes
-        # If there were no overlappying photons, then just return none.
-        if len(results_dataframes_list) == 0:
-            return None
-
-        results_dataframe = pandas.concat(results_dataframes_list)
-        # Subset for only valid results out. Eliminate useless nodata values.
-        results_dataframe = results_dataframe[results_dataframe["mean"] != EMPTY_VAL].copy()
-        if not quiet:
-            print("{0:,} valid interdecile photon records in {1:,} DEM cells.".format(results_dataframe["numphotons_intd"].sum(), len(results_dataframe)))
-
-        if results_dataframe_file:
-            base, ext = os.path.splitext(results_dataframe_file)
-            ext = ext.lower().strip()
-            if ext in (".txt", ".csv"):
-                results_dataframe.to_csv(results_dataframe_file)
-            else:
-                results_dataframe.to_hdf(results_dataframe_file, "icesat2", complib="zlib", mode='w')
-
-            if not quiet:
-                print(results_dataframe_file, "written.")
-
-    if len(results_dataframe) == 0:
-        if not quiet:
-            print("No valid results in results dataframe. No outputs computed.")
-    else:
-        if write_summary_stats:
-            write_summary_stats_file(results_dataframe, os.path.splitext(results_dataframe_file)[0] + "_summary_stats.txt", verbose = not quiet)
-
-        if write_result_tifs:
-            if dem_ds is None:
-                dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
-            generate_result_geotiffs(results_dataframe, dem_ds, results_dataframe_file, verbose=not quiet)
-
-        if plot_results:
-            if location_name is None:
-                location_name = os.path.split(dem_name)[1]
-            plot_filename = os.path.splitext(results_dataframe_file)[0] + "_plot.png"
-            plot_validation_results.plot_histogram_and_error_stats_4_panels(results_dataframe,
+
+    # Get the results dataframe filename (if not already set)
+    if results_dataframe_file is None:
+        results_dataframe_file = os.path.splitext(dem_name) + ".h5"
+
+    # Get the interim data directory (if not already set)
+    if interim_data_dir is None:
+        interim_data_dir = os.path.split(results_dataframe_file)[0]
+
+    if mark_empty_results:
+        base, ext = os.path.splitext(results_dataframe_file)
+        empty_results_filename = base + "_EMPTY.txt"
+
+    if write_summary_stats:
+        summary_stats_filename = os.path.splitext(results_dataframe_file)[0] + "_summary_stats.txt"
+
+    if write_result_tifs:
+        result_tif_filename = os.path.splitext(results_dataframe_file)[0] + "_ICESat2_error_map.tif"
+
+    if plot_results:
+        plot_filename = os.path.splitext(results_dataframe_file)[0] + "_plot.png"
+
+
+    # If the output file already exists and we aren't overwriting, create any un-created datasets
+    # if they're requested, and then just return.
+    if not overwrite:
+
+        if os.path.exists(results_dataframe_file):
+
+            results_dataframe = None
+
+            if write_summary_stats and not os.path.exists(summary_stats_filename):
+                if results_dataframe is None:
+                    if not quiet:
+                        print("Reading", results_dataframe_file, '...', end="")
+                    results_dataframe = read_dataframe_file(results_dataframe_file)
+                    if not quiet:
+                        print("done.")
+
+                write_summary_stats_file(results_dataframe, summary_stats_filename, verbose = not quiet)
+
+            if write_result_tifs and not os.path.exists(result_tif_filename):
+                if dem_ds is None:
+                    dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
+
+                if results_dataframe is None:
+                    if not quiet:
+                        print("Reading", results_dataframe_file, '...', end="")
+                    results_dataframe = read_dataframe_file(results_dataframe_file)
+                    if not quiet:
+                        print("done.")
+
+                generate_result_geotiffs(results_dataframe, dem_ds, results_dataframe_file, verbose=not quiet)
+
+            if plot_results and not os.path.exists(plot_filename):
+                if location_name is None:
+                    location_name = os.path.split(dem_name)[1]
+
+                if results_dataframe is None:
+                    if not quiet:
+                        print("Reading", results_dataframe_file, '...', end="")
+                    results_dataframe = read_dataframe_file(results_dataframe_file)
+                    if not quiet:
+                        print("done.")
+
+                plot_validation_results.plot_histogram_and_error_stats_4_panels(results_dataframe,
                                                                             plot_filename,
                                                                             place_name=location_name,
                                                                             verbose=not quiet)
 
+            if (results_dataframe is None) and not quiet:
+                print("Everything seems already done here. Moving on...")
+
+            return
+
+        elif mark_empty_results and os.path.exists(empty_results_filename):
+            if not quiet:
+                print("No valid data produced during previous ICESat-2 analysis of", dem_name + ". Returning.")
+            return
+
+    # Collect the metadata from the DEM.
+    dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, \
+        coastline_mask_filename, coastline_mask_array = \
+        coastline_mask.get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir=interim_data_dir)
+
+    assert coastline_mask_array.shape == dem_array.shape
+
+    # Assert that the both the dem vertical datum and the output vertical datum are valid values.
+    if type(dem_vertical_datum) == str:
+        dem_vertical_datum = dem_vertical_datum.strip().lower()
+    assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
+    output_vertical_datum = output_vertical_datum.strip().lower()
+
+    # Convert the vdatum of the input dem to be the same as the output process.
+    if dem_vertical_datum != output_vertical_datum:
+        dem_base, dem_ext = os.path.splitext(os.path.split(dem_name)[1])
+        converted_dem_name = os.path.join(interim_data_dir, dem_base + "_" + output_vertical_datum + dem_ext)
+
+        if not os.path.exists(converted_dem_name):
+            retval = convert_vdatum.convert_vdatum(dem_name,
+                                                   converted_dem_name,
+                                                   input_vertical_datum=dem_vertical_datum,
+                                                   output_vertical_datum=output_vertical_datum,
+                                                   verbose=not quiet)
+            # This is the old convert_vdatum code.
+            # subprocess.run([os.path.join(os.path.split(__file__)[0], "convert_vdatum.py"),
+            #                 dem_name,
+            #                 "-output_dem", converted_dem_name,
+            #                 "-input_vdatum", dem_vertical_datum,
+            #                 "-output_vdatum", output_vertical_datum,
+            #                 "-tempdir", os.path.split(dem_base)[0],
+            #                 "-interp_method", "cubic",
+            #                 "" if delete_datafiles else "--keep_grids",
+            #                 "--quiet" if quiet else "",
+            #                 ])
+            if (retval != 0) or (not os.path.exists(converted_dem_name)):
+                raise FileNotFoundError(f"{dem_name} not converted correctly to {converted_dem_name}. Aborting.")
+
+        # Get the dem array from the new dataset.
+        dem_ds = None
+        dem_ds = gdal.Open(converted_dem_name, gdal.GA_ReadOnly)
+        dem_array = dem_ds.GetRasterBand(1).ReadAsArray()
+    else:
+        converted_dem_name = None
+
+    # If we've been provided an open dataframe rather than just the name of the file, simply use it.
+    if isinstance(photon_dataframe_name, pandas.DataFrame):
+        photon_df = photon_dataframe_name
+
+    # If the photon dataframe file containing all the photons in this tile already exists, just use it.
+    elif skip_icesat2_download and os.path.exists(photon_dataframe_name) and overwrite==False:
+        if not quiet:
+            print("Reading", photon_dataframe_name + "...", end="")
+        photon_df = pandas.read_hdf(photon_dataframe_name)
+        if not quiet:
+            print("Done.")
+
+    elif granule_ids is None:
+        # If the granules already exist in the directory and we've planned to skip
+        # re-downloading them, then skip them!
+        granules_existing_in_directory = [os.path.join(interim_data_dir, fname) for fname in os.listdir(interim_data_dir) if (os.path.splitext(fname)[1].lower() == ".h5" and fname.upper().find("ATL") >= 0)]
+        if skip_icesat2_download and (len(granules_existing_in_directory) > 0):
+            atl03_granules_list = [fname for fname in granules_existing_in_directory if fname.upper().find("ATL03") >= 0]
+            atl08_granules_list = [fname for fname in granules_existing_in_directory if fname.upper().find("ATL08") >= 0]
+
+        else:
+            # If the DEM is in a projection other than WGS84, get the bbox coordinates and convert to WGS84
+            # NOTE: This will break in polar stereo projections, and perhaps others.
+            # TODO: Find a more elegant way of doing this that doesn't fuck up polar projections.
+            if dem_epsg != 4326:
+                icesat2_srs = osr.SpatialReference()
+                icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
+                dem_srs = osr.SpatialReference(wkt=dem_ds.GetProjection())
+                # Convert bbox points from DEM projection into
+                proj_to_wgs84 = osr.CoordinateTransformation(dem_srs, icesat2_srs)
+
+                # Create a list of bbox points in counter-clockwise order.
+                xmin, ymin, xmax, ymax = dem_bbox
+                points = [(xmin, ymin), (xmin, ymax), (xmax, ymax), (xmax, ymin), (xmin, ymin)]
+                output_points = proj_to_wgs84.TransformPoints(points)
+                bbox_wgs84 = [(p[0], p[1]) for p in output_points]
+            else:
+                bbox_wgs84 = dem_bbox
+
+            granules_list = nsidc_download.main(short_name=["ATL03","ATL08"],
+                                                      region=bbox_wgs84,
+                                                      local_dir=interim_data_dir,
+                                                      version=etopo_config.nsidc_atl_version,
+                                                      dates = icesat2_date_range,
+                                                      fname_python_regex="\.h5\Z",
+                                                      force=overwrite,
+                                                      quiet=quiet)
+            # Just get the .h5 files from the query (skip the .xml's)
+            atl03_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL03") > -1]
+            atl08_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL08") > -1]
+
+        common_granule_ids = []
+        for atl03_gid in atl03_granules_list:
+            fpath, fname = os.path.split(atl03_gid)
+            if os.path.exists(os.path.join(fpath, fname.replace("ATL03","ATL08"))):
+                common_granule_ids.append(atl03_gid)
+
+        if len(common_granule_ids) < 0.5*len(atl03_granules_list):
+            raise UserWarning("ICESat-2 ATL03 granules IDs are less than 50% in common with ATL08 granule ids over bounding box {0}, {1} of {2} matching.".format(
+                              dem_bbox, len(common_granule_ids), len(atl03_granules_list)))
+
+        photon_df = None
+    else:
+        common_granule_ids = granule_ids
+        photon_df = None
+
+    # If the DEM is not in WGS84 coordaintes, create a conversion funtion to pass to sub-functions.
+    if dem_epsg != 4326:
+        dem_proj_wkt = dem_ds.GetProjection()
+        # print(dem_proj_wkt)
+        icesat2_srs = osr.SpatialReference()
+        icesat2_srs.SetWellKnownGeogCS("EPSG:4326")
+        dem_srs = osr.SpatialReference(wkt=dem_proj_wkt)
+        is2_to_dem = osr.CoordinateTransformation(icesat2_srs, dem_srs)
+    else:
+        is2_to_dem = None
+
+
+    if photon_df is None:
+        # Get the photon data from the dataframe.
+        photon_df = collect_raw_photon_data(dem_bbox,
+                                            photon_dataframe_name,
+                                            granule_ids=common_granule_ids,
+                                            overwrite=overwrite,
+                                            dem_bbox_converter = is2_to_dem,
+                                            verbose = not quiet)
+
+    if not quiet:
+        print("{0:,}".format(len(photon_df)), "ICESat-2 photons present in photon dataframe.")
+
+    # If the DEM coordinate system isn't WGS84 lat/lon, convert the icesat-2
+    # lat/lon data coordinates into the same CRS as the DEM
+    if dem_epsg != 4326:
+
+        lon_x = photon_df["longitude"]
+        lat_y = photon_df["latitude"]
+        # print(numpy.min(lon_x), numpy.mean(lon_x), numpy.max(lon_x))
+        # print(numpy.min(lat_y), numpy.mean(lat_y), numpy.max(lat_y))
+
+        # print(is2_to_dem.TransformPoint())
+
+        points = is2_to_dem.TransformPoints( list(zip(lon_x, lat_y)) )
+        p_x = numpy.array([p[0] for p in points])
+        p_y = numpy.array([p[1] for p in points])
+        photon_df["dem_x"] = p_x
+        photon_df["dem_y"] = p_y
+
+        ph_xcoords = p_x
+        ph_ycoords = p_y
+
+    # Subset the dataframe to photons within the DEM bounding box.
+    # Also, filter out all noise photons.
+    else:
+        ph_xcoords = photon_df["longitude"]
+        ph_ycoords = photon_df["latitude"]
+
+
+    # Compute the (i,j) indices into the array of all the photons collected.
+    # Transform photon lat/lons into DEM indices.
+    xstart, xstep, _, ystart, _, ystep = dem_ds.GetGeoTransform()
+    xend = xstart + (xstep * dem_array.shape[1])
+    yend = ystart + (ystep * dem_array.shape[0])
+
+    # On edge pixels, the boundaries can sometimes make for some edge pixel artifacts.
+    # Just use photons that do not lie on the edge of the grid. This will help.
+    ph_bbox_mask = (ph_xcoords >= min(xstart, xend)) & \
+                   (ph_xcoords < max(xstart, xend)) & \
+                   (ph_ycoords > min(ystart, yend)) & \
+                   (ph_ycoords <= max(ystart, yend)) & \
+                   (photon_df["class_code"] >= 1)
+
+    # Subset the dataframe to only provide pixels in-bounds for our DEM
+    photon_df = photon_df[ph_bbox_mask].copy() # Create a copy so as not to be assinging to a slice of the full dataframe.
+    ph_xcoords = ph_xcoords[ph_bbox_mask]
+    ph_ycoords = ph_ycoords[ph_bbox_mask]
+
+    photon_df["i"] = numpy.floor((ph_ycoords - ystart) / ystep).astype(int)
+    photon_df["j"] = numpy.floor((ph_xcoords - xstart) / xstep).astype(int)
+
+    # Get the nodata value for the array, if it exists.
+    dem_ndv = dem_ds.GetRasterBand(1).GetNoDataValue()
+    # Generate a mask of photons that are (1) on land, (2) within the bounding box, and (3) not no-data
+    if dem_ndv is None:
+        dem_goodpixel_mask = (coastline_mask_array > 0)
+    else:
+        dem_goodpixel_mask = (coastline_mask_array > 0) & (dem_array != dem_ndv)
+
+    # Create an (i,j) multi-index into the array.
+    photon_df = photon_df.set_index(["i", "j"], drop=False).sort_index()
+
+    # Make sure that we only look at cells that have at least 1 ground photon in them.
+    ph_mask_ground_only = (photon_df["class_code"] == 1)
+    # ph_in_bounds = (photon_df.i >= 0) & (photon_df.i < dem_array.shape[0]) & \
+    #                (photon_df.j >= 0) & (photon_df.j < dem_array.shape[1])
+
+    dem_mask_w_ground_photons = numpy.zeros(dem_array.shape, dtype=bool)
+    dem_mask_w_ground_photons[photon_df.i[ph_mask_ground_only],
+                              photon_df.j[ph_mask_ground_only]] = 1
+    # dem_mask_w_ground_photons[photon_df.i[ph_mask_ground_only & ph_in_bounds],
+    #                           photon_df.j[ph_mask_ground_only & ph_in_bounds]] = 1
+
+    dem_overlap_mask = dem_goodpixel_mask & dem_mask_w_ground_photons
+
+    dem_overlap_i, dem_overlap_j = numpy.where(dem_overlap_mask)
+    dem_overlap_elevs = dem_array[dem_overlap_mask]
+    N = len(dem_overlap_i)
+
+    if not quiet:
+        num_goodpixels = numpy.count_nonzero(dem_goodpixel_mask)
+        print("{:,}".format(num_goodpixels), "nonzero land cells exist in the DEM.")
+        if num_goodpixels == 0:
+            print("No land cells found in DEM. Stopping and moving on.")
+            return None
+        else:
+            print("{:,} ICESat-2 photons overlap".format(len(photon_df)),
+              "{:,}".format(N),
+              "DEM cells ({:0.2f}% of total DEM data).".format(numpy.count_nonzero(dem_overlap_mask) * 100 / num_goodpixels))
+
+    # If we have no data overlapping the valid land DEM cells, just return None
+    if numpy.count_nonzero(dem_overlap_mask) == 0:
+        if not quiet:
+            print("No overlapping ICESat-2 data with valid land cells. Stopping and moving on.")
+
+        if mark_empty_results:
+            # Just create an empty file to makre this dataset as done.
+            with open(empty_results_filename, 'w') as f:
+                f.close()
+            if not quiet:
+                print("Created", empty_results_filename, "to indicate no data was returned here.")
+
+        return None
+
+    elif not quiet:
+        print("Performing ICESat-2/DEM cell validation...")
+
+    # Gather a list of all the little results mini-dataframes from all the sub-processes running.
+    # Concatenate them into a master results dataframe at the end.
+    results_dataframes_list = []
+
+    t_start = time.perf_counter()
+
+    # Set up subprocessing data structures for parallelization.
+    cpu_count = parallel_funcs.physical_cpu_count()
+    dt_dict = parallel_funcs.dtypes_dict
+    with mp.Manager() as manager:
+
+        # Create a multiprocessing shared-memory objects for photon heights, i, j. and codes.
+        if output_vertical_datum in ("ellipsoid", "wgs84"):
+            height_field = photon_df.h_ellipsoid
+        elif output_vertical_datum in ("geoid", "egm2008"):
+            height_field = photon_df.h_geoid
+        elif output_vertical_datum == "meantide":
+            height_field = photon_df.h_meantide
+        else:
+            raise ValueError("Should not have gotten here. Unhandled vdatum: {}".format(output_vertical_datum))
+
+        height_array = manager.Array(dt_dict[height_field.dtype], height_field)
+        i_array = manager.Array(dt_dict[photon_df.i.dtype], photon_df.i)
+        j_array = manager.Array(dt_dict[photon_df.j.dtype], photon_df.j)
+        code_array = manager.Array(dt_dict[photon_df.class_code.dtype], photon_df.class_code)
+
+        running_procs     = [None] * cpu_count
+        open_pipes_parent = [None] * cpu_count
+        open_pipes_child  = [None] * cpu_count
+
+        counter_started = 0 # The number of data cells handed off to child processes.
+        counter_finished = 0 # The number of data cells completed by child processes.
+        num_chunks_started = 0
+        num_chunks_finished = 0
+        items_per_process_chunk = 20
+
+        # Set up the processes and pipes, then start them.
+        try:
+            # First, set up each child process and start it (importing arguments)
+            for i in range(cpu_count):
+                if counter_started >= N:
+                    # DEBUG print statement
+                    # print(counter_started, N, "Delegated all the data before finishing setting up processes, now will go on to process it.")
+                    # Shorten the list of processes we are using.
+                    running_procs     = running_procs[:i]
+                    open_pipes_parent = open_pipes_parent[:i]
+                    open_pipes_child  = open_pipes_child[:i]
+                    break
+
+                # Generate a new parallel subprocess to handle the data.
+                running_procs[i], open_pipes_parent[i], open_pipes_child[i] = \
+                    kick_off_new_child_process(height_array, i_array, j_array, code_array)
+
+                # Send the first batch of (i,j) pixel locations & elevs to processes now.
+                # Kick off the computations.
+                counter_chunk_end = min(counter_started + items_per_process_chunk, N)
+                open_pipes_parent[i].send((dem_overlap_i[counter_started: counter_chunk_end],
+                                           dem_overlap_j[counter_started: counter_chunk_end],
+                                           dem_overlap_elevs[counter_started: counter_chunk_end]))
+                counter_started = counter_chunk_end
+                num_chunks_started += 1
+
+            # Delegate the work. Keep looping through until all processes have finished up.
+            # When everything is done, just send "STOP" connections to the remaining processes.
+            # while counter_finished < N:
+            while num_chunks_finished < num_chunks_started:
+                # First, look for processes that have returned values.
+                for i,(proc, pipe, pipe_child) in enumerate(zip(running_procs, open_pipes_parent, open_pipes_child)):
+
+                    if proc is None:
+                        continue
+
+                    elif not proc.is_alive():
+                        # If for some reason the child process has terminated (likely from an error), join it and kick off a new one.
+                        if not quiet:
+                            # raise UserWarning("Sub-process terminated unexpectedly. Some data may be missing. Restarting a new process.")
+                            print("\nSub-process terminated unexpectedly. Some data may be missing. Restarting a new process.")
+                        # Close out the dead process and its pipes
+                        proc.join()
+                        pipe.close()
+                        pipe_child.close()
+                        # Kick off a shiny new process
+                        proc, pipe, pipe_child = kick_off_new_child_process(height_array, i_array, j_array, code_array)
+                        # Put that process and pipes into the lists of active procs & pipes.
+                        running_procs[i] = proc
+                        open_pipes_parent[i] = pipe
+                        open_pipes_child[i] = pipe_child
+
+                        num_chunks_finished += 1
+
+                    # Check to see if our receive pipe has any data sitting in it.
+                    if pipe.poll():
+                        # Get the data from the pipe.
+                        chunk_result_df = pipe.recv()
+
+                        # Advance the "finished" counter.
+                        counter_finished += len(chunk_result_df)
+                        num_chunks_finished += 1
+                        results_dataframes_list.append(chunk_result_df)
+                        if not quiet:
+                            progress_bar.ProgressBar(counter_finished, N, suffix=("{0:>" +str(len(str(N))) + "d}/{1:d}").format(counter_finished, N))
+                            # DEBUG statements
+                            # print()
+                            # print("chunk_results_df", chunk_result_df)
+                            # print("num_chunks_finished", num_chunks_finished, "num_chunks_started", num_chunks_started)
+
+                        # If we still have more data to process, send another chunk along.
+                        if counter_started < N:
+                            # Send a new task to the child process, consisting of the i,j pairs to process now.
+                            counter_chunk_end = min(counter_started + items_per_process_chunk, N)
+                            # DEBUG statement
+                            # print("counter_started:", counter_started, "counter_chunk_end", counter_chunk_end)
+                            pipe.send((dem_overlap_i[counter_started: counter_chunk_end],
+                                       dem_overlap_j[counter_started: counter_chunk_end],
+                                       dem_overlap_elevs[counter_started: counter_chunk_end]))
+                            # Increment the "started" counter. Let it run free on the data.
+                            counter_started = counter_chunk_end
+                            num_chunks_started += 1
+                        else:
+                            # Nothing more to send. Send a "STOP" command to the child proc.
+                            pipe.send(("STOP", None, None))
+                            proc.join()
+                            pipe.close()
+                            pipe_child.close()
+                            running_procs[i] = None
+                            open_pipes_parent[i] = None
+                            open_pipes_child[i] = None
+
+                    # else:
+                        # DEBUG print statement
+                        # print("Waiting on proc #", i)
+
+        except Exception as e:
+            if not quiet:
+                print("\nException encountered in ICESat-2 processing loop. Exiting.")
+            clean_procs_and_pipes(running_procs, open_pipes_parent, open_pipes_child)
+            print(e)
+            return None
+
+    t_end = time.perf_counter()
+    if not quiet:
+        print("{0:0.1f} seconds total, ({1:0.4f} s/iteration)".format((t_end - t_start), ( ((t_end - t_start)/N) if N>0 else 0)))
+
+    clean_procs_and_pipes(running_procs, open_pipes_parent, open_pipes_child)
+    # Concatenate all the results dataframes
+    # If there were no overlappying photons, then just return none.
+    if len(results_dataframes_list) == 0:
+        return None
+
+    results_dataframe = pandas.concat(results_dataframes_list)
+    # Subset for only valid results out. Eliminate useless nodata values.
+    results_dataframe = results_dataframe[results_dataframe["mean"] != EMPTY_VAL].copy()
+    if not quiet:
+        print("{0:,} valid interdecile photon records in {1:,} DEM cells.".format(results_dataframe["numphotons_intd"].sum(), len(results_dataframe)))
+
+    if len(results_dataframe) == 0:
+        if not quiet:
+            print("No valid results in results dataframe. No outputs computed.")
+        if mark_empty_results:
+            # Just create an empty file to makre this dataset as done.
+            with open(empty_results_filename, 'w') as f:
+                f.close()
+            if not quiet:
+                print("Created", empty_results_filename, "to indicate no data was returned here.")
+        return
+
+    else:
+        # Write out the results dataframe. Method depends upon the file type. Can be .csv, .txt, .h5 (assumed default of not one of the text files.)
+        base, ext = os.path.splitext(results_dataframe_file)
+        ext = ext.lower().strip()
+        if ext in (".txt", ".csv"):
+            results_dataframe.to_csv(results_dataframe_file)
+        else:
+            results_dataframe.to_hdf(results_dataframe_file, "icesat2", complib="zlib", mode='w')
+
+        if not quiet:
+            print(results_dataframe_file, "written.")
+
+    if write_summary_stats:
+        write_summary_stats_file(results_dataframe,
+                                 summary_stats_filename,
+                                 verbose = not quiet)
+
+    if write_result_tifs:
+        if dem_ds is None:
+            dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
+        generate_result_geotiffs(results_dataframe,
+                                 dem_ds,
+                                 results_dataframe_file,
+                                 result_tif_filename,
+                                 verbose=not quiet)
+
+    if plot_results:
+        if location_name is None:
+            location_name = os.path.split(dem_name)[1]
+
+        plot_validation_results.plot_histogram_and_error_stats_4_panels(results_dataframe,
+                                                                        plot_filename,
+                                                                        place_name=location_name,
+                                                                        verbose=not quiet)
 
     if delete_datafiles:
         del dem_ds
@@ -868,14 +902,10 @@ def validate_dem_parallel(dem_name,
         if os.path.exists(photon_dataframe_name):
             os.remove(photon_dataframe_name)
 
-        # if os.path.exists(): os.remove()
         if not quiet:
             print("done.")
 
-    if return_photon_dataframe:
-        return photon_df_full
-    else:
-        return results_dataframe
+    return
 
 def write_summary_stats_file(results_df, statsfile_name, verbose=True):
 
@@ -917,7 +947,7 @@ def write_summary_stats_file(results_df, statsfile_name, verbose=True):
 
     return
 
-def generate_result_geotiffs(results_dataframe, dem_ds, results_dataframe_filename, verbose=True):
+def generate_result_geotiffs(results_dataframe, dem_ds, results_dataframe_filename, result_tif_filename, verbose=True):
     """Given the results in the dataframe, output geotiffs to visualize these.
 
     Name the geotiffs after the dataframe: [original_filename]_<tag>.tif
@@ -926,7 +956,6 @@ def generate_result_geotiffs(results_dataframe, dem_ds, results_dataframe_filena
         - mean_diff
         # TODO: FINISH THIS LIST
     """
-    result_tif_filename = os.path.splitext(results_dataframe_filename)[0] + "_ICESat2_error_map.tif"
     gt = dem_ds.GetGeoTransform()
     projection = dem_ds.GetProjection()
     xsize, ysize = dem_ds.RasterXSize, dem_ds.RasterYSize

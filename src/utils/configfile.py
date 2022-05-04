@@ -31,7 +31,7 @@ class config:
         if only_if_actual_path_doesnt_exist and (os.path.exists(path) or os.path.exists(os.path.split(path)[0])):
             return path
 
-        return os.path.abspath(os.path.join(os.path.split(self._configfile)[0], path))
+        return os.path.abspath(os.path.join(os.path.dirname(self._configfile), path))
 
     def _parse_config_into_attrs(self):
         """Read all the config lines, put into object attributes.

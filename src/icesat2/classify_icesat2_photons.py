@@ -15,11 +15,12 @@ import shapely
 # import timeit
 # from osgeo import ogr, osr
 
+# There are some weird import issues if we're using this file locally or calling it from another module.
+# One of these two should work.
 try:
     import atl_granules
 except ImportError:
     import icesat2.atl_granules as atl_granules
-# import progress_bar
 
 # LISTS OF VARIABLES NEEDED FROM EACH ATL DATASET FOR THE "get_photon_data" routine.
 ATL03_variables_needed = ["lat_ph", "lon_ph", "h_ph", "segment_ph_cnt", "segment_id",
@@ -453,27 +454,43 @@ def classify_photon_data(granule_id,
 
     return df
 
-def save_photon_data_from_directory(dirname,
-                                    photon_h5="photons.h5",
-                                    bounding_box= None,
-                                    bbox_converter=None,
-                                    beam=None,
-                                    verbose=True):
+def save_photon_data_from_directory_or_list_of_granules(dirname_or_list_of_granules,
+                                                        photon_h5="photons.h5",
+                                                        bounding_box= None,
+                                                        bbox_converter=None,
+                                                        beam=None,
+                                                        verbose=True):
     """Do everything that's in get_photon_data_multiple_granules(), just get the files from
-    a given directory, and save it to a given photon HDF5 file."""
-    fnames = os.listdir(dirname)
-    h5_fnames = [fname for fname in fnames if os.path.splitext(fname)[1].lower() == ".h5"]
-    atl03_fnames = [fname for fname in h5_fnames if fname.upper().find("ATL03") >= 0]
-    atl08_fnames = [fname for fname in h5_fnames if fname.upper().find("ATL08") >= 0]
+    a given directory, and save it to a given photon HDF5 file.
+
+    'dirname_or_list_of_granules' can either be:
+        - The name of a directory where all the ATLXX granule .h5 files sit.
+        - A lit of either the ATL03 or the ATL08 granules in them. (The code will look for the others). All the .h5 files should ideally be in the same directory."""
+    if type(dirname_or_list_of_granules) == str and os.path.isdir(dirname_or_list_of_granules):
+        fnames = os.listdir(dirname_or_list_of_granules)
+        h5_fnames = [fname for fname in fnames if os.path.splitext(fname)[1].lower() == ".h5"]
+        atl03_fnames = sorted([os.path.join(dirname_or_list_of_granules, fname) for fname in h5_fnames if fname.upper().find("ATL03") >= 0])
+        atl08_fnames = sorted([os.path.join(dirname_or_list_of_granules, fname) for fname in h5_fnames if fname.upper().find("ATL08") >= 0])
+
+    elif type(dirname_or_list_of_granules) in (list, tuple):
+        atl03_fnames = [os.path.join(os.path.dirname(fname), os.path.split(fname)[1].replace("ATL08","ATL03")) for fname in dirname_or_list_of_granules]
+        # Turn into a set to just get unique values, then back to a sorted list of unique files that exist.
+        atl03_fnames = sorted(list(set([fname for fname in atl03_fnames if os.path.exists(fname)])))
+
+        atl08_fnames = [os.path.join(os.path.dirname(fname), os.path.split(fname)[1].replace("ATL03","ATL08")) for fname in dirname_or_list_of_granules]
+        # Turn into a set to just get unique values, then back to a sorted list of unique files that exist.
+        atl08_fnames = sorted(list(set([fname for fname in atl08_fnames if os.path.exists(fname)])))
+    else:
+        raise ValueError("Uknown value for 'dirname_or_list_of_granules':", dirname_or_list_of_granules, "\nMust either point to an existing directory, or be a list or tuple of granule names.")
 
     # Find the granules that are common between ATL03 and ATL08 (Should be all of them):
     common_granule_ids = []
     for atl03_gid in atl03_fnames:
-        if atl03_gid.replace("ATL03","ATL08") in atl08_fnames:
+        if os.path.join(os.path.dirname(atl03_gid), os.path.split(atl03_gid)[1].replace("ATL03","ATL08")) in atl08_fnames:
             common_granule_ids.append(atl03_gid)
 
     # Append the dirname
-    common_granule_ids = sorted([os.path.join(dirname, fname) for fname in common_granule_ids])
+    # common_granule_ids = sorted([os.path.join(dirname, fname) for fname in common_granule_ids])
 
     dataframe = classify_photon_data_multiple_granules(common_granule_ids,
                                                        beam=beam,
@@ -483,10 +500,10 @@ def save_photon_data_from_directory(dirname,
                                                        parallelize=True,
                                                        verbose=verbose)
 
-    # If a path is given for the photon_h5 file, keep it. Otherwise, put it in the directory
-    # of the dirnname.
+    # If a path is given for the photon_h5 file, keep it. Otherwise, put it in the
+    # current working directory.
     if os.path.split(photon_h5)[0] == "":
-        photon_h5 = os.path.join(dirname, photon_h5)
+        photon_h5 = os.path.join(os.getcwd(), photon_h5)
 
     dataframe.to_hdf(photon_h5, "icesat2", complib="zlib", mode='w')
     if verbose:
