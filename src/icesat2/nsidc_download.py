@@ -323,7 +323,7 @@ def cmr_download(urls, download_dir=None, force=False, quiet=False):
 
         if not quiet:
             print('{0}/{1}: {2}'.format(str(index).zfill(len(str(url_count))),
-                                        url_count, filename))
+                                        url_count, url))
 
         try:
             response = get_login_response(url, credentials, token)
@@ -350,11 +350,20 @@ def cmr_download(urls, download_dir=None, force=False, quiet=False):
             if not quiet:
                 print()
         except HTTPError as e:
+            print("local file:", filename)
+            print("url:", url)
             print('HTTP error {0}, {1}'.format(e.code, e.reason))
         except URLError as e:
             print('URL error: {0}'.format(e.reason))
-        except IOError:
-            raise
+        except IOError as e:
+            print("local file:", filename)
+            print("url:", url)
+            raise e
+        except Exception as e:
+            print("local file:", filename)
+            print("url:", url)
+            raise e
+
 
 
 def cmr_filter_urls(search_results):
@@ -415,8 +424,8 @@ def cmr_search(short_name, version, time_start, time_end,
 
     urls = []
     hits = 0
-    if not quiet:
-        print(cmr_query_url)
+    # if not quiet:
+    #     print(cmr_query_url)
     while True:
         req = Request(cmr_query_url)
         if cmr_scroll_id:
@@ -425,7 +434,7 @@ def cmr_search(short_name, version, time_start, time_end,
             response = urlopen(req, context=ctx)
         except Exception as e:
             print('Error: ' + str(e))
-            sys.exit(1)
+            return(e)
         if not cmr_scroll_id:
             # Python 2 and 3 have different case for the http headers
             headers = {k.lower(): v for k, v in dict(response.info()).items()}
@@ -508,34 +517,47 @@ def download_granules(short_name="ATL03",
                       force=False,
                       query_only=False,
                       fname_python_regex=None,
+                      download_only_matching_granules=True,
                       quiet=False):
     """An API function for downloading without the command-line, from another
     python module.
     """
-    local_files = main(short_name = short_name,
-                       region = region,
-                       local_dir = local_dir,
-                       dates = dates,
-                       version = version,
-                       fname_filter = fname_filter,
-                       force = force,
-                       query_only = query_only,
-                       fname_python_regex = fname_python_regex,
-                       quiet = quiet)
+    # print(short_name)
+    # print(region)
+    # print(local_dir)
+    # print(dates)
+    # print(version)
+    # print(fname_filter)
+    # print(force)
+    # print(query_only)
+    # print(fname_python_regex)
+    # print(download_only_matching_granules)
+    # print(quiet)
+    local_files = _main(short_name = short_name,
+                        region = region,
+                        local_dir = local_dir,
+                        dates = dates,
+                        version = version,
+                        fname_filter = fname_filter,
+                        force = force,
+                        query_only = query_only,
+                        fname_python_regex = fname_python_regex,
+                        download_only_matching_granules=download_only_matching_granules,
+                        quiet = quiet)
     return local_files
 
 
-def main(short_name=None,
-         region=None,
-         local_dir=None,
-         dates=None,
-         version=None,
-         fname_filter=None,
-         force=None,
-         query_only=None,
-         fname_python_regex=r"\.h5\Z",
-         download_only_matching_granules=True,
-         quiet=None):
+def _main(short_name=None,
+          region=None,
+          local_dir=None,
+          dates=None,
+          version=None,
+          fname_filter=None,
+          force=None,
+          query_only=None,
+          fname_python_regex=r"\.h5\Z",
+          download_only_matching_granules=True,
+          quiet=None):
     """'short_name' may be either a single ATLXX name ("ATL03", e.g.) or a list of ALTXX names (["ATL03", "ATL08"], e.g.).
 
     If short_name is more than one dataset (e.g. "ATL03" and "ATL08", for instance), and
@@ -590,59 +612,125 @@ def main(short_name=None,
     elif type(time_start) == str:
         time_start_str = dateutil.parser.parse(time_start).isoformat() + "Z"
 
-    # Make sure "time_end_ is in a pretty iso-format string.
-    if type(time_end) in (datetime.datetime, datetime.date):
-        time_end_str = time_end.isoformat() + 'Z'
-    elif type(time_start) == str:
-        time_end_str = dateutil.parser.parse(time_end).isoformat() + "Z"
+    if type(time_end) == str:
+        time_end = dateutil.parser.parse(time_end)
+    # Make sure the dates are inclusive, going to the last second of the last day.
+    if type(time_end) == datetime.date:
+        time_end = datetime.datetime.combine(time_end, datetime.datetime.max.time())
+    elif ((time_end.hour == 0) and (time_end.minute == 0) and (time_end.second == 0) and (time_end.microsecond == 0)):
+        time_end = datetime.datetime.combine(time_end.date(), datetime.datetime.max.time())
+
+    # Make sure "time_end" is in a pretty iso-format string.
+    time_end_str = time_end.isoformat() + 'Z'
 
     # Make sure the polygon is counter-clockwise.
+    # I'm confused, NSIDC sometimes seems to break with a counter-clockwise polygon, other
+    # times break with a clockwise polygon. Not sure what's going on there, but
+    # We'll try one, and if it doesn't work, try the other.
     if polygon is not None:
-        polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
+        polygon = put_polygon_string_in_correct_rotation(polygon, direction="clockwise")
 
     try:
         urls_to_download = []
         urls_total = []
         numfiles_existing = 0
-        local_files_total = []
         # List through each of the short_names listed.
         for sname in short_names:
-            url_list = cmr_search(sname, version, time_start_str, time_end_str,
-                                  bounding_box=bounding_box, polygon=polygon,
-                                  filename_filter=fname_filter, quiet=quiet)
+            try:
+                url_list = cmr_search(sname, version, time_start_str, time_end_str,
+                                      bounding_box=bounding_box, polygon=polygon,
+                                      filename_filter=fname_filter, quiet=quiet)
+            except:
+                pass
+            if isinstance(url_list, Exception):
+                # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
+                # to fix it by going the other way if it doesn't work at first.
+                if polygon is not None:
+                    polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
+                    url_list = cmr_search(sname, version, time_start_str, time_end_str,
+                                          bounding_box=bounding_box, polygon=polygon,
+                                          filename_filter=fname_filter, quiet=quiet)
+                if isinstance(url_list, Exception):
+                    # If it's *still* returning an Exception error, just raise it and get out.
+                    raise url_list
 
-            fname_bases = [url.split("/")[-1] for url in url_list]
+            # fname_bases = [url.split("/")[-1] for url in url_list]
 
-            # Filter out ones that don't fit the python regex
+            # Filter out ones that don't fit the python regex (this often gets rid of things like XML files that we may not need.)
             if fname_python_regex is not None:
-                fname_bases = [fn for fn in fname_bases if (re.search(fname_python_regex, fn) is not None)]
+                # fname_bases = [fn for fn in fname_bases if (re.search(fname_python_regex, fn) is not None)]
                 url_list = [url for url in url_list if (re.search(fname_python_regex, url.split("/")[-1]) is not None)]
 
-            assert len(fname_bases) == len(url_list)
+            # assert len(fname_bases) == len(url_list)
 
             if not quiet:
                 print(len(url_list), sname, "granules found within bounding box & date range.")
 
-            # print(url_list)
-            local_files = [os.path.join(local_dir, fn) for fn in fname_bases]
-            for url, lfile in zip(url_list, local_files):
-                if os.path.exists(lfile) and not force:
-                    numfiles_existing += 1
-                else:
-                    urls_to_download.append(url)
+            urls_total.append(url_list) # urls_total is a list of lists, corresponding with each dataset short_name
 
-            local_files_total.extend(local_files)
-            urls_total.extend(url_list)
+        if len(short_names) == 1:
+            urls_total = urls_total[0]
+
+        elif download_only_matching_granules and len(short_names) > 1:
+            # TODO: Fill in the logic here to only download granules where we
+            # have a matching pair in each of the datasets we queried above.
+            #
+            # Often, we get more ATL03 granules returned than ATL08 granules in the same bounding box,
+            # perhaps because not all of the ATL03 granules necessarily overlap land (ATL08 is primarily a land-cover product, not meant for clouds, etc).
+            # If we don't need ATL03 granules that don't have a matching ATL08 file,
+            # filter them out here to skip them.
+            # 1. Put ATLXX in each dataset URL in place of the dataset name.
+            #    Matching granules SHOULD have the exact same name then. Ignore the full URLs for now.
+            #    Put these ATLXX names in a Python set() for each dataset.
+            fname_sets = []
+            for sname, url_list in zip(short_names, urls_total):
+                url_set = set([url.split("/")[-1].replace(sname, "[ATLXX]") for url in url_list])
+                fname_sets.append(url_set)
+
+            # 2. Get the intersection of all the url sets. These will be matching names.
+            fname_master_set = fname_sets[0]
+            for fset in fname_sets[1:]:
+                fname_master_set = fname_master_set.intersection(fset)
+            # fname_master_set is now a set with unique filenames (not paths) with "[ATLXX]" in place of the
+            # dataet name, in which all datasets have a match with that name.
+
+            # 3. Create a master list for full-length URLs in the set of matching names.
+            url_master_list = []
+            for sname, url_list in zip(short_names, urls_total):
+                for fname in fname_master_set:
+                    fname_with_sname = fname.replace("[ATLXX]", sname)
+                    url_master_list.append([url for url in url_list if url.split("/")[-1].find(fname_with_sname) > -1][0])
+
+            urls_total = sorted(url_master_list)
+
+            if not quiet:
+                print(len(fname_master_set), "common granules found between", ",".join(short_names), "for", len(url_master_list), "granules total.")
+
+        else:
+            # If there's more than one dataset short_name and we didn't specify download_only_matching_granules
+            urls_total = list(itertools.chain(urls_total))
+
+        fname_bases = [url.split("/")[-1] for url in urls_total]
+
+        # print(url_list)
+        local_files = [os.path.join(local_dir, fn) for fn in fname_bases]
+        for url, lfile in zip(urls_total, local_files):
+            if os.path.exists(lfile) and not force:
+                numfiles_existing += 1
+            else:
+                urls_to_download.append(url)
+
+        if query_only not in (None, False):
+            if not quiet:
+                # Printing the URLs is handy for a parent-process call that may be using STDOUT to get the list of files to download.
+                for url in url_list:
+                    print(url)
+            return local_files
 
         if not quiet:
             print("{0} of {1} granules already exist locally. Downloading {2} new granules from NSIDC.".format(numfiles_existing,
                                                                                                          len(urls_to_download) + numfiles_existing,
                                                                                                          len(urls_to_download)))
-        if query_only not in (None, False):
-            if not quiet:
-                for url in url_list:
-                    print(url)
-            return local_files_total
 
         # Download the urls that need to be downloaded.
         if len(urls_to_download) > 0:
@@ -652,10 +740,11 @@ def main(short_name=None,
         import sys
         sys.exit()
 
-    return local_files_total
+    return local_files
 
 
 if __name__ == '__main__':
+    pass
     # Just testing how quickly NSIDC queries are.
     # time1 = time.time()
     # urls = cmr_search("ATL03", "004", "2021-01-01", "2022-01-01", polygon="-72,0,-72,2,-70,2,-70,0,-72,0") # bounding_box="-72,0,-70,2",) # polygon='-171.0005555555413,-14.500555546905522,-171.0005555555413,-13.999444442853925,-169.24981479479877,-13.999444442853925,-169.24981479479877,-14.500555546905522,-171.0005555555413,-14.500555546905522')
@@ -663,4 +752,4 @@ if __name__ == '__main__':
     # print(len(urls), "urls returned in", time2-time1, "seconds.")
     # for i in range(15):
     #     print('\t', urls[i])
-    main()
+    # main()

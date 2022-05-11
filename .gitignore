@@ -134,3 +134,4 @@ data/*.tif
 data/*.gpkg
 .nsidc_credentials
 scratch_data/*
+ETOPO_2022_v1_*

@@ -261,17 +261,22 @@ def icepyx_download_child_process(args):
     # every time we run this.)
     query.order_granules(email=False, subset=args.crop_to_region)
 
-    # Download the data.
-    query.download_granules(args.local_dir, subset=args.crop_to_region)
+    # TEMP, for debugging purposes. Delete later.
+    print(query.granules.avail)
 
-    granules_downloaded = find_which_granules_are_present_on_local_system(granules_list, args.local_dir)
+    # Download the data.
+    query.download_granules(args.local_dir, subset=args.crop_to_region)  #TURN BACK ON
+
+    granules_downloaded = find_which_granules_are_present_on_local_system(granules_list, args.local_dir) #TURN BACK ON
     if args.print_files:
         # Print these tags so that the parent process can easily parse the list of granules downloaded.
         print("==GRANULES_DOWNLOADED==")
-        print("\n".join(granules_downloaded))
+        # print(query.product_all_info())
+        print("\n".join(granules_downloaded)) #TURN BACK ON
         print("==END_GRANULES_DOWNLOADED==")
 
-    return granules_downloaded
+    # return granules_downloaded #TURN BACK ON
+    return
 
 def find_which_granules_are_present_on_local_system(granule_list, local_dir=None):
     """Given a list of granules to be downloaded, return a list of which files exist in the local directory.

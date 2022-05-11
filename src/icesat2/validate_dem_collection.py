@@ -116,8 +116,9 @@ def read_or_create_photon_h5(dem_list,
     #     # should return None, which will be passed back to calling function.
 
     # else:
-    # If the projection is not in WGS84 as icesat is, we need to convert.
-    if dset_epsg != 4326:
+    # If the projection is not in WGS84 (EPSG:4326) as icesat is, we need to convert.
+    # It can also be in NAD83 (EPSG:4269), which has equivalent lat/lon coordinates.
+    if dset_epsg not in (4326, 4269):
         # TODO: Perhaps create a shapefile of the bounding box with its projection?
         # We would need to test whether or not a projected shapefile works in the icepyx API,
         # or if it needs to be in WGS84 (ESPG:4326)
@@ -144,16 +145,16 @@ def read_or_create_photon_h5(dem_list,
 
 
     if skip_icesat2_download:
-        # ? What to fill in here? Should we query the NSIDC[ thing (how long does that take?)
-        urls = nsidc_download.main(short_name=["ATL03","ATL08"],
-                                   region=bbox_wgs84,
-                                   local_dir=icesat2_dir,
-                                   dates=dates,
-                                   version=validate_dem.etopo_config.nsidc_atl_version,
-                                   fname_python_regex=r"\.h5\Z",
-                                   force=False,
-                                   query_only=True, # IMPORTANT: we're just querying to see what ATL03 granules are within this bbox, not actually downloading them.
-                                   quiet=False)
+        urls = nsidc_download.download_granules(short_name=["ATL03","ATL08"],
+                                                region=bbox_wgs84,
+                                                local_dir=icesat2_dir,
+                                                dates=dates,
+                                                version=validate_dem.etopo_config.nsidc_atl_version,
+                                                fname_python_regex=r"\.h5\Z",
+                                                force=False,
+                                                download_only_matching_granules = True,
+                                                query_only=True, # IMPORTANT: we're just querying to see what ATL03 granules are within this bbox, not actually downloading them.
+                                                quiet=False)
 
         atl_fnames = [url.split("/")[-1] for url in urls]
         atl03_granules_list = [os.path.join(icesat2_dir, fname) for fname in atl_fnames if fname.find("ATL03") > -1]
@@ -164,40 +165,35 @@ def read_or_create_photon_h5(dem_list,
         atl08_granules_list = [fn for fn in atl08_granules_list if os.path.exists(fn)]
 
     else:
-        # for dset_name in ["ATL03", "ATL08"]:
-        #     icepyx_download.icepyx_download(variables_list=[],
-        #                                     dataset_name = dset_name,
-        #                                     region= bbox_wgs84,
-        #                                     local_dir=icesat2_dir,
-        #                                     dates=dates,
-        #                                     overwrite=False,
-        #                                     child=False,
-        #                                     verbose=verbose,
-        #                                     crop_to_region=False,
-        #                                     print_files=False)
+        # granules_list = nsidc_download.download_granules(short_name="ATL08",
+        #                                                  region=bbox_wgs84,
+        #                                                  local_dir=icesat2_dir,
+        #                                                  version=validate_dem.etopo_config.nsidc_atl_version,
+        #                                                  dates = dates,
+        #                                                  fname_python_regex="\.h5\Z", # Only download H5 files, not XML files.
+        #                                                  force=False,
+        #                                                  download_only_matching_granules = True,
+        #                                                  query_only=False,
+        #                                                  quiet=not verbose)
+        # print("Find 'FOOBAR' in validate_dem_collection.py. Remove the grnaules_list download command above it. Then re-run.")
+        # FOOBAR
 
-        granules_list = nsidc_download.main(short_name=["ATL03","ATL08"],
-                                            region=bbox_wgs84,
-                                            local_dir=icesat2_dir,
-                                            version=validate_dem.etopo_config.nsidc_atl_version,
-                                            dates = dates,
-                                            fname_python_regex="\.h5\Z", # Only download H5 files, not XML files.
-                                            force=False,
-                                            quiet=not verbose)
+        # If we're not just querying, actually download the granules (query_only=False)
+        granules_list = nsidc_download.download_granules(short_name=["ATL03","ATL08"],
+                                                         region=bbox_wgs84,
+                                                         local_dir=icesat2_dir,
+                                                         version=validate_dem.etopo_config.nsidc_atl_version,
+                                                         dates = dates,
+                                                         fname_python_regex="\.h5\Z", # Only download H5 files, not XML files.
+                                                         force=False,
+                                                         download_only_matching_granules = True,
+                                                         query_only=False,
+                                                         quiet=not verbose)
 
         # print("Granules:", len(granules_list), "\n", granules_list)
 
-        atl03_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL03") > -1]
-        atl08_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL08") > -1]
-
-        # atl08_granules_list = nsidc_download.main(short_name="ATL08",
-        #                                           region=bbox_wgs84,
-        #                                           local_dir=icesat2_dir,
-        #                                           version=validate_dem.etopo_config.nsidc_atl_version,
-        #                                           dates = dates,
-        #                                           fname_filter="*.h5",
-        #                                           force=False,
-        #                                           quiet=not verbose)
+        atl03_granules_list = [fn for fn in granules_list if (os.path.split(fn)[1]).find("ATL03") > -1]
+        atl08_granules_list = [fn for fn in granules_list if (os.path.split(fn)[1]).find("ATL08") > -1]
 
     # Get a list of the common granules between the ATL03 and ATL08 datasets (usually the same list, but occasionally
     # a granule in the corner of the search box may be included in one dataset's NSIDC query but omitted from another.)
@@ -428,7 +424,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                                                     verbose=verbose)
 
     if results_h5 is not None:
-        total_results_df.to_hdf(results_h5, "results")
+        total_results_df.to_hdf(results_h5, "results", complib="zlib", complevel=3)
         if verbose:
             print(results_h5, "written.")
 

@@ -260,8 +260,13 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     if verbose:
         print(output_figure_name, "written.")
 
+    # Clear the figure and close the plot.
+    # If the plot is not "plt.close()"'ed, MatPlotLib keeps it in memory indefinitely
+    # even after it's no longer referenced, which is... annoying. Gotta close it explicitly here.
     plt.clf()
+    plt.close(fig)
 
+    return
 
 
 def plot_histograms(results_h5_name_or_list, empty_val = my_config.etopo_ndv):

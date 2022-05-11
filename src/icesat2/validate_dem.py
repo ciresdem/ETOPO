@@ -827,7 +827,15 @@ def validate_dem_parallel(dem_name,
 
     t_end = time.perf_counter()
     if not quiet:
-        print("{0:0.1f} seconds total, ({1:0.4f} s/iteration)".format((t_end - t_start), ( ((t_end - t_start)/N) if N>0 else 0)))
+        total_time_s = t_end - t_start
+        total_time_m = 0
+        # If there's 100 or more seconds, state the time with minutes.
+        if total_time_s >= 100:
+            total_time_m = int(total_time_s / 60)
+            partial_time_s = total_time_s % 60
+            print("{0:d} minute".format(total_time_m) + ("s" if total_time_m > 1 else "") + " {0:0.1f} seconds total, ({1:0.4f} s/iteration)".format(partial_time_s, ( (total_time_s/N) if N>0 else 0)))
+        else:
+            print("{0:0.1f} seconds total, ({1:0.4f} s/iteration)".format(total_time_s, ( (total_time_s/N) if N>0 else 0)))
 
     clean_procs_and_pipes(running_procs, open_pipes_parent, open_pipes_child)
     # Concatenate all the results dataframes

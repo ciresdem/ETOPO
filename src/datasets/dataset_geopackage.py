@@ -63,6 +63,7 @@ class DatasetGeopackage:
 
     def create_dataset_geopackage(self, dir_or_list_of_files = None,
                                         recurse_directory = True,
+                                        allow_epsg_matches_only = True,
                                         verbose = True):
         """Open a list of files and/or traverse a directory of raster files and create a geopackage of their bounding boxes.
 
@@ -70,6 +71,9 @@ class DatasetGeopackage:
         If file_filter_regex=None, will attempt to read all files in a directory.
 
         Returns the geodataframe created.
+
+        If allow_epsg_matches_only is set, the projections can be considered "the same" even if the exact .prj text isn't identical.
+        This helps some CUDEM tiles that are in various forms of NAD83 be identical even if their header info isn't.
 
         If geopackage_to_write is given, writes out the geopackage."""
         if not dir_or_list_of_files:
@@ -107,6 +111,7 @@ class DatasetGeopackage:
                     "geometry": []}
 
         dset_crs = None
+        previous_fname = None
         for i,fname in enumerate(list_of_files):
             # Get the bounding box of each file.
             try:
@@ -117,17 +122,24 @@ class DatasetGeopackage:
                 raise UserWarning("Unable to read file '{0}'. Skipping. (Error message: {1})".format(fname, str(e)))
                 continue
 
+            if previous_fname is None:
+                previous_fname = fname
+
             if dset_crs is None:
                 dset_crs = crs
             else:
+                dset_epsg =  pyproj.CRS.from_string(dset_crs).to_epsg()
+                dem_epsg = pyproj.CRS.from_string(crs).to_epsg()
                 # Get the CRS of each file, make sure they match the others (all files should have same CRS)
-                if dset_crs != crs:
+                # Some of the CUDEM tiles have different EPSG's even though they're both in NAD83 horizontal datums.
+                # Make a special-case exception for those.
+                if not (dset_crs == crs or (allow_epsg_matches_only and ((dem_epsg == dset_epsg) or ((dem_epsg in (4269,5498,None)) and (dset_epsg in (4269,5498,None)))))):
                     if verbose:
                         print("ERROR: Dataset files do not all have the same horizontal projection!\n" + \
                               "File {0}:\n".format(fname) + \
-                              crs + "\n" +
-                              "Previous file(s)' projection:\n" +
-                              dset_crs)
+                              crs + "\n" + "EPSG: " + str(pyproj.CRS.from_string(crs).to_epsg()) + "\n\n" +
+                              "Previous File {0}:\n".format(previous_fname) +
+                              dset_crs + "\n" + "EPSG: " + str(pyproj.CRS.from_string(dset_crs).to_epsg()))
                         raise ValueError("Projections do not match in dataset.")
 
             # Save each record with:

@@ -102,9 +102,10 @@ def populate_all_source_datasets(overwrite=True):
 
 if __name__ == "__main__":
     # populate_all_source_datasets()
-    populate_dataset_module("CUDEM_CONUS")
-    populate_dataset_module("CUDEM_Hawaii")
-    populate_dataset_module("CUDEM_Guam")
-    populate_dataset_module("CUDEM_AmericanSamoa")
-    populate_dataset_module("CUDEM_PuertoRico")
-    populate_dataset_module("CUDEM_VirginIslands")
+    # populate_dataset_module("CUDEM_CONUS")
+    # populate_dataset_module("CUDEM_Hawaii")
+    # populate_dataset_module("CUDEM_Guam")
+    # populate_dataset_module("CUDEM_AmericanSamoa")
+    # populate_dataset_module("CUDEM_PuertoRico")
+    # populate_dataset_module("CUDEM_VirginIslands")
+    populate_dataset_module("GLOBathy")

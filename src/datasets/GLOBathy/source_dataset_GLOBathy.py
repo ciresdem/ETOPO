@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""Source code for the CUDEM_CONUS ETOPO source dataset class."""
+"""Source code for the GLOBathy ETOPO source dataset class."""
 
 import os
 
@@ -14,13 +14,10 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import datasets.etopo_source_dataset as etopo_source_dataset
 
-class source_dataset_CUDEM_CONUS(etopo_source_dataset.ETOPO_source_dataset):
+class source_dataset_GLOBathy(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
     def __init__(self,
-                 configfile = os.path.join(THIS_DIR, "CUDEM_CONUS_config.ini" )):
-        """Initialize the CUDEM_CONUS source dataset object."""
+                 configfile = os.path.join(THIS_DIR, "GLOBathy_config.ini" )):
+        """Initialize the GLOBathy source dataset object."""
 
-        super(source_dataset_CUDEM_CONUS, self).__init__("CUDEM_CONUS", configfile)
-
-if __name__ == "__main__":
-    gdf = source_dataset_CUDEM_CONUS().get_geodataframe()
+        super(source_dataset_GLOBathy, self).__init__("GLOBathy", configfile)
