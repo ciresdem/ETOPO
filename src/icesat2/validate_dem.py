@@ -28,6 +28,7 @@ import etopo.coastline_mask as coastline_mask
 import icesat2.nsidc_download as nsidc_download
 import icesat2.plot_validation_results as plot_validation_results
 import icesat2.classify_icesat2_photons as classify_icesat2_photons
+import icesat2.icesat2_photon_database as icesat2_photon_database
 
 # import subprocess
 from osgeo import gdal, osr
@@ -345,7 +346,8 @@ def kick_off_new_child_process(height_array, i_array, j_array, code_array):
 
 
 def validate_dem_parallel(dem_name,
-                          photon_dataframe_name,
+                          photon_dataframe_name = None,
+                          use_icesat2_photon_database = True,
                           dem_vertical_datum = "egm2008",
                           output_vertical_datum = "egm2008",
                           granule_ids=None,
@@ -492,8 +494,16 @@ def validate_dem_parallel(dem_name,
         converted_dem_name = None
 
     # If we've been provided an open dataframe rather than just the name of the file, simply use it.
-    if isinstance(photon_dataframe_name, pandas.DataFrame):
+    if photon_dataframe_name is None and use_icesat2_photon_database == False:
+        raise ValueError("Input error: must specify either use_icesat2_photon_database or provide a photon dataframe name.")
+
+    elif isinstance(photon_dataframe_name, pandas.DataFrame):
         photon_df = photon_dataframe_name
+
+    elif use_icesat2_photon_database:
+        photon_df = icesat2_photon_database.ICESat2_Database().get_photon_database(dem_bbox,
+                                                                                   build_tiles_if_nonexistent = True,
+                                                                                   verbose = not quiet)
 
     # If the photon dataframe file containing all the photons in this tile already exists, just use it.
     elif skip_icesat2_download and os.path.exists(photon_dataframe_name) and overwrite==False:
@@ -1022,6 +1032,8 @@ def read_and_parse_args():
                         help='The date range in which to search for signal photons, comma-separated. Ex: 2020-01-01,2020-12-31 (Default)')
     parser.add_argument('-place_name', '-name', type=str, default=None,
                         help='A text name of the location, to put in the title of the plot (if --plot_results is selected)')
+    parser.add_argument('--use_icesat2_photon_database', action='store_true', default=False,
+                        help="Use the optimized ICESat-2 photon database rather than downloading granules separately. This can save time & memory if the database has already been built on this machine.")
     parser.add_argument('--delete_datafiles', action='store_true', default=False,
                         help='Delete the interim data files generated. Reduces storage requirements. (Default: keep them all.)')
     parser.add_argument('--write_result_tifs', action='store_true', default=False,
@@ -1061,6 +1073,7 @@ if __name__ == "__main__":
 
     validate_dem_parallel(args.input_dem,
                           args.photon_h5,
+                          use_icesat2_photon_database = args.use_icesat2_photon_database,
                           dem_vertical_datum = args.input_vdatum,
                           output_vertical_datum = args.output_vdatum,
                           results_dataframe_file = args.output_h5,

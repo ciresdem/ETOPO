@@ -38,6 +38,16 @@ class source_dataset_FOOBAR(etopo_source_dataset.ETOPO_source_dataset):
 
 import os
 import shutil
+import pandas
+import dataset_geopackage
+
+###############################################################################
+# Import the project /src directory into PYTHONPATH, in order to import all the
+# other modules appropriately.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+###############################################################################
+import etopo.etopo_generator
+
 
 def populate_dataset_module(dataset_name, overwrite=True):
     local_dir = os.path.split(__file__)[0]
@@ -100,6 +110,35 @@ def populate_all_source_datasets(overwrite=True):
     for subdir in subdir_list:
         populate_dataset_module(subdir, overwrite=True)
 
+def make_list_of_ranks_and_ids(output_csv=os.path.join(os.path.dirname(__file__), "ETOPO_dataset_ranks_and_ids.csv")):
+    """Go through all the datasets. From their source data, list all the ranks, ids, vdatum_name, vdatum_number, and whether they're active or not."""
+    datasets_dict = etopo.etopo_generator.ETOPO_Generator().fetch_etopo_source_datasets(active_only=False, verbose=True, return_type=dict)
+    dset_names = sorted(datasets_dict.keys())
+    is_active = [None] * len(dset_names)
+    ranks = [None] * len(dset_names)
+    ids = [None] * len(dset_names)
+    vdatum_names = [None] * len(dset_names)
+    vdatum_numbers = [None] * len(dset_names)
+
+    for i,dset_name in enumerate(dset_names):
+        dset = datasets_dict[dset_name]
+        is_active[i] = dset.is_active()
+        ranks[i] = dset.config.default_ranking_score
+        ids[i] = dset.config.dataset_id_number
+        vdatum_names[i] = dset.config.dataset_vdatum_name
+        vdatum_numbers[i] = dset.config.dataset_vdatum_epsg
+
+    df = pandas.DataFrame(data = {"name": dset_names,
+                                  "is_active": is_active,
+                                  "rank": ranks,
+                                  "dset_id": ids,
+                                  "vdatum_name": vdatum_names,
+                                  "vdatum_epsg": vdatum_numbers})
+
+    df.to_csv(output_csv)
+    print(output_csv, "written with", len(dset_names), "entries.")
+
+
 if __name__ == "__main__":
     # populate_all_source_datasets()
     # populate_dataset_module("CUDEM_CONUS")
@@ -108,4 +147,6 @@ if __name__ == "__main__":
     # populate_dataset_module("CUDEM_AmericanSamoa")
     # populate_dataset_module("CUDEM_PuertoRico")
     # populate_dataset_module("CUDEM_VirginIslands")
-    populate_dataset_module("GLOBathy")
+    # populate_dataset_module("CUDEM_PRVI")
+    # populate_dataset_module("global_lakes")
+    make_list_of_ranks_and_ids()

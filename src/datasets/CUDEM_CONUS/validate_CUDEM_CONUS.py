@@ -57,7 +57,7 @@ def validate_region(basedir,
         os.mkdir(results_dir)
         print("Results directory", results_dir, "created.")
 
-    photon_h5 = os.path.join(results_dir, region_subdir + "_photons.h5")
+    # photon_h5 = os.path.join(results_dir, region_subdir + "_photons.h5")
     results_h5 = os.path.join(results_dir, region_subdir + "_results.h5")
     icesat2_dir = os.path.abspath(os.path.join(etopo_config.etopo_cudem_cache_directory, ".cudem_cache"))
 
@@ -66,7 +66,8 @@ def validate_region(basedir,
         return
 
     icesat2.validate_dem_collection.validate_list_of_dems(data_dir,
-                                                         photon_h5,
+                                                         photon_h5=None,
+                                                         use_icesat2_photon_database=True,
                                                          results_h5=results_h5,
                                                          fname_filter=datafiles_regex,
                                                          fname_omit=None,

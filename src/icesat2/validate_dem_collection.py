@@ -261,6 +261,7 @@ def read_or_create_photon_h5(dem_list,
 
 def validate_list_of_dems(dem_list_or_dir,
                           photon_h5,
+                          use_icesat2_photon_database=True,
                           results_h5=None,
                           fname_filter=r"\.tif\Z",
                           fname_omit=None,
@@ -349,22 +350,23 @@ def validate_list_of_dems(dem_list_or_dir,
         # Only include filenames that DO NOT MATCH the omission string.
         dem_list = [fn for fn in dem_list if (re.search(fname_omit, fn) == None)]
 
-    # If a common photon dataframe already exists, open and use it.
-    # Otherwise, create it.
-    read_or_create_photon_h5(dem_list,
-                             photon_h5,
-                             output_dir=output_dir,
-                             icesat2_dir=icesat2_dir,
-                             skip_icesat2_download = skip_icesat2_download,
-                             overwrite=overwrite,
-                             create_shapefile = False if (shapefile_name is None) else True,
-                             shapefile_name = shapefile_name,
-                             verbose=verbose)
+    if not use_icesat2_photon_database:
+        # If a common photon dataframe already exists, open and use it.
+        # Otherwise, create it.
+        photon_df = read_or_create_photon_h5(dem_list,
+                                             photon_h5,
+                                             output_dir=output_dir,
+                                             icesat2_dir=icesat2_dir,
+                                             skip_icesat2_download = skip_icesat2_download,
+                                             overwrite=overwrite,
+                                             create_shapefile = False if (shapefile_name is None) else True,
+                                             shapefile_name = shapefile_name,
+                                             verbose=verbose)
 
-    if not os.path.exists(photon_h5):
-        if verbose:
-            print("Photon database {0} is not available. Ending process.".format(photon_h5))
-            return
+    # if not os.path.exists(photon_h5):
+    #     if verbose:
+    #         print("Photon database {0} is not available. Ending process.".format(photon_h5))
+    #         return
 
     list_of_results_dfs = []
     for i, dem_path in enumerate(dem_list):
@@ -381,7 +383,8 @@ def validate_list_of_dems(dem_list_or_dir,
         # Do the validation.
         # Note: We automatically skip the icesat-2 download here because we already downloaded it above for the whole directory.
         validate_dem.validate_dem_parallel(dem_path,
-                                           photon_h5,
+                                           photon_dataframe_name = None if use_icesat2_photon_database else photon_df,
+                                           use_icesat2_photon_database = use_icesat2_photon_database,
                                            dem_vertical_datum=input_vdatum,
                                            output_vertical_datum = output_vdatum,
                                            granule_ids=None,
@@ -470,6 +473,9 @@ def define_and_parse_args():
     parser.add_argument("-shapefile", "-shp", type=str, default=None,
         help="Name of a shapefile to save locations of the granule paths. Default: No shapefile created.")
 
+    parser.add_argument('--use_icesat2_photon_database', '-is2db', action='store_true', default=False,
+                        help="Use the optimized ICESat-2 photon database rather than downloading granules separately. This can save time & memory if the database has already been built on this machine.")
+
     parser.add_argument("--overwrite", "-o", action="store_true", default=False,
         help="Overwrite all files, including intermittent data files. Default: False (skips re-computing already-computed reseults.")
 
@@ -509,7 +515,7 @@ def main():
         # Default: set the data directory to the same as the output directory
         args.icesat2_dir = args.output_dir
 
-    if args.photon_h5 is None:
+    if args.photon_h5 is None and not args.use_icesat2_photon_database:
         # Default: sat the photon H5 file to a file in the data directory with th same name as the data directory.
         dirname = os.path.split(os.path.abspath(args.icesat2_dir))[1]
         args.photon_h5 = os.path.join(args.icesat2_dir, dirname + ".h5")

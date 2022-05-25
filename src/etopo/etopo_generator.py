@@ -29,7 +29,7 @@ import import_parent_dir
 import_parent_dir.import_src_dir_via_pythonpath()
 #####################################################
 
-import generate_empty_grids
+import etopo.generate_empty_grids
 import utils.configfile
 import utils.progress_bar
 import utils.parallel_funcs
@@ -206,7 +206,8 @@ class ETOPO_Generator:
             datasets_list = self.fetch_etopo_source_datasets(verbose=verbose, return_type=list)
 
             # 3. For each tile in the gdf, create a datalist name for that tile in the datalist folder.
-            for etopo_fname, etopo_poly in zip(etopo_fnames, etopo_polygons):
+            N = len(etopo_fnames)
+            for i,(etopo_fname, etopo_poly) in enumerate(zip(etopo_fnames, etopo_polygons)):
                 fname_base = os.path.splitext(os.path.split(etopo_fname)[1])[0]
                 etopo_tile_datalist_fname = os.path.join(datalist_folder, fname_base + ".datalist")
 
@@ -226,6 +227,7 @@ class ETOPO_Generator:
                     f.write(datalist_text)
                     f.close()
                     if verbose:
+                        print("\r" + " "*120, end="")
                         print(etopo_tile_datalist_fname, "written with", len(datalist_lines), "entries.")
 
                 # Get rid of any previous .inf or .json files with the same name.
@@ -237,17 +239,20 @@ class ETOPO_Generator:
                 if os.path.exists(json_fname):
                     os.remove(json_fname)
 
+                if verbose:
+                    utils.progress_bar.ProgressBar(i+1, N, suffix = "{0}/{1}".format(i+1,N))
+
         return
         # 7. Test out the waffles -M stacks command to see if it runs faster now.
 
-    def flag_datalist_mismatches(self, resolution=1,
-                                       verbose=True):
-        """Right now some of the waffles commands are acting strangely, prioritizing
-        lower-ranking datasets instead of taking just the higher-ranking ones. Detect
-        those here and list them out.
-        """
-        # TODO: Finish
-        pass
+    # def flag_datalist_mismatches(self, resolution=1,
+    #                                    verbose=True):
+    #     """Right now some of the waffles commands are acting strangely, prioritizing
+    #     lower-ranking datasets instead of taking just the higher-ranking ones. Detect
+    #     those here and list them out.
+    #     """
+    #     # TODO: Finish
+    #     pass
 
     def generate_all_etopo_tiles(self, resolution=1,
                                        numprocs=utils.parallel_funcs.physical_cpu_count(),
@@ -271,14 +276,10 @@ class ETOPO_Generator:
         # Look through all the dlists, (re-)generate if necessary.
         if verbose:
             print("Generating tile datalists:")
-        for i, (tile,dlist) in enumerate(zip(etopo_tiles, etopo_dlists)):
-            if overwrite or not os.path.exists(dlist):
-                self.generate_etopo_tile_datalist(resolution=resolution,
-                                                  etopo_tile_fname=tile,
-                                                  active_sources_only = True,
-                                                  verbose = False)
-            if verbose:
-                utils.progress_bar.ProgressBar(i+1, len(etopo_tiles), suffix="{0:,}/{1:,}".format(i+1, len(etopo_tiles)))
+        self.generate_etopo_tile_datalist(resolution=resolution,
+                                          etopo_tile_fname=None,
+                                          active_sources_only=True,
+                                          verbose=verbose)
 
         if verbose:
             print("Generating", len(etopo_tiles), "ETOPO tiles at", str(resolution) + "s resolution:")
@@ -641,11 +642,16 @@ if __name__ == "__main__":
     # EG.create_etopo_geopackages()
 
 
-    EG.generate_all_etopo_tiles(resolution=1, overwrite=True)
-    EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
-
-    EG.generate_all_etopo_tiles(resolution=15, overwrite=True)
+    EG.generate_all_etopo_tiles(resolution=15, overwrite=False)
     EG.copy_finished_tiles_to_onedrive(resolution=15, use_symlinks=True)
 
     EG.generate_all_etopo_tiles(resolution=60, overwrite=True)
     EG.copy_finished_tiles_to_onedrive(resolution=60, use_symlinks=True)
+
+
+    EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
+    EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
+
+
+    EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
+    EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)

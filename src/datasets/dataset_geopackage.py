@@ -157,7 +157,7 @@ class DatasetGeopackage:
             gdf_dict["geometry"].append(polygon)
 
             if verbose:
-                utils.progress_bar.ProgressBar(i+1, len(list_of_files))
+                utils.progress_bar.ProgressBar(i+1, len(list_of_files), suffix="{0}/{1}".format(i+1,len(list_of_files)))
 
         # Save the output file as a GeoDataFrame.
         gdf = geopandas.GeoDataFrame(gdf_dict, geometry="geometry", crs=dset_crs)
@@ -211,7 +211,8 @@ class DatasetGeopackage:
             project = pyproj.Transformer.from_crs(poly_crs_obj, gdf_crs_obj, always_xy=True).transform
             polygon_to_use = shapely.ops.transform(project, polygon)
 
-        return gdf[gdf.intersects(polygon_to_use)]
+        # Get all the tiles that truly intersect but don't just "touch" the polygon on its boundary without overlapping.
+        return gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
 
     def subset_by_geotiff(self, gtif_file):
         """Given a geotiff file, return all records that intersect the bounding-box outline of this geotiff."""
@@ -220,13 +221,17 @@ class DatasetGeopackage:
 
     def print_full_gdf(self):
         """Print a full geodataframe, with all rows and columnns. Resets display options back to defaults afterward."""
+        # Get the original default options for pandas displays
         orig_max_rows_opt = geopandas.get_option("max_rows")
         orig_max_cols_opt = geopandas.get_option("max_columns")
 
+        # Set them to no-limit maximums
         geopandas.set_option('max_rows', None)
         geopandas.set_option('max_columns', None)
+        # Print out the dataset
         print(self.get_gdf(verbose=False))
 
+        # Re-set them to their original values.
         geopandas.set_option('max_rows', orig_max_rows_opt)
         geopandas.set_option('max_columns', orig_max_cols_opt)
         return
@@ -303,12 +308,13 @@ def create_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # ET1 = ETOPO_Geopackage(60)
-    # ET1.add_dlist_paths_to_gdf()
+    ET1 = ETOPO_Geopackage(1)
     # print(ET1.get_gdf().columns)
     # print(ET1.get_gdf())
-    # import sys
-    # sys.exit(0)
+    ET1.create_dataset_geopackage()
+    ET1.add_dlist_paths_to_gdf()
+    import sys
+    sys.exit(0)
 
     args = create_and_parse_args()
     dataset_object = DatasetGeopackage(args.geopackage_file,

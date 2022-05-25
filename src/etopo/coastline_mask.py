@@ -90,6 +90,13 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
     # return int(srs.GetAttrValue('authority', 1))
 
 
+# TODO: Get coastline mask from:
+    # 1. Copernicus mask (from waffles) -- this is what's existing.
+    # 2. Extra tiles over Azerbaijan missing from Copernicus
+    # 3. Outlying minor island (ask Matt about that)
+    # 4. Subtract off lakes mask from GLOBathy.
+    # Combine all these ^^ together to return a complete coastline mask (possibly using stacks?)
+
 def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
                           output_file=None,
                           verbose=True):

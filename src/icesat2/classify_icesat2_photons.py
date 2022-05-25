@@ -12,6 +12,7 @@ import pandas
 import geopandas
 import os
 import shapely
+import sys
 # import timeit
 # from osgeo import ogr, osr
 
@@ -532,7 +533,7 @@ def save_photon_data_from_directory_or_list_of_granules(dirname_or_list_of_granu
 
     return dataframe
 
-def save_or_create_granule_photons(granule_path,
+def read_or_create_granule_photons(granule_path,
                                    output_h5 = None,
                                    overwrite = False,
                                    verbose = True):
@@ -578,17 +579,31 @@ def save_granule_ground_photons(granule_path,
                 print(output_h5, "already exists.")
             return
 
+    if verbose:
+        print(os.path.split(output_h5)[1], end="... ")
+        # Make sure it actually gets printed to the screen.
+        sys.stdout.flush()
+
     dataframe = classify_photon_data(granule_path,
                                      beam=None,
                                      return_type=pandas.DataFrame,
                                      bounding_box=None,
                                      bbox_converter=None)
+
+    # Subset only ground and canopy photons.
+    # -1 = unclassified
+    #  0 = noise/atmosphere
+    #  1 = ground
+    #  2 = canopy
+    #  3 = canopy top
+    # Save only 1,2,3 photons.
+    dataframe = dataframe.loc[dataframe.class_code.between(1,3,inclusive="both")]
+
     dataframe.to_hdf(output_h5, "icesat2", complib="zlib", complevel=3, mode='w')
 
     if verbose:
-        print(output_h5, "written.")
-
-    return
+        print("Done.")
+    return dataframe
 
 if __name__ == "__main__":
     print("Nothing in __main__ executable here. This is a set of utilities primarily used by ./validate_dem.py")

@@ -8,9 +8,10 @@ as well as the 1", 1° resolution for land and land-adjacent grids.
 Also tools for generating outline shapefiles for each one, for mapping purposes.
 """
 
-from osgeo import gdal, osr, ogr
+from osgeo import gdal, osr
 import os
 import numpy
+import re
 
 ###############################################################
 # Quick code for importing the parent /src/ directory, to access other modules.
@@ -19,6 +20,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 ###############################################################
 
 import utils.configfile
+import datasets.dataset_geopackage
 
 my_config = utils.configfile.config()
 # ETOPO_datatype = gdal.GDT_Float32
@@ -130,95 +132,92 @@ def create_empty_tiles(directory,
         ds = None
 
         if verbose:
-            print(fname, "written.")
+            print(str(i+1) + "/" + str(len(tuple_list)), fname, "written.")
 
-        # fname_metadata = os.path.join(tiledir, fname_metadata_template.format(
-        #                                                     ymin_letter, abs(ymin),
-        #                                                     ymax_letter, abs(ymax),
-        #                                                     xmin_letter, abs(xmin),
-        #                                                     xmax_letter, abs(xmax),
-        #                                                     resolution))
-
-
-        # ds2 = driver.Create(fname_metadata, filedimsize, filedimsize, 1, options=compression_options)
-        # ds2.SetGeoTransform(geotransform)
-        # ds2.SetProjection(projection.ExportToWkt())
-        # band2 = ds2.GetRasterBand(1)
-        # band2.WriteArray(empty_source_array)
-        # band2.SetNoDataValue(source_emptyval)
-        # # band2.GetStatistics(0,1)
-        # ds2.FlushCache() # Save to disk
-        # band2 = None
-        # ds2 = None
-
-        # if verbose:
-        #     print(fname_source, "written.")
-
-    # # Now, generate a shapefile with teh boundaries list.
-    # create_tile_shapefile(shapefile_name,
-    #                       boundaries_list,
-    #                       projection,
-    #                       config_obj = config_obj,
-    #                       verbose = verbose)
+    if also_write_geopackage:
+        datasets.dataset_geopackage.ETOPO_Geopackage(1).create_dataset_geopackage()
 
     return
 
-def create_tile_shapefile(shapefile_name,
-                          tile_boundaries_list,
-                          projection,
-                          config_obj = my_config,
-                          overwrite = True,
-                          verbose=True):
-    """Generate tile outline shapefile given the boundaries of each box.
-    tile_boundaries is a 4-tuple with (xmin, xmax, ymin, ymax)."""
+def get_azerbaijan_1deg_bboxes():
+    """Return the (xmin,ymin,xmax,ymax) bounding boxes for 1s tiles over Azerbaijan.
 
-    driver = ogr.GetDriverByName("ESRI Shapefile")
+    Copernicus and FABDEM leaves them out, so we need to include them manually here!"""
+    bboxes = []
+    y = 41
+    for x in range(43,50):
+        bboxes.append((x,y,x+1,y+1))
 
-    if overwrite and os.path.exists(shapefile_name):
-        driver.DeleteDataSource(shapefile_name)
+    y = 40
+    for x in range(43,51):
+        bboxes.append((x,y,x+1,y+1))
 
-    ds = driver.CreateDataSource(shapefile_name)
-    layer = ds.CreateLayer("Tiles", projection, ogr.wkbPolygon)
+    y = 39
+    for x in range(44,50):
+        bboxes.append((x,y,x+1,y+1))
 
-    id_field = ogr.FieldDefn("id", ogr.OFTInteger)
-    layer.CreateField(id_field)
-    pct_done_field = ogr.FieldDefn("pct_done", ogr.OFTReal)
-    layer.CreateField(pct_done_field)
-    pct_land_field = ogr.FieldDefn("pct_land", ogr.OFTReal)
-    layer.CreateField(pct_land_field)
-    # TODO: Add other fields here as needed.
+    y = 38
+    for x in (45,46,48,49):
+        bboxes.append((x,y,x+1,y+1))
 
-    feature_defn = layer.GetLayerDefn()
+    return bboxes
 
-    for i, tile_boundary_tuple in enumerate(tile_boundaries_list):
-        feature = ogr.Feature(feature_defn)
-        xmin, xmax, ymin, ymax = [float(x) for x in tile_boundary_tuple]
+# def create_tile_shapefile(shapefile_name,
+#                           tile_boundaries_list,
+#                           projection,
+#                           config_obj = my_config,
+#                           overwrite = True,
+#                           verbose=True):
+#     """Generate tile outline shapefile given the boundaries of each box.
+#     tile_boundaries is a 4-tuple with (xmin, xmax, ymin, ymax)."""
 
-        ring = ogr.Geometry(ogr.wkbLinearRing)
-        ring.AddPoint(xmin, ymin)
-        ring.AddPoint(xmin, ymax)
-        ring.AddPoint(xmax, ymax)
-        ring.AddPoint(xmax, ymin)
-        ring.AddPoint(xmin, ymin)
+#     driver = ogr.GetDriverByName("ESRI Shapefile")
 
-        poly = ogr.Geometry(ogr.wkbPolygon)
-        poly.AddGeometry(ring)
-        feature.SetGeometry(poly)
+#     if overwrite and os.path.exists(shapefile_name):
+#         driver.DeleteDataSource(shapefile_name)
 
-        feature.SetField("id", i+1)
-        feature.SetField("pct_done", 0.0)
-        feature.SetField("pct_land", -1.0)
+#     ds = driver.CreateDataSource(shapefile_name)
+#     layer = ds.CreateLayer("Tiles", projection, ogr.wkbPolygon)
 
-        layer.CreateFeature(feature)
+#     id_field = ogr.FieldDefn("id", ogr.OFTInteger)
+#     layer.CreateField(id_field)
+#     pct_done_field = ogr.FieldDefn("pct_done", ogr.OFTReal)
+#     layer.CreateField(pct_done_field)
+#     pct_land_field = ogr.FieldDefn("pct_land", ogr.OFTReal)
+#     layer.CreateField(pct_land_field)
+#     # TODO: Add other fields here as needed.
 
-        feature = None
+#     feature_defn = layer.GetLayerDefn()
 
-    ds = None
+#     for i, tile_boundary_tuple in enumerate(tile_boundaries_list):
+#         feature = ogr.Feature(feature_defn)
+#         xmin, xmax, ymin, ymax = [float(x) for x in tile_boundary_tuple]
 
-    if verbose:
-        print(len(tile_boundaries_list), "polygons written to", shapefile_name)
+#         ring = ogr.Geometry(ogr.wkbLinearRing)
+#         ring.AddPoint(xmin, ymin)
+#         ring.AddPoint(xmin, ymax)
+#         ring.AddPoint(xmax, ymax)
+#         ring.AddPoint(xmax, ymin)
+#         ring.AddPoint(xmin, ymin)
 
-    return
+#         poly = ogr.Geometry(ogr.wkbPolygon)
+#         poly.AddGeometry(ring)
+#         feature.SetGeometry(poly)
+
+#         feature.SetField("id", i+1)
+#         feature.SetField("pct_done", 0.0)
+#         feature.SetField("pct_land", -1.0)
+
+#         layer.CreateFeature(feature)
+
+#         feature = None
+
+#     ds = None
+
+#     if verbose:
+#         print(len(tile_boundaries_list), "polygons written to", shapefile_name)
+
+#     return
 
 def create_list_of_tile_tuples(resolution = 15,
                                config_obj = my_config,
@@ -236,10 +235,11 @@ def create_list_of_tile_tuples(resolution = 15,
         copernicus_dir = os.path.abspath(os.path.join(os.path.split(copds.config._configfile)[0], copds.config.source_datafiles_directory))
         print(copernicus_dir)
 
-        fnames = [f for f in os.listdir(copernicus_dir) if os.path.splitext(f)[-1] == ".tif"]
-        fnames.sort()
+        fnames = [f for f in os.listdir(copernicus_dir) if re.search("Copernicus_DSM_COG_10_(\w{3})_00_(\w{4})_00_DEM.tif\Z", f) != None] # os.path.splitext(f)[-1] == ".tif"]
+        # fnames.sort()
 
         dem_tuples = [None] * len(fnames)
+
         if verbose:
             print("{0:,} 1° DEM tiles over land.".format(len(dem_tuples)))
         for i,fname in enumerate(fnames):
@@ -254,6 +254,17 @@ def create_list_of_tile_tuples(resolution = 15,
 
             dem_tuples[i] = (int(fname[23:25]) * lat_sign,
                              int(fname[30:33]) * lon_sign)
+
+        # Since Copernicus annoyingly omits the 25 tiles over Azerbaijan, include them here.
+        azerbaijan_bboxes = get_azerbaijan_1deg_bboxes()
+        azerbaijan_tuples = [(bbox[1],bbox[0]) for bbox in azerbaijan_bboxes]
+        dem_tuples.extend(azerbaijan_tuples)
+        # Sort them out, for good measure.
+        dem_tuples.sort()
+
+        if verbose:
+            print("{0:,} 1° DEM tiles over land (including Azerbaijan).".format(len(dem_tuples)))
+
 
     elif resolution == 15:
         dem_lons = numpy.arange(-180, 180, 15, dtype=int)
@@ -273,5 +284,8 @@ def create_list_of_tile_tuples(resolution = 15,
     return dem_tuples
 
 if __name__ == "__main__":
-    create_empty_tiles(resolution=1, shapefile_only = False)
-    # create_list_of_tile_tuples(resolution=1)
+    create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "1s"),
+                       tile_width_deg = 1,
+                       resolution_s = 1,
+                       ndv = my_config.etopo_ndv,
+                       also_write_geopackage = True)

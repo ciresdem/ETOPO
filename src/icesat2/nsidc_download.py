@@ -54,9 +54,10 @@ from getpass import getpass
 import argparse
 import ast
 import numpy
-import dateutil
+import dateutil.parser
 import datetime
 import re
+import shapely.geometry
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
@@ -353,8 +354,10 @@ def cmr_download(urls, download_dir=None, force=False, quiet=False):
             print("local file:", filename)
             print("url:", url)
             print('HTTP error {0}, {1}'.format(e.code, e.reason))
+            raise e
         except URLError as e:
             print('URL error: {0}'.format(e.reason))
+            raise e
         except IOError as e:
             print("local file:", filename)
             print("url:", url)
@@ -410,10 +413,13 @@ def cmr_filter_urls(search_results):
 def cmr_search(short_name, version, time_start, time_end,
                bounding_box='', polygon='', filename_filter='', quiet=False):
     """Perform a scrolling CMR query for files matching input criteria."""
-    cmr_query_url = build_cmr_query_url(short_name=short_name, version=version,
-                                        time_start=time_start, time_end=time_end,
+    cmr_query_url = build_cmr_query_url(short_name=short_name,
+                                        version=version,
+                                        time_start=time_start,
+                                        time_end=time_end,
                                         bounding_box=bounding_box,
-                                        polygon=polygon, filename_filter=filename_filter)
+                                        polygon=polygon,
+                                        filename_filter=filename_filter)
     if not quiet:
         print('Querying for data:\n\t{0}\n'.format(cmr_query_url))
 
@@ -433,8 +439,11 @@ def cmr_search(short_name, version, time_start, time_end,
         try:
             response = urlopen(req, context=ctx)
         except Exception as e:
+            # This is kind of a weird way to code this up, but if we get an except
+            # return it rather than raising it. _main() uses this to handle
+            # the exception. I may change this later, but it works for now.
             print('Error: ' + str(e))
-            return(e)
+            return e
         if not cmr_scroll_id:
             # Python 2 and 3 have different case for the http headers
             headers = {k.lower(): v for k, v in dict(response.info()).items()}
@@ -475,8 +484,11 @@ def get_region_as_bbox_or_polygon(region_text):
         polygon = None
     else:
         # Flatten the polygon object
+        if type(region_obj) == shapely.geometry.Polygon:
+            polygon = list( numpy.array(list(region_obj.exterior.coords)).flatten() )
+        else:
+            polygon = list(numpy.concatenate(region_obj).flatten())
         bounding_box = None
-        polygon = list(numpy.concatenate(region_obj).flat)
 
     if bounding_box != None:
         bounding_box = ",".join([str(x) for x in bounding_box])
@@ -516,8 +528,10 @@ def download_granules(short_name="ATL03",
                       fname_filter='',
                       force=False,
                       query_only=False,
-                      fname_python_regex=None,
+                      fname_python_regex=r"\.h5\Z",
+                      use_wget='backup',
                       download_only_matching_granules=True,
+                      skip_granules_if_photon_db_exists=True,
                       quiet=False):
     """An API function for downloading without the command-line, from another
     python module.
@@ -542,6 +556,7 @@ def download_granules(short_name="ATL03",
                         force = force,
                         query_only = query_only,
                         fname_python_regex = fname_python_regex,
+                        use_wget = use_wget,
                         download_only_matching_granules=download_only_matching_granules,
                         quiet = quiet)
     return local_files
@@ -556,7 +571,9 @@ def _main(short_name=None,
           force=None,
           query_only=None,
           fname_python_regex=r"\.h5\Z",
+          use_wget='backup',
           download_only_matching_granules=True,
+          skip_granules_if_photon_db_exists=True,
           quiet=None):
     """'short_name' may be either a single ATLXX name ("ATL03", e.g.) or a list of ALTXX names (["ATL03", "ATL08"], e.g.).
 
@@ -567,6 +584,12 @@ def _main(short_name=None,
 
     This eliminates downloading unmatched granules that the classify_icesat2_photons.py
     script cannot use because it can only use matching pairs of ATL03 and ATL08 granules.
+
+    The 'use_wget' parameter includes a few different options: -- Not yet implemented. May do this later. (maybe not)
+        - False: Just use the default NSIDC cmr_download function.
+        - True: Use wget instead. (This will write a temporary script of URLs to which to write, in the destination directory.)
+        - "backup" (string): This will use cmr_download unless it breaks or returns an exception,
+                             in which case it will resort to wget to download the files.
     """
     # If we ran this from the command-line, all these arg will be None, in which
     # case get them all from the argparse command-line arguments.
@@ -636,23 +659,39 @@ def _main(short_name=None,
         numfiles_existing = 0
         # List through each of the short_names listed.
         for sname in short_names:
-            try:
-                url_list = cmr_search(sname, version, time_start_str, time_end_str,
-                                      bounding_box=bounding_box, polygon=polygon,
-                                      filename_filter=fname_filter, quiet=quiet)
-            except:
-                pass
-            if isinstance(url_list, Exception):
-                # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
-                # to fix it by going the other way if it doesn't work at first.
-                if polygon is not None:
-                    polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
+            try_again = True
+            tried_polygon_switch_already = False
+            while try_again:
+                try:
                     url_list = cmr_search(sname, version, time_start_str, time_end_str,
                                           bounding_box=bounding_box, polygon=polygon,
                                           filename_filter=fname_filter, quiet=quiet)
+                except:
+                    pass
                 if isinstance(url_list, Exception):
-                    # If it's *still* returning an Exception error, just raise it and get out.
-                    raise url_list
+                    # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
+                    # to fix it by going the other way if it doesn't work at first.
+                    if str(url_list).lower().find("too many requests") >= 0:
+                        print("HTTP Error 429: Too Many Requests. Waiting 5 minutes and trying again.")
+                        wait_time_sec = 5*60
+                        for i in range(wait_time_sec):
+                            print("\r  {0}:{1:02d}".format(int(wait_time_sec / 60), wait_time_sec % 60), end="")
+                            time.sleep(1)
+                            wait_time_sec -= 1
+                        print("\r  0:00")
+                        try_again = True # This is redundant but just make sure.
+
+                    elif polygon is not None and not tried_polygon_switch_already:
+                        polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
+                        tried_polygon_switch_already = True
+                        try_again = True
+
+                    # If it's *still* returning an Exception error of some other kind, just raise it and get out.
+                    else:
+                        raise url_list
+
+                else:
+                    try_again = False
 
             # fname_bases = [url.split("/")[-1] for url in url_list]
 
@@ -672,9 +711,7 @@ def _main(short_name=None,
             urls_total = urls_total[0]
 
         elif download_only_matching_granules and len(short_names) > 1:
-            # TODO: Fill in the logic here to only download granules where we
-            # have a matching pair in each of the datasets we queried above.
-            #
+            urls_total_original = urls_total
             # Often, we get more ATL03 granules returned than ATL08 granules in the same bounding box,
             # perhaps because not all of the ATL03 granules necessarily overlap land (ATL08 is primarily a land-cover product, not meant for clouds, etc).
             # If we don't need ATL03 granules that don't have a matching ATL08 file,
@@ -704,7 +741,15 @@ def _main(short_name=None,
             urls_total = sorted(url_master_list)
 
             if not quiet:
-                print(len(fname_master_set), "common granules found between", ",".join(short_names), "for", len(url_master_list), "granules total.")
+                print(len(fname_master_set), "common granules found between", ",".join(short_names), "for", len(urls_total), "granules total.")
+
+            # In some weird cases, we're getting granules returned for both data sets, but
+            # no "matching" granules between ATL03 and ATL08. If so, print out the granule names here, just for bug-searching sake.
+            if (not quiet) and len(urls_total) == 0 and numpy.all([len(url_list) > 0 for url_list in urls_total_original]):
+                print("List of granules:")
+                for url_list in urls_total:
+                    for url in sorted(url_list):
+                        print("\t",url.split("/")[-1])
 
         else:
             # If there's more than one dataset short_name and we didn't specify download_only_matching_granules
@@ -732,8 +777,37 @@ def _main(short_name=None,
                                                                                                          len(urls_to_download) + numfiles_existing,
                                                                                                          len(urls_to_download)))
 
+        if len(urls_to_download) == 0:
+            return local_files
+
+        # If we've already createed a _photon.h5 file of an ATL03 granule, do not download the ATL03 or ATL08 granule.
+        if skip_granules_if_photon_db_exists:
+            local_atl03_files = [fn for fn in local_files if os.path.split(fn)[1].find("ATL03") > -1]
+            urls_removed = 0
+            for atl03 in local_atl03_files:
+                db_file = os.path.splitext(atl03)[0] + "_photons.h5"
+                if os.path.exists(db_file):
+                    # Remove the atl03 from urls_to_download
+                    atl03_granule_name = os.path.split(atl03)[1]
+                    for url in urls_to_download:
+                        if url.find(atl03_granule_name) > -1:
+                            urls_to_download.remove(url)
+                            urls_removed += 1
+                    # Remove the atl08 from urls_to_download
+                    atl08_granule_name = atl03_granule_name.replace("ATL03", "ATL08")
+                    for url in urls_to_download:
+                        if url.find(atl08_granule_name) > -1:
+                            urls_to_download.remove(url)
+                            urls_removed += 1
+
+            if not quiet and urls_removed > 0:
+                print(urls_removed, "granules already have a _photon.h5 file present. Downloading", len(urls_to_download), "new granules.")
+
         # Download the urls that need to be downloaded.
-        if len(urls_to_download) > 0:
+        if use_wget == True:
+            # TODO: Put a wget script here.
+            pass
+        else:
             cmr_download(urls_to_download, download_dir=local_dir, force=force, quiet=quiet)
 
     except KeyboardInterrupt:

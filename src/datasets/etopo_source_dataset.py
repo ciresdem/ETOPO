@@ -124,7 +124,7 @@ class ETOPO_source_dataset:
         intersect that polygon (even if only partially)."""
         geopkg = self.get_geopkg_object(verbose=verbose)
         subset = geopkg.subset_by_polygon(polygon, polygon_crs)
-        return list(subset["filename"])
+        return subset["filename"].tolist()
 
     def vdatum_shift_original_tiles(self, input_tile_fname,
                                           output_tile_fname,
@@ -257,12 +257,13 @@ class ETOPO_source_dataset:
 
 if __name__ == "__main__":
 
+    pass
     # GEBCO = get_source_dataset_object("GEBCO")
     # GEBCO.create_waffles_datalist()
 
-    FAB = get_source_dataset_object("FABDEM")
+    # FAB = get_source_dataset_object("FABDEM")
 
-    FAB.set_ndv(verbose=True, fail_if_different=False)
+    # FAB.set_ndv(verbose=True, fail_if_different=False)
 
 
     # COP = get_source_dataset_object("CopernicusDEM")
