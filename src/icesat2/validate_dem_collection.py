@@ -371,7 +371,7 @@ def validate_list_of_dems(dem_list_or_dir,
     list_of_results_dfs = []
     for i, dem_path in enumerate(dem_list):
         if verbose:
-            print("\n=======", dem_path, ", (" + str(i+1), "of", str(len(dem_list)) + ")", "=======")
+            print("\n=======", os.path.split(dem_path)[1], "(" + str(i+1), "of", str(len(dem_list)) + ")", "=======")
 
         if output_dir is None:
             this_output_dir = os.path.split(dem_path)[0]
