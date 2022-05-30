@@ -362,12 +362,18 @@ def cmr_download(urls, download_dir=None, force=False, quiet=False):
             print("local file:", filename)
             print("url:", url)
             raise e
+        except KeyboardInterrupt as e:
+            # if the last file was left partially downloaded, delete it.
+            if os.path.exists(filename) and os.path.getsize(filename) != length:
+                os.remove(filename)
+                if not quiet:
+                    print("\nPartial file", filename, "removed.")
+            # Then re-raise the keyboard interrupt to exit.
+            raise e
         except Exception as e:
             print("local file:", filename)
             print("url:", url)
             raise e
-
-
 
 def cmr_filter_urls(search_results):
     """Select only the desired data files from CMR response."""
@@ -666,8 +672,12 @@ def _main(short_name=None,
                     url_list = cmr_search(sname, version, time_start_str, time_end_str,
                                           bounding_box=bounding_box, polygon=polygon,
                                           filename_filter=fname_filter, quiet=quiet)
+                except KeyboardInterrupt:
+                    return
+
                 except:
                     pass
+
                 if isinstance(url_list, Exception):
                     # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
                     # to fix it by going the other way if it doesn't work at first.
@@ -753,7 +763,8 @@ def _main(short_name=None,
 
         else:
             # If there's more than one dataset short_name and we didn't specify download_only_matching_granules
-            urls_total = list(itertools.chain(urls_total))
+            # just flatten the list of lists into one long list of urls together.
+            urls_total = [url for urls_sublist in urls_total for url in urls_sublist]
 
         fname_bases = [url.split("/")[-1] for url in urls_total]
 
@@ -801,7 +812,7 @@ def _main(short_name=None,
                             urls_removed += 1
 
             if not quiet and urls_removed > 0:
-                print(urls_removed, "granules already have a _photon.h5 file present. Downloading", len(urls_to_download), "new granules.")
+                print(urls_removed, "granules already have a _photons.h5 database present. Downloading", len(urls_to_download), "new granules.")
 
         # Download the urls that need to be downloaded.
         if use_wget == True:

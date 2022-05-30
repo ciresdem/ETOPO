@@ -233,7 +233,6 @@ def create_list_of_tile_tuples(resolution = 15,
         import datasets.CopernicusDEM.source_dataset_CopernicusDEM as copernicus
         copds = copernicus.source_dataset_CopernicusDEM()
         copernicus_dir = os.path.abspath(os.path.join(os.path.split(copds.config._configfile)[0], copds.config.source_datafiles_directory))
-        print(copernicus_dir)
 
         fnames = [f for f in os.listdir(copernicus_dir) if re.search("Copernicus_DSM_COG_10_(\w{3})_00_(\w{4})_00_DEM.tif\Z", f) != None] # os.path.splitext(f)[-1] == ".tif"]
         # fnames.sort()
@@ -263,7 +262,7 @@ def create_list_of_tile_tuples(resolution = 15,
         dem_tuples.sort()
 
         if verbose:
-            print("{0:,} 1° DEM tiles over land (including Azerbaijan).".format(len(dem_tuples)))
+            print("{0:,} 1° DEM tiles over land (including Azerbaijan and Armenia).".format(len(dem_tuples)))
 
 
     elif resolution == 15:

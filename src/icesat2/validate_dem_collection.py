@@ -18,6 +18,7 @@ import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 import icesat2.validate_dem as validate_dem
 # import icesat2.icepyx_download as icepyx_download
 import icesat2.nsidc_download as nsidc_download
+import icesat2.icesat2_photon_database as icesat2_photon_database
 import icesat2.classify_icesat2_photons as classify_icesat2_photons
 import icesat2.granule_shapefile as granule_shapefile
 import icesat2.plot_validation_results as plot_validation_results
@@ -350,7 +351,11 @@ def validate_list_of_dems(dem_list_or_dir,
         # Only include filenames that DO NOT MATCH the omission string.
         dem_list = [fn for fn in dem_list if (re.search(fname_omit, fn) == None)]
 
-    if not use_icesat2_photon_database:
+    if use_icesat2_photon_database:
+        # Generate a single photon database object and pass it repeatedly to all the objects.
+        # This saves us a lot of re-reading the geodataframe repeatedly.
+        photon_db_obj = icesat2_photon_database.ICESat2_Database()
+    else:
         # If a common photon dataframe already exists, open and use it.
         # Otherwise, create it.
         photon_df = read_or_create_photon_h5(dem_list,
@@ -362,6 +367,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                              create_shapefile = False if (shapefile_name is None) else True,
                                              shapefile_name = shapefile_name,
                                              verbose=verbose)
+        photon_db_obj = None
 
     # if not os.path.exists(photon_h5):
     #     if verbose:
@@ -385,6 +391,7 @@ def validate_list_of_dems(dem_list_or_dir,
         validate_dem.validate_dem_parallel(dem_path,
                                            photon_dataframe_name = None if use_icesat2_photon_database else photon_df,
                                            use_icesat2_photon_database = use_icesat2_photon_database,
+                                           icesat2_photon_database_obj= photon_db_obj,
                                            dem_vertical_datum=input_vdatum,
                                            output_vertical_datum = output_vdatum,
                                            granule_ids=None,
@@ -397,6 +404,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                            write_summary_stats = create_individual_results,
                                            skip_icesat2_download = True,
                                            plot_results = create_individual_results,
+                                           mark_empty_results=True,
                                            quiet=not verbose)
 
         if os.path.exists(results_h5_file):

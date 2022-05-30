@@ -98,6 +98,10 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
     for subdir in subdirs_list:
         place_name = place_names_dict[subdir]
         print("\n===========", place_name, "===========")
+
+        if subdir == "northeast_sandy":
+            print("Hitting errors in post-Sandy DEMs, skipping for now.")
+            continue
         validate_region(basedir,
                         subdir,
                         datafiles_regex = datafiles_regex,

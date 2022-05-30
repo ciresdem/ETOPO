@@ -558,6 +558,7 @@ def read_or_create_granule_photons(granule_path,
 
 def save_granule_ground_photons(granule_path,
                                 output_h5 = None,
+                                delete_granules = True,
                                 overwrite = False,
                                 verbose = True):
     """For one granule, save all the ground and canopy photons to a file.
@@ -603,6 +604,20 @@ def save_granule_ground_photons(granule_path,
 
     if verbose:
         print("Done.")
+
+    if delete_granules:
+        atl03_granule = os.path.join(os.path.dirname(granule_path), os.path.split(granule_path)[1].replace("ATL08", "ATL03"))
+        atl08_granule = os.path.join(os.path.dirname(granule_path), os.path.split(granule_path)[1].replace("ATL03", "ATL08"))
+        if os.path.exists(atl03_granule):
+            os.remove(atl03_granule)
+            if verbose:
+                print(atl03_granule, "deleted.")
+
+        if os.path.exists(atl08_granule):
+            os.remove(atl08_granule)
+            if verbose:
+                print(atl08_granule, "deleted.")
+
     return dataframe
 
 if __name__ == "__main__":

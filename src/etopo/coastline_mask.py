@@ -77,7 +77,16 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
     wkt=gdal_dataset.GetProjection()
     prj = pyproj.crs.CRS(wkt)
 
-    return prj.to_epsg()
+    epsg = prj.to_epsg()
+    # Some of the CUDEM tiles are in NAD83 but the CRS doesn't explicitly give an
+    # EPSG code. Handle that manually here.
+    if epsg is None:
+        # print(wkt)
+        if wkt.find('GEOGCS["NAD83",') >= 0:
+            return 4269
+    else:
+        return epsg
+
     # print(prj)
     # assert prj.lower().find("authority") >= 0
 

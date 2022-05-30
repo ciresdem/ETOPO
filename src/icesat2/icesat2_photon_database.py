@@ -11,6 +11,14 @@ import re
 import numpy
 import shapely.geometry
 
+#####################################
+# Suppress the annoying pandas.FutureWarning warnings caused by library version conflicts.
+# It doesn't affect my code and will be resolved in future releases of pandas.
+# For now, just suppress the warning.
+import warnings
+warnings.filterwarnings("ignore", message=".*pandas.Int64Index is deprecated*")
+#####################################
+
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
 import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
@@ -21,7 +29,7 @@ import datasets.CopernicusDEM.source_dataset_CopernicusDEM as Copernicus
 # import datasets.dataset_geopackage                         as dataset_geopackage
 import utils.configfile
 import etopo.generate_empty_grids
-# import utils.progress_bar
+import utils.progress_bar
 
 class ICESat2_Database:
     """A database to manage ICESat-2 photon clouds for land-surface validations.
@@ -50,7 +58,7 @@ class ICESat2_Database:
 
         return self.gdf
 
-    def create_new_geopackage(self, verbose=True):
+    def create_new_geopackage(self, populate_with_existing_tiles = True, verbose=True):
         """Create the geopackage that handles the photon database files of ICESat-2 data."""
         # Columns to have : filename, xmin, xmax, ymin, ymax, numphotons, numphotons_canopy, numphotons_ground, geometry
         # "numphotons", "numphotons_canopy", "numphotons_ground" are all set to zero at first. Are populated later as files are written.
@@ -62,6 +70,10 @@ class ICESat2_Database:
         copernicus_fnames = [os.path.split(fn)[1] for fn in copernicus_gdf["filename"].tolist()]
         copernicus_bboxes = [self.get_bbox_from_copernicus_filename(fn) for fn in copernicus_fnames]
         copernicus_bboxes.extend(etopo.generate_empty_grids.get_azerbaijan_1deg_bboxes())
+        # Skip all bounding boxes with a y-min of -90, since ICESat-2 only goes down to -89.
+        # Don't need to worry about north pole, since the northernmost land bbox tops out at 84*N
+        copernicus_bboxes = [bbox for bbox in copernicus_bboxes if bbox[1] > -90]
+
         copernicus_bboxes = sorted(copernicus_bboxes)
 
         # Subtract the epsilon just to make sure we don't accidentally add an extra box due to a rounding error
@@ -86,6 +98,7 @@ class ICESat2_Database:
             print("Creating", self.gpkg_fname, "...")
 
         for cop_bbox in copernicus_bboxes:
+
             bbox_xrange = numpy.arange(cop_bbox[0], cop_bbox[2]-0.0000000001, self.tile_resolution_deg)
             bbox_yrange = numpy.arange(cop_bbox[1], cop_bbox[3]-0.0000000001, self.tile_resolution_deg)
             assert len(bbox_xrange) == tiles_to_degree_ratio
@@ -135,7 +148,31 @@ class ICESat2_Database:
         # Create the geodataframe
         self.gdf = geopandas.GeoDataFrame(data_dict, geometry='geometry', crs=self.crs)
         # Compute the spatial index, just to see if it saves it (don't think so but ???)
-        sindex = self.gdf.sindex
+        # sindex = self.gdf.sindex
+
+        if verbose:
+            print("gdf has", len(self.gdf), "tile bounding boxes.")
+
+        if populate_with_existing_tiles:
+            # Read all the existing tiles, get the stats, put them in there.
+            existing_mask = self.gdf['filename'].apply(os.path.exists, convert_dtype=False)
+            # Get the subset of tiles where the file currently exists on disk.
+            gdf_existing = self.gdf[existing_mask]
+
+            if verbose:
+                print("Reading", len(gdf_existing), "existing tiles to populate database.")
+
+            for i,row in enumerate(gdf_existing.itertuples()):
+                tile_df = pandas.read_hdf(row.filename, mode='r')
+
+                self.gdf.loc[row.Index, "numphotons"] = len(tile_df)
+                self.gdf.loc[row.Index, "numphotons_canopy"] = numpy.count_nonzero(tile_df['class_code'].between(2,3,inclusive='both'))
+                self.gdf.loc[row.Index, "numphotons_ground"] = numpy.count_nonzero(tile_df['class_code']==1)
+                self.gdf.loc[row.Index, 'is_populated'] = True
+
+                if verbose:
+                    utils.progress_bar.ProgressBar(i+1, len(gdf_existing), suffix="{0}/{1}".format(i+1, len(gdf_existing)))
+
         # Save it out to an HDF file.
         self.save_geopackage(verbose=verbose)
 
@@ -209,7 +246,6 @@ class ICESat2_Database:
         gdf = self.get_gdf()
 
         # Subset the records that overlap but don't just "touch" (on an edge or corner).
-        # TODO: Look at using the spatial index here (use_sindex)
         gdf_subset = gdf[ gdf.intersects(polygon) & ~gdf.touches(polygon)]
 
         if return_whole_records:
@@ -239,24 +275,33 @@ class ICESat2_Database:
             fname = df_row['filename']
             # If the file already exists, read it and get the data.
             if os.path.exists(fname):
+                if verbose:
+                    print("\t{0}/{1} Reading".format(i+1, len(df_tiles_subset)), os.path.split(fname)[1], "...", end="")
                 dataframes_list[i] = self.read_photon_tile(fname)
+                if verbose:
+                    print("Done.")
             # If the file doesn't exist, create it and get the data.
             else:
+                if verbose:
+                    print("\t{0}/{1} Creating".format(i+1, len(df_tiles_subset)), os.path.split(fname)[1], "...")
                 dataframes_list[i] = self.create_photon_tile(df_row['geometry'],
                                                              fname,
                                                              overwrite=False,
-                                                             write_stats_into_database = True,
+                                                             write_stats = True,
                                                              verbose=verbose)
 
         # Concatenate the dataframes together.
-        combined_df = pandas.concat(dataframes_list)
-        return combined_df
+        if len(dataframes_list) > 0:
+            combined_df = pandas.concat(dataframes_list)
+            return combined_df
+        else:
+            return None
 
     def create_photon_tile(self, bbox_polygon,
                                  tilename,
                                  date_range = ['2021-01-01','2021-12-31'], # Calendar-year 2021 is the dates we're using for ETOPO. TODO: Change this to read from the config file later.
                                  overwrite = False,
-                                 write_stats_into_database = True,
+                                 write_stats = True,
                                  verbose = True):
         """If a photon tile doesn't exist yet, download the necessary granules and create it."""
         # If the tile exists, either delete it (if overwrite=True) or read it
@@ -306,8 +351,9 @@ class ICESat2_Database:
 
         # Then, see if the _photon.h5 databases exist for all these tiles. If they do, read them.
         photon_dfs = [None]*len(atl03_photon_db_filenames)
-        gdf = None
+        # gdf = None
 
+        print("Reading {0} _photons.h5 databases to generate {1}.".format(len(atl03_photon_db_filenames), os.path.split(tilename)[1]))
         for i,(photon_db,atl3,atl8) in enumerate(zip(atl03_photon_db_filenames, atl03_granules, atl08_granules)):
             df = None
             # If the tile exists, get it.
@@ -316,7 +362,7 @@ class ICESat2_Database:
                     # If either of the granules aren't there, download them from NSIDC
                     nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
                                                      region=bbox_bounds,
-                                                     local_dir = self.etopo_confg.icesat2_granules_directory,
+                                                     local_dir = self.etopo_config.icesat2_granules_directory,
                                                      dates = date_range,
                                                      download_only_matching_granules = False,
                                                      query_only = False,
@@ -347,22 +393,89 @@ class ICESat2_Database:
         if verbose:
             print(os.path.split(tilename)[1], "written.")
 
-        if write_stats_into_database:
+        if write_stats:
+            # Write out the stats to a single-record .csv file.
+            # For later ingestion into the database.
+            summary_csv_fname = os.path.splitext(tilename)[0] + "_summary.csv"
             # Update the database to reflect that this tile is already written.
-            if gdf is None:
-                gdf = self.get_gdf()
+            # For now, just quickly spit out a csv file.
+            data_dict = {'filename': [tilename],
+                         'xmin'    : [bbox_bounds[0]],
+                         'xmax'    : [bbox_bounds[2]],
+                         'ymin'    : [bbox_bounds[1]],
+                         'ymax'    : [bbox_bounds[3]],
+                         'numphotons'       : [len(tile_df)],
+                         'numphotons_canopy': [numpy.count_nonzero(tile_df["class_code"].between(2,3,inclusive="both"))],
+                         'numphotons_ground': [numpy.count_nonzero(tile_df["class_code"] == 1)],
+                         'is_populated'     : [True]
+                         }
 
-            gdf_record = gdf.loc[gdf.filename == tilename]
-            idx = gdf_record.index
-            assert len(gdf_record) == 1
-            gdf.loc[idx,'numphotons'] = len(tile_df)
-            gdf.loc[idx,'numphotons_canopy'] = numpy.count_nonzero(tile_df["class_code"].between(2,3,inclusive="both"))
-            gdf.loc[idx,'numphotons_ground'] = numpy.count_nonzero(tile_df["class_code"] == 1)
-            gdf.loc[idx,'is_populated'] = True
+            csv_df = pandas.DataFrame(data=data_dict)
+            csv_df.to_csv(summary_csv_fname, index=False)
+            if verbose:
+                print(os.path.split(summary_csv_fname)[1], "written.")
 
-        self.save_geopackage(gdf=gdf, verbose=False)
+            # Also update the
 
         return tile_df
+
+    def update_gpkg_with_csvfiles(self, gdf=None,
+                                        delete_when_finished=True,
+                                        verbose=True):
+        """Look through the photon tiles directory, look for any "_summary.csv" files that have been written.
+        Ingest them into the database.
+        """
+        if gdf is None:
+            gdf = self.get_gdf(verbose=verbose)
+
+        # Get the filenames from the csv files.
+        csv_filenames = [os.path.join(self.database_directory,fname) for fname in os.listdir(self.database_directory) if (re.search("_summary\.csv\Z", fname) != None)]
+        if verbose and len(csv_filenames) > 0:
+            print("Found", len(csv_filenames), "csv records to update the tile database. ", end="")
+
+        # print(gdf)
+
+        for csv_fname in csv_filenames:
+            # Read the 1-record CSV from the file.
+            csv_gdf = pandas.read_csv(csv_fname)
+            # print(csv_gdf)
+            # print(csv_gdf['filename'])
+            # print(csv_gdf['filename'].tolist())
+            # print(csv_gdf['filename'].tolist()[0])
+            # insert the record into the database.
+            gdf_record = gdf.loc[gdf.filename == csv_gdf['filename'].tolist()[0]]
+            # print(gdf_record)
+            idx = gdf_record.index
+            # print(idx)
+            # All these records should be the same.
+            assert len(gdf_record) == 1
+            assert gdf_record['xmin'].tolist()[0] == csv_gdf['xmin'].tolist()[0]
+            assert gdf_record['xmax'].tolist()[0] == csv_gdf['xmax'].tolist()[0]
+            assert gdf_record['ymin'].tolist()[0] == csv_gdf['ymin'].tolist()[0]
+            assert gdf_record['ymax'].tolist()[0] == csv_gdf['ymax'].tolist()[0]
+            assert csv_gdf['is_populated'].tolist()[0] == True
+            # foobar
+            # Update the photon counts.
+            gdf.loc[idx,'numphotons'] = csv_gdf['numphotons'].tolist()[0]
+            gdf.loc[idx,'numphotons_canopy'] = csv_gdf['numphotons_canopy'].tolist()[0]
+            gdf.loc[idx,'numphotons_ground'] = csv_gdf['numphotons_ground'].tolist()[0]
+            gdf.loc[idx,'is_populated'] = True
+
+        # Update the gdf we have on record, make sure it matches.
+        self.gdf = gdf
+
+        if verbose and len(csv_filenames) > 0:
+            print("Done.")
+            print("Writing geopackage...")
+
+        if len(csv_filenames) > 0:
+            self.save_geopackage(gdf=gdf, verbose=verbose)
+
+        if delete_when_finished:
+            for csv_fname in csv_filenames:
+                os.remove(csv_fname)
+
+        return self.gdf
 
     def read_photon_tile(self, tilename):
         """Read a photon tile. If the tilename doesn't exist, return None."""
@@ -371,8 +484,15 @@ class ICESat2_Database:
         # Read it here and return it. Pretty simple.
         return pandas.read_hdf(tilename, mode='r')
 
+    def get_tiling_progress_mapname(self):
+        """Output a map of the tiling progress so far.
+        This must be called within download_all_icesat2_granules.py to avoid circular import conflicts.
+        """
+        map_fname = os.path.splitext(self.gpkg_fname)[0] + "_progress_map.png"
+        return map_fname
+
 if __name__ == "__main__":
     is2db = ICESat2_Database()
-    phd = is2db.get_photon_database((27, 22.5, 27.75, 23))
-    print(phd)
     # is2db.create_new_geopackage()
+    # phd = is2db.get_photon_database((27, 22.5, 27.75, 23))
+    # print(phd)

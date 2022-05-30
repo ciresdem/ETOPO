@@ -348,6 +348,7 @@ def kick_off_new_child_process(height_array, i_array, j_array, code_array):
 def validate_dem_parallel(dem_name,
                           photon_dataframe_name = None,
                           use_icesat2_photon_database = True,
+                          icesat2_photon_database_obj = None,
                           dem_vertical_datum = "egm2008",
                           output_vertical_datum = "egm2008",
                           granule_ids=None,
@@ -501,9 +502,21 @@ def validate_dem_parallel(dem_name,
         photon_df = photon_dataframe_name
 
     elif use_icesat2_photon_database:
-        photon_df = icesat2_photon_database.ICESat2_Database().get_photon_database(dem_bbox,
-                                                                                   build_tiles_if_nonexistent = True,
-                                                                                   verbose = not quiet)
+        if icesat2_photon_database_obj is None:
+            icesat2_photon_database_obj = icesat2_photon_database.ICESat2_Database()
+
+        photon_df = icesat2_photon_database_obj.get_photon_database(dem_bbox,
+                                                                    build_tiles_if_nonexistent = True,
+                                                                    verbose = not quiet)
+        if photon_df is None:
+            if mark_empty_results:
+                with open(empty_results_filename, 'w') as f:
+                    f.close()
+                if not quiet:
+                    print("Created", empty_results_filename, "to indicate no valid ICESat-2 data was returned here.")
+
+            return None
+
 
     # If the photon dataframe file containing all the photons in this tile already exists, just use it.
     elif skip_icesat2_download and os.path.exists(photon_dataframe_name) and overwrite==False:
