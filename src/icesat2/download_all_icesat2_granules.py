@@ -243,13 +243,16 @@ def subset_existing_photon_databases_to_ground_and_canopy_only():
 
         utils.progress_bar.ProgressBar(i+1, len(db_files), suffix = "{0}/{1}".format(i+1, len(db_files)))
 
-def create_tiling_progress_map(icesat2_db = None, verbose=True):
+def create_tiling_progress_map(icesat2_db = None, use_tempfile = True, verbose=True):
     if icesat2_db is None:
         icesat2_db = icesat2_photon_database.ICESat2_Database()
 
     gdf = icesat2_db.get_gdf(verbose=verbose)
 
-    gdf = icesat2_db.update_gpkg_with_csvfiles(gdf=gdf, verbose=verbose)
+    gdf = icesat2_db.update_gpkg_with_csvfiles(gdf = gdf,
+                                               use_tempfile = use_tempfile,
+                                               verbose=verbose)
+
     map_fname = icesat2_db.get_tiling_progress_mapname()
     create_download_progress_map(gdf,
                                  map_fname,
@@ -560,6 +563,7 @@ def rebuild_progress_csv_from_gpkg(progress_csv_name):
 
 def generate_all_photon_tiles(map_interval = 25,
                               overwrite = False,
+                              numprocs = 20,
                               verbose = True):
     """Run through creating all the icesat2_photon_database tiles.
 
@@ -593,6 +597,8 @@ def generate_all_photon_tiles(map_interval = 25,
     tile_enumerated_counter = 0
     tile_built_counter_since_last_map_output = 0
 
+    # TODO 1: Set up empty lists for running procs.
+
     for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
         # A flag to see if any tiles have been actually generated in this box.
         xmax = xmin+2
@@ -612,6 +618,12 @@ def generate_all_photon_tiles(map_interval = 25,
             tile_enumerated_counter += 1
             if not overwrite and os.path.exists(tilename):
                 continue
+
+            # TODO 2: Loop through, first delete procs of running list that are finished.
+            # TODO 2.5 -- ALSO create an empty list (single-element) for at most
+            # one running create_tiling_progress_map() instance. To update every map_interval times, or whenever it's done with the last update.
+            # TODO 3: Then, add more running procs until enough are running.
+            # TODO 4: Pause for a fraction of a second (0.05s?), then loop again.
 
             print("\n==== {0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(tilename)[1], "====")
 
@@ -643,6 +655,10 @@ def generate_all_photon_tiles(map_interval = 25,
                 if total_tiles_done > (N_so_far + tile_built_counter):
                     print(total_tiles_done - (N_so_far + tile_built_counter), "extra tiles found (likely generated elsewhere). Updating total.")
                     tile_built_counter = total_tiles_done - N_so_far
+
+def _create_single_tile(tilename, bounds):
+    """A multiprocessing target for generate_all_photon_tiles(), to create a single
+    photon tile in a sub-process, and run it."""
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Utility for downloading and pre-processing the whole fucking world of ICESat-2 photon data. Right now set to do the whole year 2021 (Jan 1-Dec 30).")

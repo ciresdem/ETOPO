@@ -10,6 +10,7 @@ import pandas
 import re
 import numpy
 import shapely.geometry
+import shutil
 
 #####################################
 # Suppress the annoying pandas.FutureWarning warnings caused by library version conflicts.
@@ -30,6 +31,7 @@ import datasets.CopernicusDEM.source_dataset_CopernicusDEM as Copernicus
 import utils.configfile
 import etopo.generate_empty_grids
 import utils.progress_bar
+import time
 
 class ICESat2_Database:
     """A database to manage ICESat-2 photon clouds for land-surface validations.
@@ -205,7 +207,7 @@ class ICESat2_Database:
         return bbox
 
 
-    def save_geopackage(self, gdf=None, verbose=True):
+    def save_geopackage(self, gdf=None, use_tempfile = False, verbose=True):
         """After writing or altering data in the geo-dataframe, save it back out to disk.
 
         If gdf is None, use whatever object is in self.gdf.
@@ -215,8 +217,32 @@ class ICESat2_Database:
                 raise ValueError("No geodataframe object available to ICESat2_Database.save_gpkg().")
             gdf = self.gdf
 
-        # Write the file.
-        gdf.to_file(self.gpkg_fname, layer="icesat2", driver='GPKG')
+        if use_tempfile:
+            base, ext = os.path.splitext(os.path.gpkg_fname)
+            tempfile_name = base + "_TEMP" + ext
+            if os.path.exists(tempfile_name):
+                if verbose:
+                    print(tempfile_name, "already exists.",
+                          "\n\tExiting ICESat2_Database.save_geopackage(use_tempfile=True). Other processes may be writing to it.",
+                          "\n\tIf this is in error, delete that file before running again.")
+                return
+            success = False
+            while not success:
+                try:
+                    gdf.to_file(tempfile_name, layer="icesat2", driver="GPKG")
+                    os.remove(self.gpkg_fname)
+                    shutil.move(tempfile_name, self.gpkg_fname)
+                    success = True
+                except:
+                    # Delete the tempfile, then re-raise the exception.
+                    if os.path.exists(tempfile_name):
+                        os.remove(tempfile_name)
+                    if verbose:
+                        print("Error occurred while writing", os.path.split(self.gpkg_fname) + ". Waiting 30 seconds to retry...")
+                    time.sleep(30)
+        else:
+            # Write the file.
+            gdf.to_file(self.gpkg_fname, layer="icesat2", driver='GPKG')
 
         if verbose:
             print(os.path.split(self.gpkg_fname)[1], "written with", len(gdf), "entries.")
@@ -420,10 +446,24 @@ class ICESat2_Database:
         return tile_df
 
     def update_gpkg_with_csvfiles(self, gdf=None,
+                                        use_tempfile = True,
                                         delete_when_finished=True,
                                         verbose=True):
         """Look through the photon tiles directory, look for any "_summary.csv" files that have been written.
         Ingest them into the database.
+
+        Sometimes there creates conflicts when this process is writing the gpkg (which takes a WHILE) and
+        another process tries to write to it. Help minimize those conflicts with
+        'use_tempfile', which will save the geopackage to a temporary-named file first, and then
+        rename it to the self.gpkg_fname when it's done, which is quite fast.
+        TODO: Implement some kind of an os-level locking convention for this, to fully avoid conflicts in the future.
+        But this should be fast enough to keep them to a bare minimum (a dangerous promise, lol).
+
+        If 'delete_when_finished' is set, delete the _summary.csv files after we've
+        included them in the database. This is set by default. If the database gets
+        corrupted, it can be rebuit with the
+            ICESat2_Database.create_new_geopackage(populate_with_existing_tiles = True)
+        method+option. This is slower than reading the summary files, but it works.
         """
         if gdf is None:
             gdf = self.get_gdf(verbose=verbose)
@@ -469,7 +509,7 @@ class ICESat2_Database:
             print("Writing geopackage...")
 
         if len(csv_filenames) > 0:
-            self.save_geopackage(gdf=gdf, verbose=verbose)
+            self.save_geopackage(gdf=gdf, use_tempfile = use_tempfile, verbose=verbose)
 
         if delete_when_finished:
             for csv_fname in csv_filenames:
