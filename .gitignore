@@ -138,3 +138,11 @@ ETOPO_2022_v1_*
 ATL*.h5
 photon_tile_*.h5
 photon_tile_*_summary.csv
+*.gmc
+*_map.png
+download_progress.csv
+*.gmw
+/data/icesat2/download_progress.gpkg
+/data/icesat2/photon_tiles.gpkg
+/Mikes Notes To Self.txt
+Thumbs.db
