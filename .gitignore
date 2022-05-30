@@ -135,3 +135,6 @@ data/*.gpkg
 .nsidc_credentials
 scratch_data/*
 ETOPO_2022_v1_*
+ATL*.h5
+photon_tile_*.h5
+photon_tile_*_summary.csv
