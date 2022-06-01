@@ -243,7 +243,10 @@ def subset_existing_photon_databases_to_ground_and_canopy_only():
 
         utils.progress_bar.ProgressBar(i+1, len(db_files), suffix = "{0}/{1}".format(i+1, len(db_files)))
 
-def create_tiling_progress_map(icesat2_db = None, update_with_csvs = True, use_tempfile = True, verbose=True):
+def create_tiling_progress_map(icesat2_db = None,
+                               update_with_csvs = True,
+                               use_tempfile = True,
+                               verbose=True):
     if icesat2_db is None:
         icesat2_db = icesat2_photon_database.ICESat2_Database()
 
@@ -616,6 +619,7 @@ def generate_all_photon_tiles(map_interval = 25,
     running_procs_list = []
     running_fnames_list = []
     mapping_process = None # A variable specifically to store the sub-process that writes out the progress map
+    writing_gpkg_process = None # A variable specifically to store the sub-process that writes out the ICESat-2 database geopackage.
 
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
@@ -653,7 +657,7 @@ def generate_all_photon_tiles(map_interval = 25,
                             # print("\r==== {0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(tilename)[1], "====")
                             # Also give us a progress message, please.
                             if verbose:
-                                print("{0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(fname)[1], "written.")
+                                print("{0:,} / {1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(fname)[1], "written.")
 
                             tile_built_counter += 1
                             tiles_built_since_last_map_output_counter += 1
@@ -662,8 +666,15 @@ def generate_all_photon_tiles(map_interval = 25,
                         mapping_process.join()
                         mapping_process.close()
                         if verbose:
-                            print(is2db.get_tiling_progress_mapname(), "written.")
+                            print(os.path.split(is2db.get_tiling_progress_mapname())[1], "written.")
                         mapping_process = None
+
+                    if isinstance(writing_gpkg_process, multiprocessing.Process) and not writing_gpkg_process.is_alive():
+                        writing_gpkg_process.join()
+                        writing_gpkg_process.close()
+                        if verbose:
+                            print(os.path.split(is2db.gpkg_fname)[1], "written.")
+                        writing_gpkg_process = None
 
                     # If we have space available in the running process queue, kick this off.
                     if len(running_procs_list) < numprocs:
@@ -693,16 +704,25 @@ def generate_all_photon_tiles(map_interval = 25,
                     # First, just update it in memory, to keep the database updated.
                     # But don't do the slow part (saving to disk)
                     is2db.update_gpkg_with_csvfiles(gdf = None,
-                                                    save_to_disk = True,
-                                                    delete_when_finished = True,
-                                                    use_tempfile = True,
-                                                    verbose=verbose)
+                                                    save_to_disk = False,
+                                                    delete_when_finished = False,
+                                                    verbose=False)
+                    if verbose:
+                        print("Kicking off another geodataframe and map output...")
+
+                    writing_gpkg_process = multiprocessing.Process(target = is2db.save_geopackage,
+                                                                   kwargs = {"use_tempfile" : True,
+                                                                             "verbose" : False,
+                                                                             "also_delete_redundant_csvs" : True}
+                                                                   )
+                    writing_gpkg_process.start()
 
                     # If it's time to create a new map, kick off the sub-process to do that.
                     # This is slow but we can let a separate process do it.
                     mapping_process = multiprocessing.Process(target=create_tiling_progress_map,
                                                               kwargs = {"icesat2_db": is2db,
-                                                                        "update_with_csvs": False,
+                                                                        "update_with_csvs" : False,
+                                                                        "use_tempfile" : False,
                                                                         "verbose": False}
                                                               )
                     mapping_process.start()

@@ -207,7 +207,10 @@ class ICESat2_Database:
         return bbox
 
 
-    def save_geopackage(self, gdf=None, use_tempfile = False, verbose=True):
+    def save_geopackage(self, gdf=None,
+                              use_tempfile = False,
+                              also_delete_redundant_csvs=False,
+                              verbose=True):
         """After writing or altering data in the geo-dataframe, save it back out to disk.
 
         If gdf is None, use whatever object is in self.gdf.
@@ -247,6 +250,11 @@ class ICESat2_Database:
         if verbose:
             print(os.path.split(self.gpkg_fname)[1], "written with", len(gdf), "entries.")
         return
+
+        if also_delete_redundant_csvs:
+            self.delete_csvs_already_in_database(gdf = gdf,
+                                                 force_read_from_disk = False,
+                                                 verbose = verbose)
 
     def query_geopackage(self, polygon_or_bbox, use_sindex=True, return_whole_records=True):
         """Return the photon database tile filenames that intersect the polygon in question.
@@ -483,6 +491,39 @@ class ICESat2_Database:
 
         return tile_df
 
+    def delete_csvs_already_in_database(self, gdf = None, force_read_from_disk=False, verbose=True):
+        """Sometimes in parallelization, a tile _summary.csv file gets entered into the database
+        but never erased from disk. Go through the database,
+        delete any CSV files that are already entered as populated in the database.
+
+        Since (with multiprocessing) this version of the ICESat2_photon_database
+        geopackage could be more "recent" than what's on disk, use
+        'force_read_from_disk' to only use the version of the gpkg that is on disk,
+        not the one in memory here."""
+        csv_filenames = [os.path.join(self.tiles_directory,fname) for fname in os.listdir(self.tiles_directory) if (re.search("_summary\.csv\Z", fname) != None)]
+        if force_read_from_disk:
+            gdf = geopandas.read_file(self.gpkg_fname, mode='r')
+            if verbose:
+                print(os.path.split(self.gpkg_fname)[1], "read.")
+        elif gdf is None:
+            gdf = self.get_gdf(verbose=verbose)
+        else:
+            assert type(gdf) == geopandas.GeoDataFrame
+
+        num_files_removed = 0
+        for csv_fname in csv_filenames:
+            tile_fname = csv_fname.replace("_summary.csv", ".h5")
+            gdf_record = gdf.loc[gdf.filename == tile_fname]
+            assert len(gdf_record) == 1
+            if gdf_record['is_populated'].tolist()[0] == True:
+                os.remove(csv_fname)
+                num_files_removed += 1
+
+        if verbose:
+            print(num_files_removed, "tile _summary.csv files removed.")
+
+        return
+
     def update_gpkg_with_csvfiles(self, gdf=None,
                                         use_tempfile = True,
                                         delete_when_finished=True,
@@ -545,9 +586,10 @@ class ICESat2_Database:
 
         if verbose and len(csv_filenames) > 0:
             print("Done.")
-            print("Writing geopackage...")
 
-        if len(csv_filenames) > 0:
+        if len(csv_filenames) > 0 and save_to_disk:
+            if verbose:
+                print("Writing geopackage...")
             self.save_geopackage(gdf=gdf, use_tempfile = use_tempfile, verbose=verbose)
 
         if delete_when_finished:

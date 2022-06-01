@@ -272,7 +272,7 @@ def get_login_response(url, credentials, token):
             pass
         except Exception as e:
             print('Error{0}: {1}'.format(type(e), str(e)))
-            sys.exit(1)
+            raise e
 
         req = Request(url)
         req.add_header('Authorization', 'Basic {0}'.format(credentials))
@@ -287,10 +287,10 @@ def get_login_response(url, credentials, token):
             else:
                 err += ': Check your username and password'
         print(err)
-        sys.exit(1)
+        raise e
     except Exception as e:
         print('Error{0}: {1}'.format(type(e), str(e)))
-        sys.exit(1)
+        raise e
 
     return response
 
@@ -659,171 +659,166 @@ def _main(short_name=None,
     if polygon is not None:
         polygon = put_polygon_string_in_correct_rotation(polygon, direction="clockwise")
 
-    try:
-        urls_to_download = []
-        urls_total = []
-        numfiles_existing = 0
-        # List through each of the short_names listed.
-        for sname in short_names:
-            try_again = True
-            tried_polygon_switch_already = False
-            while try_again:
-                try:
-                    url_list = cmr_search(sname, version, time_start_str, time_end_str,
-                                          bounding_box=bounding_box, polygon=polygon,
-                                          filename_filter=fname_filter, quiet=quiet)
-                except KeyboardInterrupt:
-                    return
+    urls_to_download = []
+    urls_total = []
+    numfiles_existing = 0
+    # List through each of the short_names listed.
+    for sname in short_names:
+        try_again = True
+        tried_polygon_switch_already = False
+        while try_again:
+            try:
+                url_list = cmr_search(sname, version, time_start_str, time_end_str,
+                                      bounding_box=bounding_box, polygon=polygon,
+                                      filename_filter=fname_filter, quiet=quiet)
+            except KeyboardInterrupt:
+                return
 
-                except:
-                    pass
+            except:
+                pass
 
-                if isinstance(url_list, Exception):
-                    # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
-                    # to fix it by going the other way if it doesn't work at first.
-                    if str(url_list).lower().find("too many requests") >= 0:
-                        print("HTTP Error 429: Too Many Requests. Waiting 5 minutes and trying again.")
-                        wait_time_sec = 5*60
-                        for i in range(wait_time_sec):
-                            print("\r  {0}:{1:02d}".format(int(wait_time_sec / 60), wait_time_sec % 60), end="")
-                            time.sleep(1)
-                            wait_time_sec -= 1
-                        print("\r  0:00")
-                        try_again = True # This is redundant but just make sure.
+            if isinstance(url_list, Exception):
+                # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
+                # to fix it by going the other way if it doesn't work at first.
+                if str(url_list).lower().find("too many requests") >= 0:
+                    print("HTTP Error 429: Too Many Requests. Waiting 5 minutes and trying again.")
+                    wait_time_sec = 5*60
+                    for i in range(wait_time_sec):
+                        print("\r  {0}:{1:02d}".format(int(wait_time_sec / 60), wait_time_sec % 60), end="")
+                        time.sleep(1)
+                        wait_time_sec -= 1
+                    print("\r  0:00")
+                    try_again = True # This is redundant but just make sure.
 
-                    elif polygon is not None and not tried_polygon_switch_already:
-                        polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
-                        tried_polygon_switch_already = True
-                        try_again = True
+                elif polygon is not None and not tried_polygon_switch_already:
+                    polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
+                    tried_polygon_switch_already = True
+                    try_again = True
 
-                    # If it's *still* returning an Exception error of some other kind, just raise it and get out.
-                    else:
-                        raise url_list
-
+                # If it's *still* returning an Exception error of some other kind, just raise it and get out.
                 else:
-                    try_again = False
+                    raise url_list
 
-            # fname_bases = [url.split("/")[-1] for url in url_list]
-
-            # Filter out ones that don't fit the python regex (this often gets rid of things like XML files that we may not need.)
-            if fname_python_regex is not None:
-                # fname_bases = [fn for fn in fname_bases if (re.search(fname_python_regex, fn) is not None)]
-                url_list = [url for url in url_list if (re.search(fname_python_regex, url.split("/")[-1]) is not None)]
-
-            # assert len(fname_bases) == len(url_list)
-
-            if not quiet:
-                print(len(url_list), sname, "granules found within bounding box & date range.")
-
-            urls_total.append(url_list) # urls_total is a list of lists, corresponding with each dataset short_name
-
-        if len(short_names) == 1:
-            urls_total = urls_total[0]
-
-        elif download_only_matching_granules and len(short_names) > 1:
-            urls_total_original = urls_total
-            # Often, we get more ATL03 granules returned than ATL08 granules in the same bounding box,
-            # perhaps because not all of the ATL03 granules necessarily overlap land (ATL08 is primarily a land-cover product, not meant for clouds, etc).
-            # If we don't need ATL03 granules that don't have a matching ATL08 file,
-            # filter them out here to skip them.
-            # 1. Put ATLXX in each dataset URL in place of the dataset name.
-            #    Matching granules SHOULD have the exact same name then. Ignore the full URLs for now.
-            #    Put these ATLXX names in a Python set() for each dataset.
-            fname_sets = []
-            for sname, url_list in zip(short_names, urls_total):
-                url_set = set([url.split("/")[-1].replace(sname, "[ATLXX]") for url in url_list])
-                fname_sets.append(url_set)
-
-            # 2. Get the intersection of all the url sets. These will be matching names.
-            fname_master_set = fname_sets[0]
-            for fset in fname_sets[1:]:
-                fname_master_set = fname_master_set.intersection(fset)
-            # fname_master_set is now a set with unique filenames (not paths) with "[ATLXX]" in place of the
-            # dataet name, in which all datasets have a match with that name.
-
-            # 3. Create a master list for full-length URLs in the set of matching names.
-            url_master_list = []
-            for sname, url_list in zip(short_names, urls_total):
-                for fname in fname_master_set:
-                    fname_with_sname = fname.replace("[ATLXX]", sname)
-                    url_master_list.append([url for url in url_list if url.split("/")[-1].find(fname_with_sname) > -1][0])
-
-            urls_total = sorted(url_master_list)
-
-            if not quiet:
-                print(len(fname_master_set), "common granules found between", ",".join(short_names), "for", len(urls_total), "granules total.")
-
-            # In some weird cases, we're getting granules returned for both data sets, but
-            # no "matching" granules between ATL03 and ATL08. If so, print out the granule names here, just for bug-searching sake.
-            if (not quiet) and len(urls_total) == 0 and numpy.all([len(url_list) > 0 for url_list in urls_total_original]):
-                print("List of granules:")
-                for url_list in urls_total:
-                    for url in sorted(url_list):
-                        print("\t",url.split("/")[-1])
-
-        else:
-            # If there's more than one dataset short_name and we didn't specify download_only_matching_granules
-            # just flatten the list of lists into one long list of urls together.
-            urls_total = [url for urls_sublist in urls_total for url in urls_sublist]
-
-        fname_bases = [url.split("/")[-1] for url in urls_total]
-
-        # print(url_list)
-        local_files = [os.path.join(local_dir, fn) for fn in fname_bases]
-        for url, lfile in zip(urls_total, local_files):
-            if os.path.exists(lfile) and not force:
-                numfiles_existing += 1
             else:
-                urls_to_download.append(url)
+                try_again = False
 
-        if query_only not in (None, False):
-            if not quiet:
-                # Printing the URLs is handy for a parent-process call that may be using STDOUT to get the list of files to download.
-                for url in url_list:
-                    print(url)
-            return local_files
+        # fname_bases = [url.split("/")[-1] for url in url_list]
+
+        # Filter out ones that don't fit the python regex (this often gets rid of things like XML files that we may not need.)
+        if fname_python_regex is not None:
+            # fname_bases = [fn for fn in fname_bases if (re.search(fname_python_regex, fn) is not None)]
+            url_list = [url for url in url_list if (re.search(fname_python_regex, url.split("/")[-1]) is not None)]
+
+        # assert len(fname_bases) == len(url_list)
 
         if not quiet:
-            print("{0} of {1} granules already exist locally. Downloading {2} new granules from NSIDC.".format(numfiles_existing,
-                                                                                                         len(urls_to_download) + numfiles_existing,
-                                                                                                         len(urls_to_download)))
+            print(len(url_list), sname, "granules found within bounding box & date range.")
 
-        if len(urls_to_download) == 0:
-            return local_files
+        urls_total.append(url_list) # urls_total is a list of lists, corresponding with each dataset short_name
 
-        # If we've already createed a _photon.h5 file of an ATL03 granule, do not download the ATL03 or ATL08 granule.
-        if skip_granules_if_photon_db_exists:
-            local_atl03_files = [fn for fn in local_files if os.path.split(fn)[1].find("ATL03") > -1]
-            urls_removed = 0
-            for atl03 in local_atl03_files:
-                db_file = os.path.splitext(atl03)[0] + "_photons.h5"
-                if os.path.exists(db_file):
-                    # Remove the atl03 from urls_to_download
-                    atl03_granule_name = os.path.split(atl03)[1]
-                    for url in urls_to_download:
-                        if url.find(atl03_granule_name) > -1:
-                            urls_to_download.remove(url)
-                            urls_removed += 1
-                    # Remove the atl08 from urls_to_download
-                    atl08_granule_name = atl03_granule_name.replace("ATL03", "ATL08")
-                    for url in urls_to_download:
-                        if url.find(atl08_granule_name) > -1:
-                            urls_to_download.remove(url)
-                            urls_removed += 1
+    if len(short_names) == 1:
+        urls_total = urls_total[0]
 
-            if not quiet and urls_removed > 0:
-                print(urls_removed, "granules already have a _photons.h5 database present. Downloading", len(urls_to_download), "new granules.")
+    elif download_only_matching_granules and len(short_names) > 1:
+        urls_total_original = urls_total
+        # Often, we get more ATL03 granules returned than ATL08 granules in the same bounding box,
+        # perhaps because not all of the ATL03 granules necessarily overlap land (ATL08 is primarily a land-cover product, not meant for clouds, etc).
+        # If we don't need ATL03 granules that don't have a matching ATL08 file,
+        # filter them out here to skip them.
+        # 1. Put ATLXX in each dataset URL in place of the dataset name.
+        #    Matching granules SHOULD have the exact same name then. Ignore the full URLs for now.
+        #    Put these ATLXX names in a Python set() for each dataset.
+        fname_sets = []
+        for sname, url_list in zip(short_names, urls_total):
+            url_set = set([url.split("/")[-1].replace(sname, "[ATLXX]") for url in url_list])
+            fname_sets.append(url_set)
 
-        # Download the urls that need to be downloaded.
-        if use_wget == True:
-            # TODO: Put a wget script here.
-            pass
+        # 2. Get the intersection of all the url sets. These will be matching names.
+        fname_master_set = fname_sets[0]
+        for fset in fname_sets[1:]:
+            fname_master_set = fname_master_set.intersection(fset)
+        # fname_master_set is now a set with unique filenames (not paths) with "[ATLXX]" in place of the
+        # dataet name, in which all datasets have a match with that name.
+
+        # 3. Create a master list for full-length URLs in the set of matching names.
+        url_master_list = []
+        for sname, url_list in zip(short_names, urls_total):
+            for fname in fname_master_set:
+                fname_with_sname = fname.replace("[ATLXX]", sname)
+                url_master_list.append([url for url in url_list if url.split("/")[-1].find(fname_with_sname) > -1][0])
+
+        urls_total = sorted(url_master_list)
+
+        if not quiet:
+            print(len(fname_master_set), "common granules found between", ",".join(short_names), "for", len(urls_total), "granules total.")
+
+        # In some weird cases, we're getting granules returned for both data sets, but
+        # no "matching" granules between ATL03 and ATL08. If so, print out the granule names here, just for bug-searching sake.
+        if (not quiet) and len(urls_total) == 0 and numpy.all([len(url_list) > 0 for url_list in urls_total_original]):
+            print("List of granules:")
+            for url_list in urls_total:
+                for url in sorted(url_list):
+                    print("\t",url.split("/")[-1])
+
+    else:
+        # If there's more than one dataset short_name and we didn't specify download_only_matching_granules
+        # just flatten the list of lists into one long list of urls together.
+        urls_total = [url for urls_sublist in urls_total for url in urls_sublist]
+
+    fname_bases = [url.split("/")[-1] for url in urls_total]
+
+    # print(url_list)
+    local_files = [os.path.join(local_dir, fn) for fn in fname_bases]
+    for url, lfile in zip(urls_total, local_files):
+        if os.path.exists(lfile) and not force:
+            numfiles_existing += 1
         else:
-            cmr_download(urls_to_download, download_dir=local_dir, force=force, quiet=quiet)
+            urls_to_download.append(url)
 
-    except KeyboardInterrupt:
-        import sys
-        sys.exit()
+    if query_only not in (None, False):
+        if not quiet:
+            # Printing the URLs is handy for a parent-process call that may be using STDOUT to get the list of files to download.
+            for url in url_list:
+                print(url)
+        return local_files
+
+    if not quiet:
+        print("{0} of {1} granules already exist locally. Downloading {2} new granules from NSIDC.".format(numfiles_existing,
+                                                                                                     len(urls_to_download) + numfiles_existing,
+                                                                                                     len(urls_to_download)))
+
+    if len(urls_to_download) == 0:
+        return local_files
+
+    # If we've already createed a _photon.h5 file of an ATL03 granule, do not download the ATL03 or ATL08 granule.
+    if skip_granules_if_photon_db_exists:
+        local_atl03_files = [fn for fn in local_files if os.path.split(fn)[1].find("ATL03") > -1]
+        urls_removed = 0
+        for atl03 in local_atl03_files:
+            db_file = os.path.splitext(atl03)[0] + "_photons.h5"
+            if os.path.exists(db_file):
+                # Remove the atl03 from urls_to_download
+                atl03_granule_name = os.path.split(atl03)[1]
+                for url in urls_to_download:
+                    if url.find(atl03_granule_name) > -1:
+                        urls_to_download.remove(url)
+                        urls_removed += 1
+                # Remove the atl08 from urls_to_download
+                atl08_granule_name = atl03_granule_name.replace("ATL03", "ATL08")
+                for url in urls_to_download:
+                    if url.find(atl08_granule_name) > -1:
+                        urls_to_download.remove(url)
+                        urls_removed += 1
+
+        if not quiet and urls_removed > 0:
+            print(urls_removed, "granules already have a _photons.h5 database present. Downloading", len(urls_to_download), "new granules.")
+
+    # Download the urls that need to be downloaded.
+    if use_wget == True:
+        # TODO: Put a wget script here.
+        pass
+    else:
+        cmr_download(urls_to_download, download_dir=local_dir, force=force, quiet=quiet)
 
     return local_files
 
