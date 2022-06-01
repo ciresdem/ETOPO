@@ -2,7 +2,7 @@
 
 import os
 import ast
-import urllib
+import urllib.request, urllib.parse
 import re
 
 ###############################################################################
@@ -37,7 +37,7 @@ class CUDEM_Downloader(download_dataset.DatasetDownloader_BaseClass):
         super().__init__(self.urls_tuple[0], local_data_dir)
 
     def create_list_of_links(self,
-                             file_regex="ncei(\w+)v1\.tif",
+                             file_regex="ncei1[39](\w+)\.tif",
                              write_to_file=True):
         """This is a base-class virtual function. Since each directory structure, protocol, etc,
         of each data source is fairly unique, it's impractical to come up with one single
@@ -77,5 +77,5 @@ class CUDEM_Downloader(download_dataset.DatasetDownloader_BaseClass):
 
 if __name__ == "__main__":
     CU = CUDEM_Downloader(CUDEM_groupname="CONUS")
-    # CU.create_list_of_links()
+    CU.create_list_of_links()
     CU.download()
