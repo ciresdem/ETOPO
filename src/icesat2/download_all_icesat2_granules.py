@@ -2,6 +2,7 @@
 
 import os
 import numpy
+import math
 import argparse
 import multiprocessing
 import time
@@ -452,6 +453,7 @@ def output_progress_csv_to_gpkg(progress_df, gpkg_fname, verbose=True):
 def generate_photon_databases_from_existing_granules(overwrite = False,
                                                      parallelize = True,
                                                      numprocs = 20,
+                                                     wait_time_when_zero_work_s = 600,
                                                      delete_granules = True,
                                                      verbose = True):
     """For all ATL08+ATL03 granule pairs that exist, generate a photon database.
@@ -479,9 +481,22 @@ def generate_photon_databases_from_existing_granules(overwrite = False,
         new_granules_to_create_pairs = [(granule, database) for (granule, database) in zip(ATL03_matching_granules, ATL03_database_names) if (overwrite or not os.path.exists(database))]
 
         if len(new_granules_to_create_pairs) == 0:
-            if verbose:
-                print("Nothing more to do. Exiting.")
-            return
+            if wait_time_when_zero_work_s == 0:
+                if verbose:
+                    print("Nothing more to do. Exiting.")
+                return
+
+            time_mins = math.floor(wait_time_when_zero_work_s / 60)
+            time_sec = int(math.remainder(wait_time_when_zero_work_s, 60))
+            time_str = ("" if time_mins == 0 else f"{time_mins} m") + (" " if ((time_mins > 0) and (time_sec > 0)) else "") + ("" if time_sec == 0 else f"{time_sec} s")
+
+            print(f"Nothing to do right now. Waiting {time_str} before trying again. (Hit Ctrl-C to end.)")
+            try:
+                time.sleep(wait_time_when_zero_work_s)
+            except KeyboardInterrupt:
+                return
+            # Then loop back around and try again.
+            continue
 
         elif verbose:
             print("Creating", len(new_granules_to_create_pairs), "new granule photon databases.")
@@ -589,7 +604,9 @@ def generate_all_photon_tiles(map_interval = 25,
     is2db = icesat2_photon_database.ICESat2_Database()
     # In case there are any unread textfiles written since the last go-round,
     # ingest them into the database.
-    is2db.update_gpkg_with_csvfiles(verbose=verbose)
+    is2db.fill_in_missing_tile_entries(delete_csvs = True,
+                                       save_to_disk = True,
+                                       verbose=verbose)
     # gdf = is2db.get_gdf(verbose=verbose)
 
     if numprocs <= 0:
@@ -703,10 +720,9 @@ def generate_all_photon_tiles(map_interval = 25,
 
                     # First, just update it in memory, to keep the database updated.
                     # But don't do the slow part (saving to disk)
-                    is2db.update_gpkg_with_csvfiles(gdf = None,
-                                                    save_to_disk = False,
-                                                    delete_when_finished = False,
-                                                    verbose=False)
+                    is2db.fill_in_missing_tile_entries(save_to_disk = False,
+                                                       delete_csvs = False,
+                                                       verbose=False)
                     if verbose:
                         print("Kicking off another geodataframe and map output...")
 
@@ -740,7 +756,7 @@ def generate_all_photon_tiles(map_interval = 25,
         # of tile tile .h5 file. If we'd already created that file but hadn't yet created the _summary.csv,
         # then just get rid of it.
         for fname in running_fnames_list:
-            if overwrite or (os.path.exist(fname) and not os.path.exists(os.path.splitext(fname)[0] + "_summary.csv")):
+            if overwrite or (os.path.exists(fname) and not os.path.exists(os.path.splitext(fname)[0] + "_summary.csv")):
                 print("Deleting partial file", os.path.split(fname)[1])
                 os.remove(fname)
 

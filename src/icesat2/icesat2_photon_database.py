@@ -206,6 +206,59 @@ class ICESat2_Database:
         # print(filename, bbox)
         return bbox
 
+    def fill_in_missing_tile_entries(self, delete_csvs = True, save_to_disk = True, verbose = True):
+        """Sometimes a photon_tile gets created and the _summary.csv file got deleted,
+        but the database update wasn't saved. Loop through the existing photon tiles, fill
+        in any missing entries in the database, and save it back out."""
+        # First, let's ingest the CSV summary files in the directory.
+        gdf = self.get_gdf(verbose=verbose)
+        self.update_gpkg_with_csvfiles(gdf = gdf,
+                                       use_tempfile = True,
+                                       delete_when_finished = delete_csvs,
+                                       save_to_disk = save_to_disk,
+                                       verbose=verbose)
+
+        existing_tiles = [os.path.join(self.tiles_directory, fn) for fn in os.listdir(self.tiles_directory) if (re.search("\Aphoton_tile_[\w\.]+\.h5\Z", fn) != None)]
+        num_filled_in = 0
+        for tilename in existing_tiles:
+            tile_record = gdf.loc[gdf.filename == tilename]
+            # If the tile exists and it says it's populated, move along.
+            if tile_record["is_populated"].tolist()[0] == True:
+                continue
+
+            # Otherwise, let's get the data from the tile ane enter it.
+            idx = tile_record.index.tolist()[0]
+            try:
+                tile_df = pandas.read_hdf(tilename, mode='r')
+            except KeyboardInterrupt as e:
+                raise e
+            except Exception:
+                # The tile might have an error if it was incompletely written before. If so, remove it.
+                os.remove(tilename)
+                summary_csv_name = os.path.splitext(tilename)[0] + "_summary.csv"
+                if os.path.exists(summary_csv_name):
+                    os.remove(summary_csv_name)
+
+                continue
+
+            gdf.loc[idx, 'numphotons']        = len(tile_df)
+            gdf.loc[idx, 'numphotons_canopy'] = numpy.count_nonzero(tile_df["class_code"].between(2,3,inclusive="both"))
+            gdf.loc[idx, 'numphotons_ground'] = numpy.count_nonzero(tile_df["class_code"] == 1)
+            gdf.loc[idx, 'is_populated']      = True
+            num_filled_in += 1
+
+        if num_filled_in > 0:
+            if verbose:
+                print(num_filled_in, "missing tiles entered into the database.")
+            # Only re-save this to disk if we've actually updated anything. Otherwise,
+            # it would be finished after the previous update_gpkg_with_csvfiles() call.
+            if save_to_disk:
+                self.save_geopackage(gdf=gdf, use_tempfile=True, also_delete_redundant_csvs=False, verbose=verbose)
+
+        if not gdf is self.gdf:
+            self.gdf = gdf
+
+        return gdf
 
     def save_geopackage(self, gdf=None,
                               use_tempfile = False,
@@ -219,6 +272,9 @@ class ICESat2_Database:
             if self.gdf is None:
                 raise ValueError("No geodataframe object available to ICESat2_Database.save_gpkg().")
             gdf = self.gdf
+
+        if not gdf is self.gdf:
+            self.gdf = gdf
 
         if use_tempfile:
             base, ext = os.path.splitext(self.gpkg_fname)
