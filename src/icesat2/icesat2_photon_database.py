@@ -43,7 +43,7 @@ class ICESat2_Database:
         """tile_resolutin_deg should be some even fraction of 1. I.e. 1, or 0.5, or 0.25, or 0.1, etc."""
         self.etopo_config = utils.configfile.config()
         self.gpkg_fname = self.etopo_config.icesat2_photon_geopackage
-        self.database_directory = self.etopo_config.icesat2_photon_databases_directory
+        self.tiles_directory = self.etopo_config.icesat2_photon_tiles_directory
 
         self.gdf = None # The actual geodataframe object.
         self.tile_resolution_deg = tile_resolution_deg
@@ -109,7 +109,7 @@ class ICESat2_Database:
                 tile_xmax = tile_xmin + self.tile_resolution_deg
                 for tile_ymin in bbox_yrange:
                     tile_ymax = tile_ymin + self.tile_resolution_deg
-                    tile_fname = os.path.join(self.database_directory, "photon_tile_{0:s}{1:05.2f}_{2:s}{3:06.2f}_{4:s}{5:05.2f}_{6:s}{7:06.2f}.h5".format(\
+                    tile_fname = os.path.join(self.tiles_directory, "photon_tile_{0:s}{1:05.2f}_{2:s}{3:06.2f}_{4:s}{5:05.2f}_{6:s}{7:06.2f}.h5".format(\
                     # tile_fname = "photon_tile_{0:s}{1:05.2f}_{2:s}{3:06.2f}_{4:s}{5:05.2f}_{6:s}{7:06.2f}.h5".format(\
                                                             "S" if (tile_ymin < 0) else "N",
                                                             abs(tile_ymin),
@@ -218,7 +218,7 @@ class ICESat2_Database:
             gdf = self.gdf
 
         if use_tempfile:
-            base, ext = os.path.splitext(os.path.gpkg_fname)
+            base, ext = os.path.splitext(self.gpkg_fname)
             tempfile_name = base + "_TEMP" + ext
             if os.path.exists(tempfile_name):
                 if verbose:
@@ -279,7 +279,7 @@ class ICESat2_Database:
         else:
             return gdf_subset["filename"].tolist()
 
-    def get_photon_database(self, polygon_or_bbox, build_tiles_if_nonexistent = True, verbose=True):
+    def get_photon_database(self, polygon_or_bbox, verbose=True):
         """Given a polygon or bounding box, return the combined database of all
         the photons within the polygon or bounding box.
 
@@ -322,6 +322,41 @@ class ICESat2_Database:
             return combined_df
         else:
             return None
+
+    def read_empty_tile(self, verbose=True):
+        """Sometimes the "create_photon_tile() function gets literally zero photon dataframes back
+        from its quiery. In that case, just return a copy of an empty dataframe we've
+        made and saved with all the correct fields but no data records.
+
+        If the empty dataframe doesn't exist, just read a random dataframe (hoping
+        one of those exists), empty it, and save it out to the
+        etopo_config.icesat2_photon_empty_tile file."""
+        if os.path.exists(self.etopo_config.icesat2_photon_empty_tile):
+            empty_df = pandas.read_hdf(self.etopo_config.icesat2_photon_empty_tile, mode="r")
+        else:
+            # If we can't find the empty tile, create it by gleaming off one of the other databases.
+            # NOTE: This assumes at least one photon tile or one photon granul
+            # database already exists in their respective folders. It might be a good idea down
+            # the line to not rely upon this assumption. Maybe include the empty tile in the
+            # git repository so we ensure it's there.
+            list_of_files = [fn for fn in os.listdir(self.tiles_directory) if (re.search("\Aphoton_tile_[\w\.]+\.h5\Z", fn) != None)]
+            if len(list_of_files) > 0:
+                example_file = os.path.join(self.tiles_directory, list_of_files[0])
+            else:
+                list_of_files = [fn for fn in os.listdir(self.etopo_config.icesat2_granules_directory) if re.search("\AATL03_(\w)+_photons.h5", fn) != None]
+                if len(list_of_files) == 0:
+                    raise FileNotFoundError("Could not find an existing photon tile or granule to use to create the file", self.etopo_config.icesat2_photon_empty_tile)
+                example_file = os.path.join(self.etopo_config.icesat2_granules_directory, list_of_files[0])
+
+            df = pandas.read_hdf(example_file, mode="r")
+            # Empty out all the records and return the empty dataframe.
+            empty_df = df[[False] * len(df)]
+            empty_df.to_hdf(self.etopo_config.icesat2_photon_empty_tile, key="icesat2")
+            if verbose:
+                print(self.etopo_config.icesat2_photon_empty_tile, "written.")
+
+        assert len(empty_df) == 0
+        return empty_df
 
     def create_photon_tile(self, bbox_polygon,
                                  tilename,
@@ -379,7 +414,8 @@ class ICESat2_Database:
         photon_dfs = [None]*len(atl03_photon_db_filenames)
         # gdf = None
 
-        print("Reading {0} _photons.h5 databases to generate {1}.".format(len(atl03_photon_db_filenames), os.path.split(tilename)[1]))
+        if verbose:
+            print("Reading {0} _photons.h5 databases to generate {1}.".format(len(atl03_photon_db_filenames), os.path.split(tilename)[1]))
         for i,(photon_db,atl3,atl8) in enumerate(zip(atl03_photon_db_filenames, atl03_granules, atl08_granules)):
             df = None
             # If the tile exists, get it.
@@ -413,7 +449,11 @@ class ICESat2_Database:
             photon_dfs[i] = df_subset
 
         # Now concatenate the databases.
-        tile_df = pandas.concat(photon_dfs)
+        # If there are no files to concatenate, just read the empty database and return that.
+        if len(photon_dfs) == 0:
+            tile_df = self.read_empty_tile()
+        else:
+            tile_df = pandas.concat(photon_dfs)
         # Save the database.
         tile_df.to_hdf(tilename, "icesat2", complib="zlib", complevel=3, mode='w')
         if verbose:
@@ -441,13 +481,12 @@ class ICESat2_Database:
             if verbose:
                 print(os.path.split(summary_csv_fname)[1], "written.")
 
-            # Also update the
-
         return tile_df
 
     def update_gpkg_with_csvfiles(self, gdf=None,
                                         use_tempfile = True,
                                         delete_when_finished=True,
+                                        save_to_disk = True,
                                         verbose=True):
         """Look through the photon tiles directory, look for any "_summary.csv" files that have been written.
         Ingest them into the database.
@@ -469,7 +508,7 @@ class ICESat2_Database:
             gdf = self.get_gdf(verbose=verbose)
 
         # Get the filenames from the csv files.
-        csv_filenames = [os.path.join(self.database_directory,fname) for fname in os.listdir(self.database_directory) if (re.search("_summary\.csv\Z", fname) != None)]
+        csv_filenames = [os.path.join(self.tiles_directory,fname) for fname in os.listdir(self.tiles_directory) if (re.search("_summary\.csv\Z", fname) != None)]
         if verbose and len(csv_filenames) > 0:
             print("Found", len(csv_filenames), "csv records to update the tile database. ", end="")
 
@@ -528,11 +567,10 @@ class ICESat2_Database:
         """Output a map of the tiling progress so far.
         This must be called within download_all_icesat2_granules.py to avoid circular import conflicts.
         """
-        map_fname = os.path.splitext(self.gpkg_fname)[0] + "_progress_map.png"
-        return map_fname
+        return os.path.abspath(os.path.splitext(self.gpkg_fname)[0] + "_progress_map.png")
 
 if __name__ == "__main__":
     is2db = ICESat2_Database()
-    # is2db.create_new_geopackage()
+    is2db.create_new_geopackage()
     # phd = is2db.get_photon_database((27, 22.5, 27.75, 23))
     # print(phd)

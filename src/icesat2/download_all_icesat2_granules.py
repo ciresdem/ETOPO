@@ -243,15 +243,16 @@ def subset_existing_photon_databases_to_ground_and_canopy_only():
 
         utils.progress_bar.ProgressBar(i+1, len(db_files), suffix = "{0}/{1}".format(i+1, len(db_files)))
 
-def create_tiling_progress_map(icesat2_db = None, use_tempfile = True, verbose=True):
+def create_tiling_progress_map(icesat2_db = None, update_with_csvs = True, use_tempfile = True, verbose=True):
     if icesat2_db is None:
         icesat2_db = icesat2_photon_database.ICESat2_Database()
 
     gdf = icesat2_db.get_gdf(verbose=verbose)
 
-    gdf = icesat2_db.update_gpkg_with_csvfiles(gdf = gdf,
-                                               use_tempfile = use_tempfile,
-                                               verbose=verbose)
+    if update_with_csvs:
+        gdf = icesat2_db.update_gpkg_with_csvfiles(gdf = gdf,
+                                                   use_tempfile = use_tempfile,
+                                                   verbose=verbose)
 
     map_fname = icesat2_db.get_tiling_progress_mapname()
     create_download_progress_map(gdf,
@@ -287,6 +288,7 @@ def delete_granules_where_photon_databases_exist():
 def download_all(overwrite = False,
                  track_progress = True,
                  update_map_every_N = 10,
+                 retry_count = 5,
                  verbose=True):
     """Square by square, go through and download the whole fuckin' world of ICESat-2 photons."""
     tile_tuples = etopo.generate_empty_grids.create_list_of_tile_tuples(resolution=1, verbose=False)
@@ -385,14 +387,22 @@ def download_all(overwrite = False,
                                                                  download_only_matching_granules = True,
                                                                  skip_granules_if_photon_db_exists = True,
                                                                  quiet = not verbose)
+
+                if isinstance(granules_list, Exception):
+                    raise granules_list
+                elif granules_list is None:
+                    continue
+
                 success = True
                 false_tries = 0
             except KeyboardInterrupt as e:
                 raise e
             except Exception as e:
-                print("ERROR:\n", e)
+
+                print("ERROR:\n\t", e)
                 false_tries += 1
-                if false_tries >= 5:
+
+                if false_tries >= retry_count:
                     print("Errors. Waiting 5 minutes and then retrying...")
                     time.sleep(5*60)
                     false_tries = 0
@@ -563,7 +573,7 @@ def rebuild_progress_csv_from_gpkg(progress_csv_name):
 
 def generate_all_photon_tiles(map_interval = 25,
                               overwrite = False,
-                              numprocs = 20,
+                              numprocs = 10,
                               verbose = True):
     """Run through creating all the icesat2_photon_database tiles.
 
@@ -574,7 +584,13 @@ def generate_all_photon_tiles(map_interval = 25,
     # Get all the icesat-2 photon database tiles. Use icesat2_photon_database object for this.
     # Assign a process to each tile generation, and then loop through running them.
     is2db = icesat2_photon_database.ICESat2_Database()
+    # In case there are any unread textfiles written since the last go-round,
+    # ingest them into the database.
+    is2db.update_gpkg_with_csvfiles(verbose=verbose)
     # gdf = is2db.get_gdf(verbose=verbose)
+
+    if numprocs <= 0:
+        numprocs = 1
 
     # Divide the globe up into 2x2* tiled boxes. The tiles help us make the best use
     # of disk-caching to maximize re-use of granule-photon databases between various
@@ -587,74 +603,129 @@ def generate_all_photon_tiles(map_interval = 25,
     if overwrite:
         N_so_far = 0
     else:
-        N_so_far = len([fname for fname in os.listdir(is2db.database_directory) if re.search('\Aphoton_tile_[\w\.]+\.h5\Z', fname) != None])
+        N_so_far = len([fname for fname in os.listdir(is2db.tiles_directory) if re.search('\Aphoton_tile_[\w\.]+\.h5\Z', fname) != None])
     assert (N >= N_so_far)
     N_to_do = N - N_so_far
     if verbose:
         print("Generating {0:,} total tiles, {1:,} already done, {2:,} left to go.".format(N, N_so_far, N_to_do))
 
     tile_built_counter = 0
-    tile_enumerated_counter = 0
-    tile_built_counter_since_last_map_output = 0
+    tiles_built_since_last_map_output_counter = 0
 
-    # TODO 1: Set up empty lists for running procs.
+    # This will hold the set of running processes.
+    running_procs_list = []
+    running_fnames_list = []
+    mapping_process = None # A variable specifically to store the sub-process that writes out the progress map
 
-    for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
-        # A flag to see if any tiles have been actually generated in this box.
-        xmax = xmin+2
-        ymax = ymin+2
-        # print(xmin, ymin, xmax, ymax)
-        tiles_within_bbox = is2db.query_geopackage((xmin, ymin, xmax, ymax), return_whole_records = True)
-        if len(tiles_within_bbox) == 0:
-            continue
-
-        fnames = tiles_within_bbox['filename'].tolist()
-        tile_xmins = tiles_within_bbox['xmin'].tolist()
-        tile_xmaxs = tiles_within_bbox['xmax'].tolist()
-        tile_ymins = tiles_within_bbox['ymin'].tolist()
-        tile_ymaxs = tiles_within_bbox['ymax'].tolist()
-
-        for tilename, tile_xmin, tile_xmax, tile_ymin, tile_ymax in zip(fnames, tile_xmins, tile_xmaxs, tile_ymins, tile_ymaxs):
-            tile_enumerated_counter += 1
-            if not overwrite and os.path.exists(tilename):
+    try:
+        for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
+            # A flag to see if any tiles have been actually generated in this box.
+            xmax = xmin+2
+            ymax = ymin+2
+            # print(xmin, ymin, xmax, ymax)
+            tiles_within_bbox = is2db.query_geopackage((xmin, ymin, xmax, ymax), return_whole_records = True)
+            if len(tiles_within_bbox) == 0:
                 continue
 
-            # TODO 2: Loop through, first delete procs of running list that are finished.
-            # TODO 2.5 -- ALSO create an empty list (single-element) for at most
-            # one running create_tiling_progress_map() instance. To update every map_interval times, or whenever it's done with the last update.
-            # TODO 3: Then, add more running procs until enough are running.
-            # TODO 4: Pause for a fraction of a second (0.05s?), then loop again.
+            fnames = tiles_within_bbox['filename'].tolist()
+            tile_xmins = tiles_within_bbox['xmin'].tolist()
+            tile_xmaxs = tiles_within_bbox['xmax'].tolist()
+            tile_ymins = tiles_within_bbox['ymin'].tolist()
+            tile_ymaxs = tiles_within_bbox['ymax'].tolist()
 
-            print("\n==== {0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(tilename)[1], "====")
+            for tilename, tile_xmin, tile_xmax, tile_ymin, tile_ymax in zip(fnames, tile_xmins, tile_xmaxs, tile_ymins, tile_ymaxs):
+                # If the tile already exists and we're not overwriting, just skip it and move along.
+                if not overwrite and os.path.exists(tilename):
+                    continue
 
-            try:
+                # We'll just keep looping until this process gets added onto the queue.
+                process_started = False
 
-                is2db.create_photon_tile((tile_xmin, tile_ymin, tile_xmax, tile_ymax),
-                                         tilename,
-                                         overwrite = overwrite,
-                                         write_stats = True,
-                                         verbose=verbose)
-            except Exception as e:
-                # Generally speaking, if we error out, it'll likely be during the (long) generation
-                # of tile tile .h5 file. If we'd already created that file but hadn't yet created the _summary.csv,
-                # then just get rid of it.
-                if overwrite or (os.path.exist(tilename) and not os.path.exists(os.path.splitext(tilename)[0] + "_summary.csv")):
-                    print("Deleting partial file", os.paht.split(tilename)[1])
-                    os.remove(tilename)
+                while not process_started:
+                    # Loop through, first delete procs in the running_procs list that are finished.
+                    for rproc, fname in zip(running_procs_list, running_fnames_list):
+                        # If the process is finished up, close it out and remove it from the list.
+                        if not rproc.is_alive():
+                            rproc.join()
+                            rproc.close()
+                            running_procs_list.remove(rproc)
+                            running_fnames_list.remove(fname)
+                            # print("\r==== {0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(tilename)[1], "====")
+                            # Also give us a progress message, please.
+                            if verbose:
+                                print("{0:,}/{1:,}".format(N_so_far + tile_built_counter + 1, N), os.path.split(fname)[1], "written.")
 
-                raise e
+                            tile_built_counter += 1
+                            tiles_built_since_last_map_output_counter += 1
 
-            tile_built_counter += 1
-            tile_built_counter_since_last_map_output += 1
+                    if isinstance(mapping_process, multiprocessing.Process) and not mapping_process.is_alive():
+                        mapping_process.join()
+                        mapping_process.close()
+                        if verbose:
+                            print(is2db.get_tiling_progress_mapname(), "written.")
+                        mapping_process = None
 
-            if tile_built_counter_since_last_map_output >= map_interval:
-                create_tiling_progress_map(icesat2_db = is2db, verbose=verbose)
-                tile_built_counter_since_last_map_output = 0
-                total_tiles_done = numpy.count_nonzero(is2db.get_gdf()["is_populated"])
+                    # If we have space available in the running process queue, kick this off.
+                    if len(running_procs_list) < numprocs:
+                        # Create the new process with the args here.
+                        newproc = multiprocessing.Process(target=is2db.create_photon_tile,
+                                                          args=((tile_xmin, tile_ymin, tile_xmax, tile_ymax),
+                                                                tilename),
+                                                          kwargs={"overwrite": overwrite,
+                                                                  "write_stats": True,
+                                                                  "verbose": False}
+                                                          )
 
-                if total_tiles_done > (N_so_far + tile_built_counter):
-                    print(total_tiles_done - (N_so_far + tile_built_counter), "extra tiles found (likely generated elsewhere). Updating total.")
-                    tile_built_counter = total_tiles_done - N_so_far
+
+                        # Kick the tires and light the fires.
+                        newproc.start()
+
+                        # Add it to the process queue and mark our flag.
+                        running_fnames_list.append(tilename)
+                        running_procs_list.append(newproc)
+                        process_started = True
+
+                    # Sleep for 1/100 th of a second, enough to keep this loop from eating CPU continuously.
+                    time.sleep(0.01)
+
+                if (tiles_built_since_last_map_output_counter >= map_interval) and mapping_process is None:
+
+                    # First, just update it in memory, to keep the database updated.
+                    # But don't do the slow part (saving to disk)
+                    is2db.update_gpkg_with_csvfiles(gdf = None,
+                                                    save_to_disk = True,
+                                                    delete_when_finished = True,
+                                                    use_tempfile = True,
+                                                    verbose=verbose)
+
+                    # If it's time to create a new map, kick off the sub-process to do that.
+                    # This is slow but we can let a separate process do it.
+                    mapping_process = multiprocessing.Process(target=create_tiling_progress_map,
+                                                              kwargs = {"icesat2_db": is2db,
+                                                                        "update_with_csvs": False,
+                                                                        "verbose": False}
+                                                              )
+                    mapping_process.start()
+                    # create_tiling_progress_map(icesat2_db = is2db, verbose=verbose)
+                    tiles_built_since_last_map_output_counter = 0
+                    total_tiles_done = numpy.count_nonzero(is2db.get_gdf()["is_populated"])
+
+                    if total_tiles_done > (N_so_far + tile_built_counter):
+                        if verbose:
+                            print(total_tiles_done - (N_so_far + tile_built_counter), "extra tiles found (likely generated elsewhere). Updating total.")
+                        tile_built_counter = total_tiles_done - N_so_far
+
+    except Exception as e:
+        # Generally speaking, if we error out, it'll likely be during the (long) generation
+        # of tile tile .h5 file. If we'd already created that file but hadn't yet created the _summary.csv,
+        # then just get rid of it.
+        for fname in running_fnames_list:
+            if overwrite or (os.path.exist(fname) and not os.path.exists(os.path.splitext(fname)[0] + "_summary.csv")):
+                print("Deleting partial file", os.path.split(fname)[1])
+                os.remove(fname)
+
+        raise e
+
 
 def _create_single_tile(tilename, bounds):
     """A multiprocessing target for generate_all_photon_tiles(), to create a single
@@ -696,6 +767,7 @@ if __name__ == "__main__":
     if args.generate_all_photon_tiles:
         generate_all_photon_tiles(map_interval = args.map_interval,
                                   overwrite = args.overwrite,
+                                  numprocs = args.numprocs,
                                   verbose = not args.quiet)
 
     elif args.generate_photon_tiling_progress_map:
