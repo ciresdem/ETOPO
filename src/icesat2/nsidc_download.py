@@ -681,8 +681,8 @@ def _main(short_name=None,
                 # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
                 # to fix it by going the other way if it doesn't work at first.
                 if str(url_list).lower().find("too many requests") >= 0:
-                    print("HTTP Error 429: Too Many Requests. Waiting 5 minutes and trying again.")
-                    wait_time_sec = 5*60
+                    print("HTTP Error 429: Too Many Requests. Waiting 1 minute and trying again.")
+                    wait_time_sec = 60
                     for i in range(wait_time_sec):
                         print("\r  {0}:{1:02d}".format(int(wait_time_sec / 60), wait_time_sec % 60), end="")
                         time.sleep(1)
