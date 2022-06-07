@@ -76,7 +76,8 @@ class config:
     def _save_credentials(self, username,
                                 password,
                                 fname_attribute="nsidc_cred_file",
-                                warn_if_exists=True):
+                                warn_if_exists=True,
+                                verbose=False):
         """Save an encrypted password file.
 
         Use the config attribute stored in self.[value of attr_fname] for the filename.
@@ -126,12 +127,12 @@ class config:
             f.write(enc_text)
             f.close()
 
-            if self.verbose:
+            if verbose:
                 print("NSIDC credentials have been encrypted and saved in '{}'.".format(cred_fname))
 
         return
 
-    def _read_credentials(self, fname_attribute="nsidc_cred_file"):
+    def _read_credentials(self, fname_attribute="nsidc_cred_file", verbose=True):
         """Get the username/password from the text-obfuscated cred file.
 
         Returns: Username, password
@@ -157,7 +158,7 @@ class config:
         try:
             username_colon_password = fernet.decrypt(enc_text).decode("utf-8")
         except cryptography.fernet.InvalidToken:
-            if self.verbose:
+            if verbose:
                 print("Unable to decrypt file '{0}'. Credentials will need to be re-entered.".format(cred_fname))
             return (None, None)
 
@@ -168,14 +169,14 @@ class config:
 
         return username, pwd
 
-    def _remove_credentials(self, fname_attribute="nsidc_cred_file"):
+    def _remove_credentials(self, fname_attribute="nsidc_cred_file", verbose=True):
         """Remove the credential file."""
         cred_fname = getattr(self, fname_attribute)
         if os.path.exists(cred_fname):
 
             os.remove(cred_fname)
 
-            if self.verbose:
+            if verbose:
                 "Deleting credential file {}.".format(cred_fname)
 
     def _get_fernet(self):
