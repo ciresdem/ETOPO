@@ -604,9 +604,10 @@ def generate_all_photon_tiles(map_interval = 25,
     is2db = icesat2_photon_database.ICESat2_Database()
     # In case there are any unread textfiles written since the last go-round,
     # ingest them into the database.
-    is2db.fill_in_missing_tile_entries(delete_csvs = True,
-                                       save_to_disk = True,
-                                       verbose=verbose)
+    # NOTE: This takes a long time. Maybe don't do this regularly.
+    # is2db.fill_in_missing_tile_entries(delete_csvs = True,
+    #                                    save_to_disk = True,
+    #                                    verbose=verbose)
     # gdf = is2db.get_gdf(verbose=verbose)
 
     if numprocs <= 0:
@@ -637,6 +638,10 @@ def generate_all_photon_tiles(map_interval = 25,
     running_fnames_list = []
     mapping_process = None # A variable specifically to store the sub-process that writes out the progress map
     writing_gpkg_process = None # A variable specifically to store the sub-process that writes out the ICESat-2 database geopackage.
+
+    delete_when_finished = False
+    iters_since_last_delete_csvs = 0
+    MAX_ITERS_SINCE_LAST_DELETE_CSVS = 6
 
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
@@ -718,18 +723,32 @@ def generate_all_photon_tiles(map_interval = 25,
 
                 if (tiles_built_since_last_map_output_counter >= map_interval) and mapping_process is None:
 
+                    if iters_since_last_delete_csvs >= MAX_ITERS_SINCE_LAST_DELETE_CSVS:
+                        delete_when_finished = True
+
                     # First, just update it in memory, to keep the database updated.
                     # But don't do the slow part (saving to disk)
-                    is2db.fill_in_missing_tile_entries(save_to_disk = False,
-                                                       delete_csvs = False,
-                                                       verbose=False)
+                    is2db.update_gpkg_with_csvfiles(save_to_disk=False,
+                                                    delete_when_finished=delete_when_finished,
+                                                    verbose=verbose)
+
+                    # is2db.fill_in_missing_tile_entries(save_to_disk = False,
+                    #                                    delete_csvs = False,
+                    #                                    verbose=False)
                     if verbose:
-                        print("Kicking off another geodataframe and map output...")
+                        print("Kicking off another geodataframe and map output..." + \
+                              "\n\t(Also deleting _summary.csv's, so hold off on canceling 'till after GPKG is written.)" if delete_when_finished else "")
+
+                    if delete_when_finished:
+                        iters_since_last_delete_csvs = 0
+                    else:
+                        iters_since_last_delete_csvs += 1
+                    delete_when_finished = False
 
                     writing_gpkg_process = multiprocessing.Process(target = is2db.save_geopackage,
                                                                    kwargs = {"use_tempfile" : True,
                                                                              "verbose" : False,
-                                                                             "also_delete_redundant_csvs" : True}
+                                                                             "also_delete_redundant_csvs" : False}
                                                                    )
                     writing_gpkg_process.start()
 

@@ -60,6 +60,9 @@ class ICESat2_Database:
 
         return self.gdf
 
+    def numrecords(self):
+        return len( self.get_gdf(verbose=False) )
+
     def create_new_geopackage(self, populate_with_existing_tiles = True, verbose=True):
         """Create the geopackage that handles the photon database files of ICESat-2 data."""
         # Columns to have : filename, xmin, xmax, ymin, ymax, numphotons, numphotons_canopy, numphotons_ground, geometry
