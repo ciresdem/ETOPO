@@ -276,6 +276,7 @@ def validate_list_of_dems(dem_list_or_dir,
                           date_range=["2021-01-01","2021-12-31"],
                           skip_icesat2_download=False,
                           delete_datafiles=False,
+                          include_photon_validation=True,
                           write_result_tifs=False,
                           shapefile_name = None,
                           verbose=True):
@@ -402,6 +403,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                            delete_datafiles = delete_datafiles,
                                            write_result_tifs = write_result_tifs,
                                            write_summary_stats = create_individual_results,
+                                           include_photon_level_validation = include_photon_validation,
                                            skip_icesat2_download = True,
                                            plot_results = create_individual_results,
                                            mark_empty_results=True,
@@ -496,6 +498,9 @@ def define_and_parse_args():
     parser.add_argument("--individual_results","--ind", action="store_true", default=False,
         help="By default, a summary plot and text file are generated for the dataset. If this is selected, they will be generated for each individual DEM as well. Files will be placed in the -output_dir directory.")
 
+    parser.add_argument("--include_photon_validation","--ph", action="store_true", default=False,
+        help="Produce a photon database (stored in '*_photon_level_results.h5') with errors on a photon-level (not cell-level) scale. Useful for identifying bad ICESat-2 granules.")
+
     parser.add_argument("--delete_datafiles", "--del", action="store_true", default=False,
         help="By default, all data files generted in this process are kept. If this option is chosen, delete them.")
 
@@ -577,6 +582,7 @@ def main():
                           delete_datafiles          = args.delete_datafiles,
                           create_individual_results = args.individual_results,
                           write_result_tifs         = args.write_result_tifs,
+                          include_photon_validation = args.include_photon_validation,
                           shapefile_name            = args.shapefile,
                           verbose                   = not args.quiet)
 

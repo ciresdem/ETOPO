@@ -363,6 +363,7 @@ def validate_dem_parallel(dem_name,
                           write_result_tifs = True,
                           write_summary_stats = True,
                           skip_icesat2_download = True,
+                          include_photon_level_validation = False,
                           plot_results = True,
                           location_name = None,
                           mark_empty_results = True,
@@ -458,7 +459,7 @@ def validate_dem_parallel(dem_name,
         coastline_mask.get_coastline_mask_and_other_dem_data(dem_name,
                                                              mask_out_lakes = mask_out_lakes,
                                                              mask_out_buildings = mask_out_buildings,
-                                                             include_gmrt_mask = True,
+                                                             include_gmrt = include_gmrt_mask,
                                                              target_fname_or_dir = interim_data_dir)
 
     # The dem_array and the coastline_mask_array should have the same shape
@@ -714,7 +715,71 @@ def validate_dem_parallel(dem_name,
 
         return None
 
-    elif not quiet:
+    if include_photon_level_validation:
+        if not quiet:
+            print("Performing photon-level validation...")
+
+        if not quiet:
+            print("\tSubsetting ground-only photons... ", end="")
+        # Get the subset of the dataframe with ground-only photons.
+        photon_df_ground_only = photon_df[ph_mask_ground_only]
+        if not quiet:
+            print("Done.")
+
+        # Get the correct height field from the database.
+        if output_vertical_datum in ("ellipsoid", "wgs84"):
+            height_field = photon_df_ground_only.h_ellipsoid
+        elif output_vertical_datum in ("geoid", "egm2008"):
+            height_field = photon_df_ground_only.h_geoid
+        elif output_vertical_datum == "meantide":
+            height_field = photon_df_ground_only.h_meantide
+        else:
+            raise ValueError("Should not have gotten here. Unhandled vdatum: {}".format(output_vertical_datum))
+
+        if not quiet:
+            print("\tGenerating DEM elevation dataframe... ", end="")
+        # Generate a dataframe of the dem elevations, indexed by their i,j coordinates.
+        dem_elev_df = pandas.DataFrame({#"dem_i": dem_overlap_i,
+                                        #"dem_j": dem_overlap_j,
+                                        "dem_elevation": dem_overlap_elevs},
+                                       # columns = ["dem_i", "dem_j", "dem_elevation"],
+                                       index = pandas.MultiIndex.from_arrays((dem_overlap_i, dem_overlap_j),
+                                                                             names=("i", "j"))
+                                       )
+        if not quiet:
+            print("Done with {0} records.".format(len(dem_elev_df)))
+
+        # Join the dataframes by their i,j values, which will add the "dem_i", "dem_j",
+        # and "dem_elevations" columns to the photon dataframe.
+        # This could take a while to run, depending on the sizes of the dataframes.
+        # Both dataframes have (i,j) as their index, so this should be good, I shouldn't need to specify the "on=" parameter.
+        if not quiet:
+            print("\tJoining photon_df and DEM elevation tables... ", end="")
+        photon_df_with_dem_elevs = photon_df_ground_only.join(dem_elev_df, how='left') # on=('i','j')
+        if not quiet:
+            print("Done.")
+
+        # Dataframe should have preserved its length, just sanity check here.
+        assert len(photon_df_with_dem_elevs) == len(height_field)
+
+        # Subtract the elevations and give us a photon_level error bar.
+        # This is a single-column subtraction, should be pretty quick.
+        if not quiet:
+            print("\tCalculating elevation differences... ", end="")
+        photon_df_with_dem_elevs["dem_minus_is2_m"] = photon_df_with_dem_elevs["dem_elevation"] - height_field
+        if not quiet:
+            print("Done.")
+
+        # Write out the photon level elevation difference dataset.
+        base, ext = os.path.splitext(results_dataframe_file)
+        photon_results_dataframe_file = base + "_photon_level_results" + ext
+        if not quiet:
+            print("\tWriting", os.path.split(photon_results_dataframe_file)[1] + "...")
+        photon_df_with_dem_elevs.to_hdf(photon_results_dataframe_file, "icesat2", complib="zlib", complevel=3)
+        if not quiet:
+            print("Done.\n")
+
+    if not quiet:
         print("Performing ICESat-2/DEM cell validation...")
 
     # Gather a list of all the little results mini-dataframes from all the sub-processes running.

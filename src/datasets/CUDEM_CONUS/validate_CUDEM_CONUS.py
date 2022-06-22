@@ -32,7 +32,7 @@ place_names_dict = {"AK": "Alaska",
                     "MA_NH_ME": "Massachusetts, New Hampshire and Maine",
                     "NC": "North Carlonia",
                     "northeast_sandy": "Northeast, post-Sandy",
-                    "prusvi": "Puerto Rico and US Virgin Islands",
+                    # "prusvi": "Puerto Rico and US Virgin Islands",
                     "rima": "Rhode Island and Massachusetts",
                     "southeast": "Southeast US",
                     "TX": "Texas",
@@ -46,6 +46,7 @@ def validate_region(basedir,
                     place_name = None,
                     input_vdatum="NAVD88",
                     output_vdatum="EGM2008",
+                    include_photon_validations = True,
                     overwrite=False):
     """Validate one sub-region of ETOPO against ICESat-2 using the icesat2 validation scripts."""
     # TODO: Fill in
@@ -66,24 +67,25 @@ def validate_region(basedir,
         return
 
     icesat2.validate_dem_collection.validate_list_of_dems(data_dir,
-                                                         photon_h5=None,
-                                                         use_icesat2_photon_database=True,
-                                                         results_h5=results_h5,
-                                                         fname_filter=datafiles_regex,
-                                                         fname_omit=None,
-                                                         output_dir=results_dir,
-                                                         icesat2_dir=icesat2_dir,
-                                                         input_vdatum=input_vdatum,
-                                                         output_vdatum=output_vdatum,
-                                                         overwrite=False,
-                                                         place_name = place_name,
-                                                         create_individual_results = True,
-                                                         date_range=["2021-01-01","2021-12-31"],
-                                                         skip_icesat2_download=False,
-                                                         delete_datafiles=False,
-                                                         write_result_tifs=True,
-                                                         shapefile_name = None,
-                                                         verbose=True)
+                                                          photon_h5=None,
+                                                          use_icesat2_photon_database=True,
+                                                          results_h5=results_h5,
+                                                          fname_filter=datafiles_regex,
+                                                          fname_omit=None,
+                                                          output_dir=results_dir,
+                                                          icesat2_dir=icesat2_dir,
+                                                          input_vdatum=input_vdatum,
+                                                          output_vdatum=output_vdatum,
+                                                          overwrite=False,
+                                                          place_name = place_name,
+                                                          create_individual_results = True,
+                                                          date_range=["2021-01-01","2021-12-31"],
+                                                          skip_icesat2_download=False,
+                                                          delete_datafiles=False,
+                                                          include_photon_validation = include_photon_validations,
+                                                          write_result_tifs=True,
+                                                          shapefile_name = None,
+                                                          verbose=True)
 
 # Default directory ... just validate the 1/9" tiles, not the 1/3" tiles (which are bathy only)
 def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_datafiles_directory), "NCEI_ninth_Topobathy_2014_8483")):
@@ -96,6 +98,9 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
     datafiles_regex = cudem_config.datafiles_regex
 
     for subdir in subdirs_list:
+        # Start with Alabama & Florida, for starters.
+        if subdir not in ("AL_nwFL", "FL"):
+            continue
         place_name = place_names_dict[subdir]
         print("\n===========", place_name, "===========")
 
@@ -107,6 +112,7 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
                         datafiles_regex = datafiles_regex,
                         place_name = place_name,
                         input_vdatum = input_vdatum,
+                        include_photon_validations = True,
                         output_vdatum = output_vdatum)
 
 if __name__ == "__main__":

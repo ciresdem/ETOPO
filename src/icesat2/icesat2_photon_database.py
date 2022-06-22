@@ -346,7 +346,9 @@ class ICESat2_Database:
         else:
             return gdf_subset["filename"].tolist()
 
-    def get_photon_database(self, polygon_or_bbox, verbose=True):
+    def get_photon_database(self, polygon_or_bbox,
+                                  build_tiles_if_nonexistent = True,
+                                  verbose=True):
         """Given a polygon or bounding box, return the combined database of all
         the photons within the polygon or bounding box.
 
@@ -374,7 +376,7 @@ class ICESat2_Database:
                 if verbose:
                     print("Done.")
             # If the file doesn't exist, create it and get the data.
-            else:
+            elif build_tiles_if_nonexistent:
                 if verbose:
                     print("\t{0}/{1} Creating".format(i+1, len(df_tiles_subset)), os.path.split(fname)[1], "...")
                 dataframes_list[i] = self.create_photon_tile(df_row['geometry'],
@@ -382,6 +384,9 @@ class ICESat2_Database:
                                                              overwrite=False,
                                                              write_stats = True,
                                                              verbose=verbose)
+
+        # Get rid of any dataframes where data wasn't read.
+        dataframes_list = [df for df in dataframes_list if (df is not None)]
 
         # Concatenate the dataframes together.
         if len(dataframes_list) > 0:
