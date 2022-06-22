@@ -357,6 +357,9 @@ def validate_dem_parallel(dem_name,
                           interim_data_dir = None,
                           overwrite=False,
                           delete_datafiles = False,
+                          mask_out_lakes = True,
+                          mask_out_buildings = True,
+                          include_gmrt_mask = True,
                           write_result_tifs = True,
                           write_summary_stats = True,
                           skip_icesat2_download = True,
@@ -452,8 +455,13 @@ def validate_dem_parallel(dem_name,
     # Collect the metadata from the DEM.
     dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, \
         coastline_mask_filename, coastline_mask_array = \
-        coastline_mask.get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir=interim_data_dir)
+        coastline_mask.get_coastline_mask_and_other_dem_data(dem_name,
+                                                             mask_out_lakes = mask_out_lakes,
+                                                             mask_out_buildings = mask_out_buildings,
+                                                             include_gmrt_mask = True,
+                                                             target_fname_or_dir = interim_data_dir)
 
+    # The dem_array and the coastline_mask_array should have the same shape
     assert coastline_mask_array.shape == dem_array.shape
 
     # Assert that the both the dem vertical datum and the output vertical datum are valid values.
@@ -685,7 +693,7 @@ def validate_dem_parallel(dem_name,
         num_goodpixels = numpy.count_nonzero(dem_goodpixel_mask)
         print("{:,}".format(num_goodpixels), "nonzero land cells exist in the DEM.")
         if num_goodpixels == 0:
-            print("No land cells found in DEM. Stopping and moving on.")
+            print("No land cells found in DEM with overlapping ICESat-2 data. Stopping and moving on.")
             return None
         else:
             print("{:,} ICESat-2 photons overlap".format(len(photon_df)),

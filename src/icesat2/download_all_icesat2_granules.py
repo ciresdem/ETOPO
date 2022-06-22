@@ -86,27 +86,39 @@ def create_query_bounding_boxes(xmin=-180, xmax=180, xres=1, ymin=-89, ymax=89, 
     return bboxes
 
 def create_icesat2_progress_csv(fname=my_config.icesat2_download_progress_csv,
+                                from_gpkg = False,
                                 verbose=True):
     """Create a CSV file so that we can keep track of which icesat-2 files
     have been downloaded already and which ones have not. This is much more efficient than
     contantly querying NSIDC again and again to see if we have the files for every
     given 1x1-deg tile over the planet.
+
+    If from_gpkg, then build it from the geopackage rather than from scratch. This is useful
+    if we accidentally corrupted the CSV file while downloading.
     """
-    if verbose:
-        print("Fetching all ICESat-2 1x1-deg bounding boxes. This can take a sec.")
-    tile_tuples = etopo.generate_empty_grids.create_list_of_tile_tuples(resolution=1, verbose=False)
-    bboxes = [(int(x),int(y),int(x+1),int(y+1)) for (y,x) in tile_tuples]
-    df = pandas.DataFrame(data={"xmin": [bb[0] for bb in bboxes],
-                                "ymin": [bb[1] for bb in bboxes],
-                                "xmax": [bb[2] for bb in bboxes],
-                                "ymax": [bb[3] for bb in bboxes],
-                                "numgranules": numpy.zeros((len(bboxes),), dtype=int),
-                                "is_downloaded": numpy.zeros((len(bboxes),), dtype=bool)})
+    if from_gpkg:
+        gpkg_fname = os.path.splitext(fname)[0] + ".gpkg"
+        if verbose:
+            print("Reading", os.path.split(gpkg_fname)[1] + "...")
+        gdf = geopandas.read_file(gpkg_fname)
+        df = pandas.DataFrame(gdf.drop(columns='geometry'))
 
-    if verbose:
-        print(len(bboxes), "bounding boxes total.")
+    else:
+        if verbose:
+            print("Fetching all ICESat-2 1x1-deg bounding boxes. This can take a sec.")
+        tile_tuples = etopo.generate_empty_grids.create_list_of_tile_tuples(resolution=1, verbose=False)
+        bboxes = [(int(x),int(y),int(x+1),int(y+1)) for (y,x) in tile_tuples if (y > -90)]
+        df = pandas.DataFrame(data={"xmin": [bb[0] for bb in bboxes],
+                                    "ymin": [bb[1] for bb in bboxes],
+                                    "xmax": [bb[2] for bb in bboxes],
+                                    "ymax": [bb[3] for bb in bboxes],
+                                    "numgranules": numpy.zeros((len(bboxes),), dtype=int),
+                                    "is_downloaded": numpy.zeros((len(bboxes),), dtype=bool)})
 
-    df.to_csv(fname)
+        if verbose:
+            print(len(bboxes), "bounding boxes total.")
+
+    df.to_csv(fname, index=False)
     if verbose:
         print(fname, "written.")
 
@@ -144,7 +156,26 @@ def create_download_progress_map(download_gdf,
     cm_obj = plt.get_cmap(cmap, lut=2)
     # color_dmin = tuple(list(cm_obj(dmin)[0:3]) + [alpha])
     color_dmax = tuple(list(cm_obj(dmax)[0:3]) + [alpha])
+
+    # If "is_downloaded" or "is_populated" field is all true, create an empty row at the end with a non-existent polygon.
+    # Just need to give at least one "false" reading in order for the colormap to
+    # still show correctly on a fully-completed map where 'is_downloaded' are all True.
+    if numpy.all(download_gdf[progress_fieldname]):
+        added_row = True
+        if progress_fieldname == "is_downloaded":
+            download_gdf.loc[len(download_gdf)] = [0,0,0,0,0,False,shapely.geometry.Polygon(([0,0],[0.00001,0],[0,0]))]
+        elif progress_fieldname == "is_populated":
+            download_gdf.loc[len(download_gdf)] = ["",0,0,0,0,0,0,0,False,shapely.geometry.Polygon(([0,0],[0.00001,0],[0,0]))]
+    else:
+        added_row = False
+
+    # Add the data to the plot.
     download_gdf.plot(column=progress_fieldname, ax=ax, alpha=alpha, cmap=cm_obj)
+
+    # Get rid of that temporary extra row if we added it.
+    if added_row:
+        # After it's plotted, drop the extra row we just added.
+        download_gdf.drop(download_gdf.tail(1).index,inplace=True)
 
     # Add some helpful text to the figure.
     plt.text(0.5, 0.9, map_title,
@@ -184,6 +215,9 @@ def create_download_progress_map(download_gdf,
         print(os.path.split(map_filename)[1], "written.")
     # Make sure to close the figure to free up the memory.
     plt.close(fig)
+
+    return
+
 
 def subset_existing_photon_databases_to_ground_and_canopy_only():
     # THIS FUNCTION IS NO LONGER NEEDED. DO NOT RUN AGAIN.
@@ -312,7 +346,7 @@ def download_all(overwrite = False,
         progress_fname = my_config.icesat2_download_progress_csv
         progress_df = pandas.read_csv(progress_fname)
 
-        # For some reason a number of "Unnamed" rows are being added. Delete them if they're in there.
+        # For some reason a number of "Unnamed" columns are being added. Delete them if they're in there.
         cols_with_unnamed_in_them = [colname for colname in progress_df.columns if colname.lower().find("unnamed") > -1]
         progress_df = progress_df.drop(cols_with_unnamed_in_them, axis=1)
 
@@ -332,6 +366,17 @@ def download_all(overwrite = False,
 
         if verbose:
             print(progress_fname, "read.")
+
+    # ################### DELETE THESE ###########################################
+    # # Just code thrown in here to create the map at the very end. Un-comment all this if you want to re-create the final download map.
+    # gpkg_fname = os.path.splitext(progress_fname)[0] + ".gpkg"
+    # progress_gdf = output_progress_csv_to_gpkg(progress_df, gpkg_fname, verbose=verbose)
+
+    # map_filename = os.path.splitext(gpkg_fname)[0] + "_map.png"
+    # create_download_progress_map(progress_gdf, map_filename, verbose=verbose)
+    # return
+    # ################### DELETE THESE ###########################################
+
 
     num_updated_counter = 0
     started_downloads = False
@@ -363,7 +408,16 @@ def download_all(overwrite = False,
                                   (progress_df.ymin == bbox[1]) & \
                                   (progress_df.xmax == bbox[2]) & \
                                   (progress_df.ymax == bbox[3])]
-            assert len(row) == 1
+
+            try:
+                assert len(row) == 1
+            except AssertionError as e:
+                print(progress_df)
+                print("BBOX:", bbox)
+                print(len(row))
+                print(row)
+                raise e
+
             if row.iloc[0]['is_downloaded']:
                 # Don't bother displaying this message until we get to the first one to download.
                 if verbose and started_downloads:
@@ -453,7 +507,7 @@ def output_progress_csv_to_gpkg(progress_df, gpkg_fname, verbose=True):
 def generate_photon_databases_from_existing_granules(overwrite = False,
                                                      parallelize = True,
                                                      numprocs = 20,
-                                                     wait_time_when_zero_work_s = 600,
+                                                     wait_time_when_zero_work_s = 120, # Wait 2 minutes before beginning again.
                                                      delete_granules = True,
                                                      verbose = True):
     """For all ATL08+ATL03 granule pairs that exist, generate a photon database.
@@ -641,7 +695,7 @@ def generate_all_photon_tiles(map_interval = 25,
 
     delete_when_finished = False
     iters_since_last_delete_csvs = 0
-    MAX_ITERS_SINCE_LAST_DELETE_CSVS = 6
+    MAX_ITERS_SINCE_LAST_DELETE_CSVS = 4
 
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
@@ -763,12 +817,12 @@ def generate_all_photon_tiles(map_interval = 25,
                     mapping_process.start()
                     # create_tiling_progress_map(icesat2_db = is2db, verbose=verbose)
                     tiles_built_since_last_map_output_counter = 0
-                    total_tiles_done = numpy.count_nonzero(is2db.get_gdf()["is_populated"])
+                    # total_tiles_done = numpy.count_nonzero(is2db.get_gdf()["is_populated"])
 
-                    if total_tiles_done > (N_so_far + tile_built_counter):
-                        if verbose:
-                            print(total_tiles_done - (N_so_far + tile_built_counter), "extra tiles found (likely generated elsewhere). Updating total.")
-                        tile_built_counter = total_tiles_done - N_so_far
+                    # if total_tiles_done > (N_so_far + tile_built_counter):
+                    #     if verbose:
+                    #         print(total_tiles_done - (N_so_far + tile_built_counter), "extra tiles found (likely generated elsewhere). Updating total.")
+                    #     tile_built_counter = total_tiles_done - N_so_far
 
     except Exception as e:
         # Generally speaking, if we error out, it'll likely be during the (long) generation
@@ -782,15 +836,16 @@ def generate_all_photon_tiles(map_interval = 25,
         raise e
 
 
-def _create_single_tile(tilename, bounds):
-    """A multiprocessing target for generate_all_photon_tiles(), to create a single
-    photon tile in a sub-process, and run it."""
+# def _create_single_tile(tilename, bounds):
+#     """A multiprocessing target for generate_all_photon_tiles(), to create a single
+#     photon tile in a sub-process, and run it."""
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Utility for downloading and pre-processing the whole fucking world of ICESat-2 photon data. Right now set to do the whole year 2021 (Jan 1-Dec 30).")
 
     parser.add_argument("-numprocs", "-np", default=0, type=int, help="The number of parallel processes to run. Default run sequentially on 1 process.")
     parser.add_argument("-map_interval", "-mi", default=10, type=int, help="When donwloading, the interval to update the map (ever N-th tile). Default 10.")
+    parser.add_argument("-wait", "-w", default=120, type=int, help="In the 'generate_photon_databases' module, we go to sleep if there's nothing to do. Specify here how many seconds to sleep between retrying looking for granules to process.")
     parser.add_argument("--generate_photon_databases", "-g", action="store_true", default=False, help="For all pairs of granules that have both ATL03 and ALT08 downloaded, generate a photon database for that granule.")
     parser.add_argument("--generate_photon_tiling_progress_map", "-tm", action="store_true", default=False, help="Make an updated map of the photon tiling progress.")
     # parser.add_argument("--move_icesat2_files", "-m", action="store_true", default=False, help="Move all the icesat-2 granuels and photon_databases from the old .cudem_cache directory into the data/icesat2/granules directory.")
@@ -803,7 +858,7 @@ def define_and_parse_args():
 
 if __name__ == "__main__":
     # Temporarily uncomment to create the icesat-2 download progress csv.
-    # create_icesat2_progress_csv()
+    # create_icesat2_progress_csv(from_gpkg=True)
     # delete_granules_where_photon_databases_exist()
     # print("Running with subset_existing_photon_databases_to_ground_and_canopy_only() enabled.")
 
@@ -831,6 +886,7 @@ if __name__ == "__main__":
     elif args.generate_photon_databases:
         generate_photon_databases_from_existing_granules(parallelize = not (args.numprocs == 0),
                                                          numprocs = args.numprocs,
+                                                         wait_time_when_zero_work_s = args.wait,
                                                          overwrite = args.overwrite,
                                                          verbose = not args.quiet)
 

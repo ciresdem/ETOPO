@@ -102,11 +102,16 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
 # TODO: Get coastline mask from:
     # 1. Copernicus mask (from waffles) -- this is what's existing.
     # 2. Extra tiles over Azerbaijan missing from Copernicus
-    # 3. Outlying minor island (ask Matt about that)
-    # 4. Subtract off lakes mask from GLOBathy.
+    # 3. Outlying minor island (ask Matt about that) -- GMRT!
+    # 4. Subtract off lakes mask from GLOBathy. -- Matt has that too
+    # 5. Subtract buildings (just for dem validation). Matt has this too!
     # Combine all these ^^ together to return a complete coastline mask (possibly using stacks?)
 
-def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
+def create_coastline_mask(input_dem,
+                          return_ds_bounds_step_epsg = False,
+                          mask_out_lakes = True,
+                          include_gmrt = True, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
+                          mask_out_buildings = False,
                           output_file=None,
                           verbose=True):
     """From a given DEM (.tif or otherwise), generate a coastline mask at the same grid and resolution.
@@ -152,14 +157,18 @@ def create_coastline_mask(input_dem, return_ds_bounds_step_epsg = False,
     # If we round up half a pixel on each file extent size, it can ensure we
 
     waffle_args = ["waffles",
-                   "-M","coastline:polygonize=False",
+                   "-M","coastline:polygonize=False" + \
+                       (":want_gmrt=True" if include_gmrt else "") + \
+                       (":want_lakes=True" if mask_out_lakes else "") + \
+                       (":want_buildings=True" if mask_out_buildings else ""),
                    "-R", "{0}/{1}/{2}/{3}".format(*bbox),
                    "-O", os.path.abspath(output_filepath_base),
                    "-P", "epsg:{0:d}".format(epsg),
                    "-E", str("{0:.16f}/{1:.16f}".format(step_xy[0], step_xy[1])),
                    "-D", etopo_config.etopo_cudem_cache_directory,
                    "--keep-cache",
-                   "--nodata", str(etopo_config.etopo_ndv)]
+                   "--nodata", str(etopo_config.etopo_ndv),
+                   input_dem]
 
     if verbose:
         console.print("Running: [bold green]" + waffle_args[0] + "[/bold green] " + " ".join(waffle_args[1:]))
@@ -202,7 +211,12 @@ def create_coastal_mask_filename(dem_name, target_dir=None):
     return coastline_mask_fname
 
 
-def get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir = None, verbose=True):
+def get_coastline_mask_and_other_dem_data(dem_name,
+                                          mask_out_lakes = True,
+                                          mask_out_buildings=False,
+                                          include_gmrt = True,
+                                          target_fname_or_dir = None,
+                                          verbose=True):
     """Get data from the DEM and a generated/opened coastline mask.
 
     Return, in this order:
@@ -221,6 +235,8 @@ def get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir = None, 
 
     dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
     dem_array = dem_ds.ReadAsArray()
+
+    coastline_ds = None
 
     # Get a coastline mask (here from Copernicus). If the file exists, use it.
     # If not, generate it.
@@ -241,17 +257,23 @@ def get_coastline_mask_and_other_dem_data(dem_name, target_fname_or_dir = None, 
         coastline_ds, \
         dem_bbox, \
         dem_step_xy, \
-        dem_epsg = create_coastline_mask(dem_name, return_ds_bounds_step_epsg=True, output_file=coastline_mask_file, verbose=verbose)
+        dem_epsg = create_coastline_mask(dem_name,
+                                         mask_out_lakes = mask_out_lakes,
+                                         mask_out_buildings = mask_out_buildings,
+                                         include_gmrt = include_gmrt,
+                                         return_ds_bounds_step_epsg=True,
+                                         output_file=coastline_mask_file,
+                                         verbose=verbose)
 
         # Switch items 1,2 in bounding box (minx,maxx,miny,maxy) --> (minx,miny,maxx,maxy)
         dem_bbox[1], dem_bbox[2] = dem_bbox[2], dem_bbox[1]
 
         assert coastline_mask_file == coastline_mask_file_out
 
-
-    coastline_mask_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
-    coastline_mask_array = coastline_mask_ds.ReadAsArray()
-    coastline_mask_ds = None
+    if coastline_ds is None:
+        coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
+    coastline_mask_array = coastline_ds.ReadAsArray()
+    coastline_ds = None
 
     return dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, coastline_mask_file, coastline_mask_array
 
@@ -262,6 +284,12 @@ def read_and_parse_args():
     parser.add_argument("dem_filename", type=str, help="Input DEM.")
     parser.add_argument("dest", nargs="?", default="",
                         help="Destination file name, or file directory. If name is omitted: adds '_coastline_mask' to the input file name.")
+    parser.add_argument("--dont_mask_out_buildings", default=False, action="store_true",
+                        help="DO NOT Mask out areas that are covered by building polygons in the OpenStreetMap dataset. Masking out buildings is useful when using this for IceSat-2 validation.")
+    parser.add_argument("--dont_mask_out_lakes", default=False, action="store_true",
+                        help="DO NOT Mask out areas that are covered by lake polygons in the global HydroLakes dataset. Masking out lakes is useful when using this for IceSat-2 validation.")
+    parser.add_argument("--dont_include_gmrt", default=False, action="store_true",
+                        help="DO NOT Include land areas covered by the GMRT land-cover dataset. Including GMRT is useful for including many small outlying islands that Copernicus may exclude.")
     parser.add_argument("--quiet", "-q", action="store_true", default=False,
                         help="Run quietly.")
 
@@ -273,5 +301,8 @@ if __name__ == "__main__":
 
     create_coastline_mask(args.dem_filename,
                           return_ds_bounds_step_epsg=False,
+                          mask_out_buildings = not args.dont_mask_out_buildings,
+                          mask_out_lakes = not args.dont_mask_out_lakes,
+                          include_gmrt = not args.dont_include_gmrt,
                           output_file=None if (args.dest.strip() == "") else args.dest,
                           verbose=not args.quiet)

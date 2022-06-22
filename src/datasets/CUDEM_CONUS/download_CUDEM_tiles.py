@@ -14,6 +14,8 @@ import utils.traverse_directory
 import utils.configfile
 import datasets.download_dataset as download_dataset
 
+# TODO: Look into the post-Sandy tiles, see if we have them all. Updates are here: https://www.ngdc.noaa.gov/mgg/inundation/sandy/data/tiles/
+
 class CUDEM_Downloader(download_dataset.DatasetDownloader_BaseClass):
     """A downloader class for downloading subsets of the CUDEM dataset. CUDEM tiles
     come in various vertical datums, necessitating having them in separate source_dataset
