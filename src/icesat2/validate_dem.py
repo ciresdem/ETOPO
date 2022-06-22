@@ -715,6 +715,8 @@ def validate_dem_parallel(dem_name,
 
         return None
 
+    # If requested, perform a validation on a photon-by-photon basis, in addition to the grid-cell
+    # analysis peformed later on down.
     if include_photon_level_validation:
         if not quiet:
             print("Performing photon-level validation...")
@@ -725,16 +727,6 @@ def validate_dem_parallel(dem_name,
         photon_df_ground_only = photon_df[ph_mask_ground_only]
         if not quiet:
             print("Done.")
-
-        # Get the correct height field from the database.
-        if output_vertical_datum in ("ellipsoid", "wgs84"):
-            height_field = photon_df_ground_only.h_ellipsoid
-        elif output_vertical_datum in ("geoid", "egm2008"):
-            height_field = photon_df_ground_only.h_geoid
-        elif output_vertical_datum == "meantide":
-            height_field = photon_df_ground_only.h_meantide
-        else:
-            raise ValueError("Should not have gotten here. Unhandled vdatum: {}".format(output_vertical_datum))
 
         if not quiet:
             print("\tGenerating DEM elevation dataframe... ", end="")
@@ -749,6 +741,8 @@ def validate_dem_parallel(dem_name,
         if not quiet:
             print("Done with {0} records.".format(len(dem_elev_df)))
 
+        # print(dem_elev_df)
+
         # Join the dataframes by their i,j values, which will add the "dem_i", "dem_j",
         # and "dem_elevations" columns to the photon dataframe.
         # This could take a while to run, depending on the sizes of the dataframes.
@@ -756,11 +750,20 @@ def validate_dem_parallel(dem_name,
         if not quiet:
             print("\tJoining photon_df and DEM elevation tables... ", end="")
         photon_df_with_dem_elevs = photon_df_ground_only.join(dem_elev_df, how='left') # on=('i','j')
+        # Then, drop all photons that didn't line up with a valid land cell according to the coastline mask (dem_elevation values would be NaN)
+        photon_df_with_dem_elevs = photon_df_with_dem_elevs[pandas.notna(photon_df_with_dem_elevs["dem_elevation"])]
         if not quiet:
-            print("Done.")
+            print("Done with {0} records.".format(len(photon_df_with_dem_elevs)))
 
-        # Dataframe should have preserved its length, just sanity check here.
-        assert len(photon_df_with_dem_elevs) == len(height_field)
+        # Get the correct height field from the database.
+        if output_vertical_datum in ("ellipsoid", "wgs84"):
+            height_field = photon_df_with_dem_elevs.h_ellipsoid
+        elif output_vertical_datum in ("geoid", "egm2008"):
+            height_field = photon_df_with_dem_elevs.h_geoid
+        elif output_vertical_datum == "meantide":
+            height_field = photon_df_with_dem_elevs.h_meantide
+        else:
+            raise ValueError("Should not have gotten here. Unhandled vdatum: {}".format(output_vertical_datum))
 
         # Subtract the elevations and give us a photon_level error bar.
         # This is a single-column subtraction, should be pretty quick.

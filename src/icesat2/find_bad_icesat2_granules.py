@@ -3,6 +3,8 @@
 """find_bad_icesat2_granules.py -- code for identifying and eliminating bad ICESat-2 granules from analyses."""
 
 import os
+import pandas
+import numpy
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
@@ -68,8 +70,41 @@ def generate_tile_granule_validation_summary(dem_fname,
             return
 
     # TODO 1. Get the photon validation dataframe for that tile *on a photon basis*. *Not* aggregated by grid-cell.
+    results_subdir = "icesat2_results"
+    base_path, fname = os.path.split(dem_fname)
+    # If the results directory doesn't exist yet, create it.
+    results_dir = os.path.join(base_path, results_subdir)
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
+    fbase, ext = os.path.splitext(fname)
+    results_database_name = os.path.join(results_dir, fbase + "_results" + ext)
+
+    base, ext = os.path.splitext(results_database_name)
+    photon_results_database_name = base + "_photon_level_results" + ext)
+
+    if not os.path.exists(photon_results_database_name):
+        # If we don't have a photon-level validations file, make sure we generate one
+        # Key point: ensure "include_photon_level_validation = True".
+        validate_dem.validate_dem_parallel(dem_fname,
+                                           photon_dataframe_name = None,
+                                           use_icesat2_photon_database = True,
+                                           icesat2_photon_database_object = None,
+                                           dem_vertical_datum = dem_vdatum,
+                                           output_vertical_datum = vdatum_out,
+                                           results_dataframe_file = results_database_name,
+                                           interim_data_dir = results_dir,
+                                           include_photon_level_validation=True,
+                                           )
+
     # TODO 2. Loop through all the unique granules and organize the photons by those.
-    # TODO 3: Calculate the mean, std, range of
+    # Read the photon_level validations dataframe
+    photon_df = pandas.read_hdf(photon_results_database_name, mode='r')
+    # A Nx2 array of uniqpe granule-id integer pairs.
+    unique_granule_ids = numpy.unique(list(zip(photon_df.granule_id1, photon_df.granule_id2)))
+    for gid1, gid2 in unique_granule_ids:
+        pass
+        # FINISH HERE.
+        # TODO 3: Calculate the mean, std, range of each granule id.
 
 
 
