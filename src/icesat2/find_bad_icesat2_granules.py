@@ -41,6 +41,16 @@ def get_summary_h5_fname_from_tilename(dem_fname):
     return os.path.join(my_config.icesat2_granule_validation_results_directory,
                         fname_base + "_granule_results.h5")
 
+def granule_hist(photon_results_file, lo_pct_cutoff = 0.05, hi_pct_cutoff = 99.95, nbins=100):
+    # Given a photon-level validation results file, return the histograms
+    df = pandas.read_hdf(photon_results_file, mode='r')
+    low, hi = numpy.percentile(df.dem_minus_is2_m, (lo_pct_cutoff, hi_pct_cutoff))
+    gids = numpy.unique(list(zip(df.granule_id1, df.granule_id2)), axis=0)
+    piles = []
+    for id1, id2 in gids:
+        piles.append(df[(df.granule_id1 == id1) & (df.granule_id2 == id2) & (df.dem_minus_is2_m >= low) & (df.dem_minus_is2_m <= hi)].dem_minus_is2_m)
+    h = plt.hist(piles, nbins, histtype='bar', stacked=True)
+    return gids, h
 
 def generate_tile_granule_validation_summary(dem_fname,
                                              dem_vdatum,
@@ -96,6 +106,8 @@ def generate_tile_granule_validation_summary(dem_fname,
                                            include_photon_level_validation=True,
                                            )
 
+
+
     # TODO 2. Loop through all the unique granules and organize the photons by those.
     # Read the photon_level validations dataframe
     photon_df = pandas.read_hdf(photon_results_database_name, mode='r')
@@ -105,8 +117,6 @@ def generate_tile_granule_validation_summary(dem_fname,
         pass
         # FINISH HERE.
         # TODO 3: Calculate the mean, std, range of each granule id.
-
-
 
 if __name__ == "__main__":
     pass

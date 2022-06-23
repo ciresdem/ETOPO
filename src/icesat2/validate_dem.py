@@ -777,9 +777,10 @@ def validate_dem_parallel(dem_name,
         base, ext = os.path.splitext(results_dataframe_file)
         photon_results_dataframe_file = base + "_photon_level_results" + ext
         if not quiet:
-            print("\tWriting", os.path.split(photon_results_dataframe_file)[1] + "...")
+            print("\tWriting", os.path.split(photon_results_dataframe_file)[1] + "... ", end="")
         photon_df_with_dem_elevs.to_hdf(photon_results_dataframe_file, "icesat2", complib="zlib", complevel=3)
         if not quiet:
+            # Add an extra newline at the end to visually separate it from the next set of steps.
             print("Done.\n")
 
     if not quiet:

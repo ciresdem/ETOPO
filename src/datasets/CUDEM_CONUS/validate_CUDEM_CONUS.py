@@ -49,8 +49,6 @@ def validate_region(basedir,
                     include_photon_validations = True,
                     overwrite=False):
     """Validate one sub-region of ETOPO against ICESat-2 using the icesat2 validation scripts."""
-    # TODO: Fill in
-
     data_dir = os.path.abspath(os.path.join(basedir, region_subdir))
     results_dir = os.path.abspath(os.path.join(data_dir, results_subdir))
 
@@ -98,9 +96,9 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
     datafiles_regex = cudem_config.datafiles_regex
 
     for subdir in subdirs_list:
-        # Start with Alabama & Florida, for starters.
-        if subdir not in ("AL_nwFL", "FL"):
-            continue
+        # # Start with Alabama & Florida, for starters.
+        # if subdir not in ("AL_nwFL", "FL"):
+        #     continue
         place_name = place_names_dict[subdir]
         print("\n===========", place_name, "===========")
 
