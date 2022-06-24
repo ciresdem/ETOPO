@@ -438,7 +438,7 @@ def intx2_to_granule_id(ix2, atl_version=3):
     granule_template = "ATL{0:02d}_{1:014d}_{2:s}_{3:s}_{4:s}"
 
     i1, i2 = ix2
-    i2s = str(i2)
+    i2s = "{0:013d}".format(i2)
 
     return granule_template.format(atl_version, i1, i2s[0:8], i2s[8:11], i2s[11:13])
 
