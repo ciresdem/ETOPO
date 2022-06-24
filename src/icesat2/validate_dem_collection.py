@@ -286,7 +286,15 @@ def validate_list_of_dems(dem_list_or_dir,
     validation."""
 
     if output_dir is None:
-        stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
+        if photon_h5 is None:
+            if os.path.isdir(dem_list_or_dir):
+                stats_and_plots_dir = dem_list_or_dir
+            elif type(dem_list_or_dir) == str:
+                stats_and_plots_dir = os.path.dirname(dem_list_or_dir)
+            else:
+                stats_and_plots_dir = os.path.dirname(dem_list_or_dir[0])
+        else:
+            stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
     else:
         stats_and_plots_dir = output_dir
 
@@ -553,18 +561,19 @@ def main():
         else:
             raise FileNotFoundError("ICESat-2 data directory '{0}' does not exist. Create directory or use the --create_folders flag upon execution.".format(args.icesat2_dir))
 
-    h5_dir, h5_file = os.path.split(args.photon_h5)
-    if h5_dir != "" and not os.path.exists(h5_dir):
-        if args.create_folders:
-            os.makedirs(h5_dir)
-        else:
-            raise FileNotFoundError("Directory '{0}' does not exist to write photon point-cloud file '{1}'. Create directory or use the --create_folders flag upon execution.".format(h5_dir, h5_file))
+    if args.photon_h5 is not None:
+        h5_dir, h5_file = os.path.split(args.photon_h5)
+        if h5_dir != "" and not os.path.exists(h5_dir):
+            if args.create_folders:
+                os.makedirs(h5_dir)
+            else:
+                raise FileNotFoundError("Directory '{0}' does not exist to write photon point-cloud file '{1}'. Create directory or use the --create_folders flag upon execution.".format(h5_dir, h5_file))
 
-        # NOTE: This code assumes that if we create the directory here, it will
-        # not be erased befor the code gets to putting files there later. Seems
-        # like a generally safe assumption, and behavior is okay if another process
-        # or the user manually deletes directories during execusion, it will cause
-        # the program to crash when it tries to write files there. That's a user error.
+    # NOTE: This code assumes that if we create the directory here, it will
+    # not be erased befor the code gets to putting files there later. Seems
+    # like a generally safe assumption, and behavior is okay if another process
+    # or the user manually deletes directories during execusion, it will cause
+    # the program to crash when it tries to write files there. That's a user error.
 
     validate_list_of_dems(args.directory_or_files,
                           args.photon_h5,
@@ -583,6 +592,7 @@ def main():
                           create_individual_results = args.individual_results,
                           write_result_tifs         = args.write_result_tifs,
                           include_photon_validation = args.include_photon_validation,
+                          use_icesat2_photon_database = args.use_icesat2_photon_database,
                           shapefile_name            = args.shapefile,
                           verbose                   = not args.quiet)
 
