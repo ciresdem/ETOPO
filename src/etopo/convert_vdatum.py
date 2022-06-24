@@ -18,7 +18,7 @@ except ImportError as e:
     print("Error: cudem installation required to run the vertcal_datum_convert.py script from convert_vdatum.py.")
     raise e
 # Just an empty reference to get the above import statement to stop giving a
-# constant "warning" for importing an unused library. This doesn't do anything.
+# constant "warning" for importing an unused library. This doesn't "do" anything.
 cudem
 
 import argparse
@@ -29,6 +29,12 @@ import re
 import sys
 # from osgeo import gdal
 
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+####################################3
+import utils.configfile
+my_config = utils.configfile.config()
 
 # Vertical datum dictionary -- for converting vertical datums to their corresponding EPSG numbers
 vdd_lookup_dict = {
@@ -115,11 +121,13 @@ def convert_vdatum(input_dem,
         shutil.copyfile(input_dem, output_dem)
         return 0
 
-    command_template = "vertical_datum_convert.py -i {0:d} -o {1:d} {2:s} {3:s}"
+    command_template = "vertical_datum_convert.py -i {0:d} -o {1:d} -D {2:s} --keep-cache {3:s} {4:s}"
     command = command_template.format(input_vertical_datum,
                                       output_vertical_datum,
+                                      my_config.etopo_cudem_cache_directory,
                                       input_dem.replace(" ", "\ "),
                                       output_dem.replace(" ", "\ "))
+
     if verbose:
         print("Running:", command)
     retproc = subprocess.run(cmd_smart_split(command), capture_output=not verbose)
