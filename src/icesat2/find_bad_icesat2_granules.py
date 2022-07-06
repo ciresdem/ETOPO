@@ -15,22 +15,27 @@ import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 import icesat2.validate_dem as validate_dem
 import icesat2.atl_granules as atl_granules
 import utils.configfile
+import datasets.etopo_source_dataset
 
 my_config = utils.configfile.config()
 
-def create_bad_granules_csv(bad_granule_list_fname = my_config._abspath(my_config.icesat2_bad_granules_list),
-                            overwrite=False,
-                            verbose=True):
-    """Create an empty CSV file with a record of the bad granules we've identified."""
+# def create_bad_granules_master_csv(bad_granule_list_fname = my_config._abspath(my_config.icesat2_bad_granules_list),
+#                                     dataset_name = "CopernicusDEM",
+#                                     overwrite=False,
+#                                     verbose=True):
+#     """Create a CSV file with a record of the bad granules we've identified from validating that dataset.
+
+#     We assume that """
 
 
-def add_file_to_bad_granule_list(granule_fname,
-                                 bad_granule_list_fname = my_config._abspath(my_config.icesat2_bad_granules_list)):
-    """If we've found a bad granule in the list, add it to the list of bad granules.
-    In this case we're using the ATL03..._photons.h5 files."""
+
+
+# def add_file_to_bad_granule_list(granule_fname,
+#                                  bad_granule_list_fname = my_config._abspath(my_config.icesat2_bad_granules_list)):
+#     """If we've found a bad granule in the list, add it to the list of bad granules.
+#     In this case we're using the ATL03..._photons.h5 files."""
 
 # def identify_bad_granules_in_single_validation(dem_fname,
-#                                                add_to_list = True,
 #                                                verbose=True):
 #     """Run a single-validation on a DEM, on a photon by photon basis.
 #     Identify granules where the photon errors are consistently outside the ranges
@@ -43,11 +48,11 @@ def add_file_to_bad_granule_list(granule_fname,
 #     return os.path.join(my_config.icesat2_granule_validation_results_directory,
 #                         fname_base + "_granule_results.h5")
 
-def plot_granule_histograms(granule_ids,
-                            granule_data_series,
-                            hist_fname = None,
-                            bad_granule_ids_to_label = None):
-    """Plot a stacked histogram showing the bad granules."""
+# def plot_granule_histograms(granule_ids,
+#                             granule_data_series,
+#                             hist_fname = None,
+#                             bad_granule_ids_to_label = None):
+#     """Plot a stacked histogram showing the bad granules."""
 
 def collect_granule_level_data(photon_results_df,
                                lo_pct_cutoff = 0.05,
@@ -80,7 +85,7 @@ def collect_granule_level_data(photon_results_df,
 
 def plot_stacked_histograms_with_bad_granule_marked(dem_fname, photon_df, nbins=200):
 
-
+    pass
     # This is a big me
     # h = plt.hist(piles, nbins, histtype='bar', stacked=True)
 
@@ -95,6 +100,37 @@ def plot_stacked_histograms_with_bad_granule_marked(dem_fname, photon_df, nbins=
     # - the current figure we just plotted to.
     # - the current axis we just plotted to.
     # return gids, piles, h, plt.gcf(), plt.gca()
+
+def find_bad_granules_in_a_dataset(dataset_name_or_object,
+                                   csv_list_fname,
+                                   verbose = True):
+    """Loop through all the validation results of a dataset that has been validated.
+    Look for all photon-level validation results produced previously and tag all
+    the bad granules found with the '_BAD_GRANULES.csv' file.
+
+    Return a dataframe of all the bad granules found, along with the number of DEMs in which that bad granule was found.
+    Save the dataframe to "csv_list_output."""
+    if type(dataset_name_or_object) == str:
+        dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_object)
+
+    elif type(dataset_name_or_object) == datasets.etopo_source_dataset.ETOPO_source_dataset:
+        dset = dataset_name_or_object
+
+    else:
+        raise TypeError("Unhandled object type given for parameter 'dataset_name_or_object':", type(dataset_name_or_object))
+
+    list_of_datafiles = dset.retrieve_all_datafiles_list()
+    dem_vdatum =
+
+    list_of_bad_granules_dfs = []
+    for fname in list_of_datafiles:
+        photon_h5_fname = get_photon_validation_fname_from_dem_fname(fname)
+        bad_granules_fname = get_bad_granule_csv_name_from_dem_fname(fname)
+
+        if os.path.exists(bad_granules_fname):
+            continue
+
+
 
 def get_photon_validation_fname_from_dem_fname(dem_fname,
                                                results_subdir='icesat2_results',

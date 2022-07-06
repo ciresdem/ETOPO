@@ -16,7 +16,7 @@ than having them all hard-coded."""
 # This defines the methods that all the child sub-classes should use.
 
 import os
-import geopandas
+# import geopandas
 import importlib
 from osgeo import gdal
 
@@ -119,6 +119,11 @@ class ETOPO_source_dataset:
         """
         return os.path.splitext(self.config._abspath(self.config.geopackage_filename))[0] + ".datalist"
 
+    def retrieve_all_datafiles_list(self, verbose=True):
+        """Return a list of every one of the data files in this dataset."""
+        gdf = self.get_geodataframe()
+        return gdf['filename'].tolist()
+
     def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs, verbose=True):
         """Given a shapely polygon object, return a list of source data files that
         intersect that polygon (even if only partially)."""
@@ -131,6 +136,7 @@ class ETOPO_source_dataset:
                                           output_vdatum):
         """If a source tile is not in the needed vertical datum, first shift it before
         regridding it."""
+        # TODO: Finish this (if needed?)
 
     def set_ndv(self, verbose=True, fail_if_different=True):
         """Some datasets have a nodata value but it isn't listed in the GeoTIFF.
@@ -254,6 +260,16 @@ class ETOPO_source_dataset:
         # TODO: Use ICESat-2 to calculate accuracies, provide a ranking score spatially through
         # the dataset.
         return self.default_ranking_score
+
+    def get_dataset_vdatum(self, name=True):
+        """Return the vertical datum EPSG code or name for the dataset native vertical datum.
+        NOTE: This is not necessarily the vertical datum of the file that has been
+        validated or used in ETOPO, which may have been converted to EGM2008.
+        """
+        if name == True:
+            return self.config.dataset_vdatum_name
+        else:
+            return self.config.dataset_vdatum_epsg
 
 if __name__ == "__main__":
 

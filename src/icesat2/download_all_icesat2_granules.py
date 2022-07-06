@@ -699,6 +699,12 @@ def generate_all_photon_tiles(map_interval = 25,
 
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
+
+            # For now, speed things up. We already know everything from -58 S to +58 N is finished.
+            # TODO: Delete later when finished, or when rebuilding the database.
+            if -58 <= ymin <= 56:
+                continue
+
             # A flag to see if any tiles have been actually generated in this box.
             xmax = xmin+2
             ymax = ymin+2

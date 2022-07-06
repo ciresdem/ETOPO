@@ -8,6 +8,7 @@ import pandas
 import os
 import collections
 import six
+import math
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
@@ -178,8 +179,9 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     # 2) Plot 1:1 line of DEM/ICESat-2 elevations.
     #############################################################################
     # Subplot 2, elev-elev correlation line
-    dotsize=1
-    ax2.scatter(mean_elev, dem_elev, s=dotsize)
+    dotsize=2
+    alpha = 0.25 * max(1, (math.log10(100)/math.log10(len(mean_elev))))
+    ax2.scatter(mean_elev, dem_elev, s=dotsize, linewidth=0, alpha=alpha)
     ax2.set_ylabel("DEM elevation (m)")
     ax2.set_xlabel("ICESat2 elevation (m)")
     # ax2.autoscale(False) # Keep the line-plotting from expanding the x,y-axes
@@ -189,7 +191,7 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     plotlim =( min(xlim[0], ylim[0]), max(xlim[1],ylim[1]))
     ax2.set_xlim(plotlim)
     ax2.set_ylim(plotlim)
-    ax2.plot(plotlim, plotlim, ls="--", c=".3", lw=1, alpha=0.6)
+    ax2.plot(plotlim, plotlim, ls="--", c=".3", lw=0.5, alpha=0.6)
     # ax2.plot(xlim, xlim, ls="--", c=".3", lw=1, alpha=0.6)
     # Set the y-ticks the same as the x-ticks.
     xticks = ax2.get_xticks()
@@ -475,6 +477,9 @@ def plot_error_stats(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     plt.clf()
 
 if __name__ == '__main__':
+
+    plot_histogram_and_error_stats_4_panels("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/chesapeake_bay/icesat2_results/ncei19_n39x75_w076x25_2019v1_results.h5",
+                                            "/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/chesapeake_bay/icesat2_results/ncei19_n39x75_w076x25_2019v1_results_plot.png")
 
     # plot_histograms(h5_names)
     # plot_error_stats(h5_names)

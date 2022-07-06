@@ -490,35 +490,49 @@ class ICESat2_Database:
             print("Reading {0} _photons.h5 databases to generate {1}.".format(len(atl03_photon_db_filenames), os.path.split(tilename)[1]))
         for i,(photon_db,atl3,atl8) in enumerate(zip(atl03_photon_db_filenames, atl03_granules, atl08_granules)):
             df = None
-            # If the tile exists, get it.
-            if not os.path.exists(photon_db):
-                if not os.path.exists(atl3) or not os.path.exists(atl8):
-                    # If either of the granules aren't there, download them from NSIDC
-                    nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
-                                                     region=bbox_bounds,
-                                                     local_dir = self.etopo_config.icesat2_granules_directory,
-                                                     dates = date_range,
-                                                     download_only_matching_granules = False,
-                                                     query_only = False,
-                                                     fname_filter = os.path.split(atl3)[1][5:], # Get only the files with this granule ID number
-                                                     quiet = not verbose
-                                                     )
 
-                # Create the photon database if it doesn't already exist. (And grab the datframe from it.)
-                df = classify_icesat2_photons.save_granule_ground_photons(atl3,
-                                                                          output_h5 = photon_db,
-                                                                          overwrite = False,
-                                                                          verbose=verbose)
+            df_is_read = False
+            while not df_is_read:
+                # If the tile doesn't exist, get the granules needed for it.
+                if not os.path.exists(photon_db):
+                    # If the granules don't exist, download them.
+                    if not os.path.exists(atl3) or not os.path.exists(atl8):
+                        # If either of the granules aren't there, download them from NSIDC
+                        nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
+                                                         region=bbox_bounds,
+                                                         local_dir = self.etopo_config.icesat2_granules_directory,
+                                                         dates = date_range,
+                                                         download_only_matching_granules = False,
+                                                         query_only = False,
+                                                         fname_filter = os.path.split(atl3)[1][5:], # Get only the files with this granule ID number
+                                                         quiet = not verbose
+                                                         )
 
-            # At this point, the photon database should exist locally. So read it.
-            # Then, subset within the bounding box.
-            if df is None:
-                df = pandas.read_hdf(photon_db, mode='r')
-            # Select only photons within the bounding box, that are land (class_code==1) or canopy (==2,3) photons
-            df_subset = df[df.longitude.between(bbox_bounds[0], bbox_bounds[2], inclusive="left") & \
-                           df.latitude.between(bbox_bounds[1], bbox_bounds[3], inclusive="left") & \
-                           df.class_code.between(1,3, inclusive="both")]
-            photon_dfs[i] = df_subset
+                    # Create the photon database if it doesn't already exist. (And grab the datframe from it.)
+                    df = classify_icesat2_photons.save_granule_ground_photons(atl3,
+                                                                              output_h5 = photon_db,
+                                                                              overwrite = False,
+                                                                              verbose=verbose)
+
+                # At this point, the photon database should exist locally. So read it.
+                # Then, subset within the bounding box.
+                if df is None:
+                    try:
+                        df = pandas.read_hdf(photon_db, mode='r')
+                    except AttributeError:
+                        print("===== ERROR: Photon database {0} corrupted. =====".format(os.path.split(photon_db)[1]))
+                        print("Removing", photon_db)
+                        # Remove the corrupted database.
+                        os.remove(photon_db)
+                        continue
+
+                # Select only photons within the bounding box, that are land (class_code==1) or canopy (==2,3) photons
+                df_subset = df[df.longitude.between(bbox_bounds[0], bbox_bounds[2], inclusive="left") & \
+                               df.latitude.between(bbox_bounds[1], bbox_bounds[3], inclusive="left") & \
+                               df.class_code.between(1,3, inclusive="both")]
+                photon_dfs[i] = df_subset
+
+                df_is_read = True
 
         # Now concatenate the databases.
         # If there are no files to concatenate, just read the empty database and return that.

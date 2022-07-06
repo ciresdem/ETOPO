@@ -33,6 +33,7 @@ place_names_dict = {"AK": "Alaska",
                     "NC": "North Carlonia",
                     "northeast_sandy": "Northeast, post-Sandy",
                     # "prusvi": "Puerto Rico and US Virgin Islands",
+                    "SF_Bay_navd88": "San Francisco Bay",
                     "rima": "Rhode Island and Massachusetts",
                     "southeast": "Southeast US",
                     "TX": "Texas",
@@ -98,7 +99,8 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
     for subdir in subdirs_list:
         # # Start with Alabama & Florida, for starters.
         # if subdir not in ("AL_nwFL", "FL"):
-        #     continue
+        if subdir != "SF_Bay_navd88":
+            continue
         place_name = place_names_dict[subdir]
         print("\n===========", place_name, "===========")
 

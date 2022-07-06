@@ -529,7 +529,7 @@ def define_and_parse_args():
 def download_granules(short_name="ATL03",
                       region=[-180,-90,180,90],
                       local_dir=os.getcwd(),
-                      dates='2021-01-01,2021-12-31',
+                      dates=['2021-01-01','2021-12-31'],
                       version='005',
                       fname_filter='',
                       force=False,
@@ -824,7 +824,12 @@ def _main(short_name=None,
 
 
 if __name__ == '__main__':
-    pass
+    # Re-download a granule that's acting up, here.
+    download_granules(short_name=["ATL03","ATL08"],
+                      region = [-70, 58, 100, 60],
+                      fname_filter = "*20210127165305_05301003*",
+                      local_dir="/home/mmacferrin/Research/DATA/ETOPO/data/icesat2/granules/")
+
     # Just testing how quickly NSIDC queries are.
     # time1 = time.time()
     # urls = cmr_search("ATL03", "004", "2021-01-01", "2022-01-01", polygon="-72,0,-72,2,-70,2,-70,0,-72,0") # bounding_box="-72,0,-70,2",) # polygon='-171.0005555555413,-14.500555546905522,-171.0005555555413,-13.999444442853925,-169.24981479479877,-13.999444442853925,-169.24981479479877,-14.500555546905522,-171.0005555555413,-14.500555546905522')

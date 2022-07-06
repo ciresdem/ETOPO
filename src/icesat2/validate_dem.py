@@ -359,7 +359,7 @@ def validate_dem_parallel(dem_name,
                           delete_datafiles = False,
                           mask_out_lakes = True,
                           mask_out_buildings = True,
-                          include_gmrt_mask = True,
+                          include_gmrt_mask = False,
                           write_result_tifs = True,
                           write_summary_stats = True,
                           skip_icesat2_download = True,
@@ -375,8 +375,8 @@ def validate_dem_parallel(dem_name,
     dem_ds = None
 
     # Get the results dataframe filename (if not already set)
-    if results_dataframe_file is None:
-        results_dataframe_file = os.path.splitext(dem_name) + ".h5"
+    if (results_dataframe_file is None) or (results_dataframe_file == ""):
+        results_dataframe_file = os.path.splitext(dem_name) + "_results.h5"
 
     # Get the interim data directory (if not already set)
     if interim_data_dir is None:
@@ -464,6 +464,9 @@ def validate_dem_parallel(dem_name,
 
     # The dem_array and the coastline_mask_array should have the same shape
     assert coastline_mask_array.shape == dem_array.shape
+    # If the coastline mask is all 1's, warn about that.
+    if coastline_mask_array.size == numpy.count_nonzero(coastline_mask_array):
+        print("WARNING: Coastline mask file", coastline_mask_filename, "contains all 1's.")
 
     # Assert that the both the dem vertical datum and the output vertical datum are valid values.
     if type(dem_vertical_datum) == str:
@@ -646,8 +649,7 @@ def validate_dem_parallel(dem_name,
     xend = xstart + (xstep * dem_array.shape[1])
     yend = ystart + (ystep * dem_array.shape[0])
 
-    # On edge pixels, the boundaries can sometimes make for some edge pixel artifacts.
-    # Just use photons that do not lie on the edge of the grid. This will help.
+    # Clip to the bounding box.
     ph_bbox_mask = (ph_xcoords >= min(xstart, xend)) & \
                    (ph_xcoords < max(xstart, xend)) & \
                    (ph_ycoords > min(ystart, yend)) & \
@@ -685,6 +687,58 @@ def validate_dem_parallel(dem_name,
     #                           photon_df.j[ph_mask_ground_only & ph_in_bounds]] = 1
 
     dem_overlap_mask = dem_goodpixel_mask & dem_mask_w_ground_photons
+
+    #####################################################################
+    # DEBUGGING INFO
+    # TODO: Add here and erase later.
+    #####################################################################
+    # driver = gdal.GetDriverByName("GTiff")
+    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_goodpixel_mask.tif"
+    # maskds = driver.Create(mask_fname,
+    #                         dem_goodpixel_mask.shape[0],
+    #                         dem_goodpixel_mask.shape[1],
+    #                         1,
+    #                         gdal.GDT_Int16)
+    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
+    # maskds.SetProjection(dem_ds.GetProjection())
+    # maskband = maskds.GetRasterBand(1)
+    # maskband.WriteArray(dem_goodpixel_mask)
+    # maskband = None
+    # maskds = None
+    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_goodpixel_mask)))
+
+    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_mask_w_ground_photons.tif"
+    # maskds = driver.Create(mask_fname,
+    #                         dem_goodpixel_mask.shape[0],
+    #                         dem_goodpixel_mask.shape[1],
+    #                         1,
+    #                         gdal.GDT_Int16)
+    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
+    # maskds.SetProjection(dem_ds.GetProjection())
+    # maskband = maskds.GetRasterBand(1)
+    # maskband.WriteArray(dem_mask_w_ground_photons)
+    # maskband = None
+    # maskds = None
+    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_mask_w_ground_photons)))
+
+    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_overlap_mask.tif"
+    # maskds = driver.Create(mask_fname,
+    #                         dem_goodpixel_mask.shape[0],
+    #                         dem_goodpixel_mask.shape[1],
+    #                         1,
+    #                         gdal.GDT_Int16)
+    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
+    # maskds.SetProjection(dem_ds.GetProjection())
+    # maskband = maskds.GetRasterBand(1)
+    # maskband.WriteArray(dem_overlap_mask)
+    # maskband = None
+    # maskds = None
+    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_overlap_mask)))
+
+    #####################################################################
+    # End debug area.
+    #####################################################################
+
 
     dem_overlap_i, dem_overlap_j = numpy.where(dem_overlap_mask)
     dem_overlap_elevs = dem_array[dem_overlap_mask]
@@ -1119,7 +1173,7 @@ def read_and_parse_args():
     parser.add_argument('-band_num', type=int, default=1,
                         help="The band number (1-indexed) of the input_dem. (Default: 1)")
     parser.add_argument('-date_range', type=str, default="",
-                        help='The date range in which to search for signal photons, comma-separated. Ex: 2020-01-01,2020-12-31 (Default)')
+                        help='The date range in which to search for signal photons, comma-separated. Ex: 2021-01-01,2021-12-31 (Default)')
     parser.add_argument('-place_name', '-name', type=str, default=None,
                         help='A text name of the location, to put in the title of the plot (if --plot_results is selected)')
     parser.add_argument('--use_icesat2_photon_database', action='store_true', default=False,
@@ -1140,16 +1194,13 @@ def read_and_parse_args():
     return parser.parse_args()
 
 
-def args_from_script():
-    """For running from an editor, just provide the args manually here."""
-    args = argparse.Namespace
-    args.input_dem = "../../"
+# def args_from_script():
+#     """For running from an editor, just provide the args manually here."""
+#     args = argparse.Namespace
+#     args.input_dem = "../../"
 
 if __name__ == "__main__":
     args = read_and_parse_args()
-    # Create output .h5 filename if not provided.
-    if args.output_h5 == "":
-        args.output_h5 = os.path.splitext(args.input_dem)[0] + ".h5"
 
     # Create photon .h5 filename if not provided.
     if args.datadir == "":
@@ -1159,6 +1210,19 @@ if __name__ == "__main__":
         base = os.path.splitext(os.path.split(args.output_h5)[1])[0]
         args.photon_h5 = os.path.join(args.datadir, base + "_photons.h5")
 
+    if (args.date_range == "") or (args.date_range == None):
+        icesat2_date_range = ["2021-01-01", "2021-12-31"]
+    else:
+        assert type(args.date_range) == str
+        icesat2_date_range = args.date_range.split(",")
+
+    if ((args.output_h5 == "") or (args.output_h5 == None)):
+        if ((args.datadir != "") and (args.datadir != None)):
+            base, fname = os.path.split(args.input_dem)
+            output_h5 = os.path.join(args.datadir, os.path.splitext(fname)[0] + "_results.h5")
+        else:
+            output_h5 = os.path.splitext(args.input_dem)[0] + "_results.h5"
+
     kwargs = {}
 
     validate_dem_parallel(args.input_dem,
@@ -1166,8 +1230,8 @@ if __name__ == "__main__":
                           use_icesat2_photon_database = args.use_icesat2_photon_database,
                           dem_vertical_datum = args.input_vdatum,
                           output_vertical_datum = args.output_vdatum,
-                          results_dataframe_file = args.output_h5,
-                          icesat2_date_range = args.date_range,
+                          results_dataframe_file = output_h5,
+                          icesat2_date_range = icesat2_date_range,
                           interim_data_dir = args.datadir,
                           overwrite=args.overwrite,
                           delete_datafiles=args.delete_datafiles,

@@ -108,9 +108,9 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
     # Combine all these ^^ together to return a complete coastline mask (possibly using stacks?)
 
 def create_coastline_mask(input_dem,
-                          return_ds_bounds_step_epsg = False,
+                          return_bounds_step_epsg = False,
                           mask_out_lakes = True,
-                          include_gmrt = True, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
+                          include_gmrt = False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
                           mask_out_buildings = False,
                           output_file=None,
                           verbose=True):
@@ -134,14 +134,14 @@ def create_coastline_mask(input_dem,
 
     Return the .tif name of the mask file generated."""
 
-    ds = gdal.Open(input_dem, gdal.GA_ReadOnly)
-    if not ds:
+    input_ds = gdal.Open(input_dem, gdal.GA_ReadOnly)
+    if not input_ds:
         raise FileNotFoundError("Input file '{input_dem}' not found.")
 
-    bbox, step_xy = get_bounding_box_and_step(ds, invert_for_waffles=True)
+    bbox, step_xy = get_bounding_box_and_step(input_ds, invert_for_waffles=True)
     # print(bbox, step_xy)
 
-    epsg = get_dataset_epsg(ds)
+    epsg = get_dataset_epsg(input_ds)
     # print(epsg)
 
     if output_file:
@@ -167,8 +167,8 @@ def create_coastline_mask(input_dem,
                    "-E", str("{0:.16f}/{1:.16f}".format(step_xy[0], step_xy[1])),
                    "-D", etopo_config.etopo_cudem_cache_directory,
                    "--keep-cache",
-                   "--nodata", str(etopo_config.etopo_ndv),
-                   input_dem]
+                   "--nodata", str(etopo_config.etopo_ndv)]
+                   # input_dem]
 
     if verbose:
         console.print("Running: [bold green]" + waffle_args[0] + "[/bold green] " + " ".join(waffle_args[1:]))
@@ -193,8 +193,8 @@ def create_coastline_mask(input_dem,
         final_output_path = output_filepath_base
     assert os.path.exists(final_output_path)
 
-    if return_ds_bounds_step_epsg:
-        return final_output_path, ds, bbox, step_xy, epsg
+    if return_bounds_step_epsg:
+        return final_output_path, bbox, step_xy, epsg
     else:
         return final_output_path
 
@@ -240,39 +240,32 @@ def get_coastline_mask_and_other_dem_data(dem_name,
 
     # Get a coastline mask (here from Copernicus). If the file exists, use it.
     # If not, generate it.
-    if os.path.exists(coastline_mask_file):
-        if verbose:
-            print("Reading", coastline_mask_file + "...", end="")
-        coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
-        if verbose:
-            print("Done.")
-
-        dem_bbox, dem_step_xy = get_bounding_box_and_step(dem_ds)
-        dem_epsg = get_dataset_epsg(dem_ds)
-
-    else:
+    if not os.path.exists(coastline_mask_file):
         if verbose:
             print("Creating", coastline_mask_file)
-        coastline_mask_file_out, \
-        coastline_ds, \
-        dem_bbox, \
-        dem_step_xy, \
-        dem_epsg = create_coastline_mask(dem_name,
-                                         mask_out_lakes = mask_out_lakes,
-                                         mask_out_buildings = mask_out_buildings,
-                                         include_gmrt = include_gmrt,
-                                         return_ds_bounds_step_epsg=True,
-                                         output_file=coastline_mask_file,
-                                         verbose=verbose)
+        coastline_mask_file_out = create_coastline_mask(dem_name,
+                                                        mask_out_lakes = mask_out_lakes,
+                                                        mask_out_buildings = mask_out_buildings,
+                                                        include_gmrt = include_gmrt,
+                                                        return_bounds_step_epsg=False,
+                                                        output_file=coastline_mask_file,
+                                                        verbose=verbose)
 
-        # Switch items 1,2 in bounding box (minx,maxx,miny,maxy) --> (minx,miny,maxx,maxy)
-        dem_bbox[1], dem_bbox[2] = dem_bbox[2], dem_bbox[1]
+        # # Switch items 1,2 in bounding box (minx,maxx,miny,maxy) --> (minx,miny,maxx,maxy)
+        # dem_bbox[1], dem_bbox[2] = dem_bbox[2], dem_bbox[1]
 
         assert coastline_mask_file == coastline_mask_file_out
 
-    if coastline_ds is None:
-        coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
-    coastline_mask_array = coastline_ds.ReadAsArray()
+    if verbose:
+        print("Reading", coastline_mask_file + "...", end="")
+    coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
+    if verbose:
+        print("Done.")
+
+    dem_bbox, dem_step_xy = get_bounding_box_and_step(dem_ds)
+    dem_epsg = get_dataset_epsg(dem_ds)
+
+    coastline_mask_array = coastline_ds.GetRasterBand(1).ReadAsArray()
     coastline_ds = None
 
     return dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, coastline_mask_file, coastline_mask_array

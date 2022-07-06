@@ -84,7 +84,7 @@ class ETOPO_Generator:
             # In this case, the "tile_width_deg" is the same as the "resolution_s".
             # The 1-deg tiles are 1s resolution, 15-deg tiles are 15s resolution.
             # Makes each tile a 3600x3600 file.
-            generate_empty_grids.create_empty_tiles(resdir,
+            etopo.generate_empty_grids.create_empty_tiles(resdir,
                                                     fname_template_tif=ETOPO_Generator.fname_template_tif,
                                                     fname_template_netcdf=None, # TODO: Fill this in once the Netcdf outputs are finalized.
                                                     tile_width_deg=(360 if (res==60) else res),

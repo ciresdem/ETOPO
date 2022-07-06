@@ -4,8 +4,9 @@
 
 import re
 import os
+import argparse
 
-def list_files(dirname, regex_match = "\A\w*", ordered=True, include_base_directory = True):
+def list_files(dirname, regex_match = r"\A\w*", ordered=True, include_base_directory = True):
     file_list = _list_files_recurse(dirname, regex_match=regex_match)
 
     if not include_base_directory:
@@ -28,11 +29,21 @@ def _list_files_recurse(dirname, regex_match = None):
             file_list.append(fpath)
     return file_list
 
+def define_and_parse_args():
+    parser = argparse.ArgumentParser(description="A utility for recursively finding (or deleting) files in a directory and sub-directories.")
+    parser.add_argument("DIR", type=str, default=os.getcwd(), help="Directory to search within. Default: Current working directory.")
+    parser.add_argument("-text", "-t", type=str, default=r"\A\w*", help="Regular expression to match.")
+    parser.add_argument("--delete", "-d", action="store_true", default=False, help="Delete the files matching the search query. NOTE: Suggest to call first without this option to see what will be deleted, then re-call with -d.")
+
+    return parser.parse_args()
+
 if __name__ == "__main__":
-    pass
-    # Just test this out:
-    # dirname = "/home/mmacferrin/Research/DATA/DEMs/AW3D30/data/tiles"
-    # regex_search = "\A\w*DSM\.tif"
-    # file_list = list_files(dirname, regex_match=regex_search, ordered=True, include_directory=False)
-    # print(len(file_list))
-    # print(file_list[:10])
+    args = define_and_parse_args()
+    fnames = list_files(args.DIR,
+                        regex_match=args.text)
+    for fn in fnames:
+        if args.delete:
+            print("Removing", fn)
+            os.remove(fn)
+        else:
+            print(fn)
