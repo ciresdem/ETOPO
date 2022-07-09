@@ -390,7 +390,7 @@ class ICESat2_Database:
 
         # Concatenate the dataframes together.
         if len(dataframes_list) > 0:
-            combined_df = pandas.concat(dataframes_list)
+            combined_df = pandas.concat(dataframes_list, ignore_index=True)
             return combined_df
         else:
             return None
@@ -539,7 +539,7 @@ class ICESat2_Database:
         if len(photon_dfs) == 0:
             tile_df = self.read_empty_tile()
         else:
-            tile_df = pandas.concat(photon_dfs)
+            tile_df = pandas.concat(photon_dfs, ignore_index=True)
         # Save the database.
         tile_df.to_hdf(tilename, "icesat2", complib="zlib", complevel=3, mode='w')
         if verbose:
@@ -688,6 +688,21 @@ class ICESat2_Database:
         This must be called within download_all_icesat2_granules.py to avoid circular import conflicts.
         """
         return os.path.abspath(os.path.splitext(self.gpkg_fname)[0] + "_progress_map.png")
+
+    def update_and_fix_photon_database(self):
+        """Sometimes the download_all_icesat2_granules.py -- photon_tiling process
+        creates files without updating the database correctly.
+
+        This will loop through all entries in the database, as well as all files, and
+        check:
+            1) That all entries with "is_populated" actually have valid files associated with them.
+            2) That each of those files has the correct number of photons in it, matching up with "numphotons"
+            3) That all database files with valid data are included in the database.
+
+        It will fix any errors it finds. If files are corrupted, it will delete them and zero-out the
+        entry in the database so they can be rebuilt.
+        """
+        # TODO: Finish.
 
 if __name__ == "__main__":
     is2db = ICESat2_Database()

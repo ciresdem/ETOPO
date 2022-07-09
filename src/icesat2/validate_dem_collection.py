@@ -279,6 +279,7 @@ def validate_list_of_dems(dem_list_or_dir,
                           include_photon_validation=True,
                           write_result_tifs=False,
                           shapefile_name = None,
+                          # omission_bboxes = None,
                           verbose=True):
     """Take a list of DEMs, presumably in a single area, and output validation files for those DEMs.
 
@@ -432,6 +433,16 @@ def validate_list_of_dems(dem_list_or_dir,
     total_results_df = plot_validation_results.get_data_from_h5_or_list(list_of_results_dfs,
                                                                         verbose=verbose)
 
+    # if omission_bboxes != None:
+    #     # We have chosen to omit results from one or more bounding boxes. The should be a list of length-4 lists, or just a single length-4 list of [xmin,ymin,xmax,ymax].
+    #     # We want to OMIT any pixels that are included in any of those boxes. We can do that here.
+
+    #     # If it's just a 4-tuple of numbers, make it a list of lists to the next loop works.
+    #     if len(omission_bboxes) == 4 and type(omission_bboxes[0]) in (int, float):
+    #         omission_bboxes = [omission_bboxes]
+
+    #     for bbox in omission_bboxes:
+    #         xmin, ymin, xmax, ymax = bbox
 
     # Output the statistics summary file.
     validate_dem.write_summary_stats_file(total_results_df,

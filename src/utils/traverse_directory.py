@@ -10,7 +10,7 @@ def list_files(dirname, regex_match = r"\A\w*", ordered=True, include_base_direc
     file_list = _list_files_recurse(dirname, regex_match=regex_match)
 
     if not include_base_directory:
-        file_list = [fn[len(dirname):].lstrip("/\\") for fn in file_list]
+        file_list = [fn[len(dirname):].lstrip(os.sep) for fn in file_list]
 
     if ordered:
         file_list.sort()

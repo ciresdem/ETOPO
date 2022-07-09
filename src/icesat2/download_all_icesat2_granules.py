@@ -702,7 +702,7 @@ def generate_all_photon_tiles(map_interval = 25,
 
             # For now, speed things up. We already know everything from -58 S to +58 N is finished.
             # TODO: Delete later when finished, or when rebuilding the database.
-            if -58 <= ymin <= 56:
+            if -68 <= ymin <= 68:
                 continue
 
             # A flag to see if any tiles have been actually generated in this box.
@@ -718,10 +718,13 @@ def generate_all_photon_tiles(map_interval = 25,
             tile_xmaxs = tiles_within_bbox['xmax'].tolist()
             tile_ymins = tiles_within_bbox['ymin'].tolist()
             tile_ymaxs = tiles_within_bbox['ymax'].tolist()
+            is_populated_list = tiles_within_bbox['is_populated'].tolist()
 
-            for tilename, tile_xmin, tile_xmax, tile_ymin, tile_ymax in zip(fnames, tile_xmins, tile_xmaxs, tile_ymins, tile_ymaxs):
-                # If the tile already exists and we're not overwriting, just skip it and move along.
-                if not overwrite and os.path.exists(tilename):
+            for tilename, tile_xmin, tile_xmax, tile_ymin, tile_ymax, is_populated \
+                in zip(fnames, tile_xmins, tile_xmaxs, tile_ymins, tile_ymaxs, is_populated_list):
+                # If the tile already exists and we're not overwriting, and it's already populated in the database, just skip it and move along.
+                summary_csv_fname = os.path.splitext(tilename)[0] + "_summary.csv"
+                if not overwrite and os.path.exists(tilename) and (is_populated or os.path.exists(summary_csv_fname)):
                     continue
 
                 # We'll just keep looping until this process gets added onto the queue.
