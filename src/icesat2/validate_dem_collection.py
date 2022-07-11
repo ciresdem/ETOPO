@@ -346,7 +346,7 @@ def validate_list_of_dems(dem_list_or_dir,
     if (type(path) in (list, tuple)) and (len(path) > 1):
         dem_list = path
     elif os.path.isdir(path):
-        dem_list = [os.path.join(path, fname) for fname in os.listdir(path)]
+        dem_list = sorted([os.path.join(path, fname) for fname in os.listdir(path)])
     else:
         assert os.path.exists(path)
         dem_list = [path]
