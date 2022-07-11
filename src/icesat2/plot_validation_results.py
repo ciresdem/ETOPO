@@ -180,7 +180,7 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     #############################################################################
     # Subplot 2, elev-elev correlation line
     dotsize=2
-    alpha = 0.25 * max(1, (math.log10(100)/math.log10(len(mean_elev))))
+    alpha = 0.25 * max(0.0025, min(1, (math.log10(100)/math.log10(len(mean_elev)))))
     ax2.scatter(mean_elev, dem_elev, s=dotsize, linewidth=0, alpha=alpha)
     ax2.set_ylabel("DEM elevation (m)")
     ax2.set_xlabel("ICESat2 elevation (m)")
