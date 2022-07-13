@@ -6,6 +6,7 @@ import os
 import pandas
 import numpy
 import matplotlib.pyplot as plt
+import re
 # import scipy.stats
 
 ####################################3
@@ -196,11 +197,12 @@ def find_bad_granules_in_a_dataset(dataset_name_or_object,
         #     continue
 
         # Step through, find the granules that are separated from one another.
-        bad_granule_ids, photon_df = find_granules_that_are_separate_from_others(dem_fname,
-                                                                                 also_return_photon_df = True,
-                                                                                 skip_if_no_photon_results_file = True,
-                                                                                 write_bad_granules_csv_if_needed = True,
-                                                                                 verbose = verbose)
+        bad_granule_ids, photon_df = \
+            find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
+                                                                 also_return_photon_df = True,
+                                                                 skip_if_no_photon_results_file = True,
+                                                                 write_bad_granules_csv_if_needed = True,
+                                                                 verbose = verbose)
 
         if len(bad_granule_ids) > 0:
             assert os.path.exists(bad_granules_csv_name)
@@ -332,14 +334,14 @@ def generate_photon_database_validation(dem_fname,
 
     return photon_results_database_name
 
-def find_granules_that_are_separate_from_others(dem_fname,
-                                                also_return_photon_df = False,
-                                                skip_if_no_photon_results_file = False,
-                                                dem_vdatum = None,
-                                                save_granule_stats_df=False,
-                                                remove_granules_with_less_than_N_photons=20,
-                                                write_bad_granules_csv_if_needed=True,
-                                                verbose=True):
+def find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
+                                                         also_return_photon_df = False,
+                                                         skip_if_no_photon_results_file = False,
+                                                         dem_vdatum = None,
+                                                         save_granule_stats_df=False,
+                                                         remove_granules_with_less_than_N_photons=20,
+                                                         write_bad_granules_csv_if_needed=True,
+                                                         verbose=True):
     """For a given fname, perform a validation (if not done already) and compute the photon-level
     validation stats for the DEM. Then, compute a granule-by-granule 2-sided KS stat to
     determine whether these granules come from the same "population". Save the results to a new dataframe."""
@@ -600,14 +602,139 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
         return granules_to_exclude
 
 
-if __name__ == "__main__":
-    gr = get_list_of_granules_to_reject(refind_bad_granules = True, regenerate_bad_granule_csv = True)
-    if len(gr) > 0:
-        print("GRANULES TO EXCLUDE")
-        for g in gr:
-            print("\t", g)
+def delete_results_with_bad_granules(dirname,
+                                     dem_regex = "v[123]\.tif\Z",
+                                     results_subdir="icesat2_results",
+                                     place_name = None,
+                                     delete_master_results_too = True,
+                                     verbose = True):
+    """Run through a results directory and elimiate all results that contain bad granules.
 
+    It will be assumed that the "photon-level results" will have been generated, which
+    simplifies finding results that contain photons from bad granules.
+
+    Will not elimiate vdatum-converted DEMs or coastline masks, as those have
+    nothing to do with bad granules. Those are kept in place.
+
+    If "place_name" is given, if some bad granules were found, also eliminate
+    the final cumulative results files so that those can be re-generated again as well.
+    When done, re-run the "validate_dem_collection.py" script, this time including omission
+    of bad-granule results, and the results will be regenerated.
+
+    After running this, re-run the analysis over these areas to re-generate
+    the results with the 'omit_bad_granules' flag attached.
+
+    Return a list of the files deleted.
+    """
+    # if isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset):
+    #     dset_obj = dataset_name_or_obj
+    # else:
+    #     dset_obj = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
+
+    # # List of all the DEMs
+    # dem_filenames = utils.traverse_directory.list_files(dset_obj.config._abspath(dset_obj.config.source_datafiles_directory),
+    #                                                     regex_match=dem_regex,
+    #                                                     include_base_directory=True)
+
+    dem_filenames = [os.path.join(dirname, fn) for fn in os.listdir(dirname) if (re.search(dem_regex, fn) != None)]
+    # List of the bad granules, by GID integers.
+    bad_gid_list = get_list_of_granules_to_reject(return_as_gid_numbers = True)
+
+    # Get the directory where all the results are hidden.
+    if results_subdir != None:
+        results_dir = os.path.join(dirname, results_subdir)
+    else:
+        results_dir = dirname
+
+    files_removed = []
+
+    for dem_fname in dem_filenames:
+        results_base = os.path.join(results_dir, os.path.splitext(os.path.split(dem_fname)[1])[0])
+
+        photon_results_df_fname = results_base + "_results_photon_level_results.h5"
+        if not os.path.exists(photon_results_df_fname):
+            if verbose:
+                print(os.path.split(photon_results_df_fname)[1], "not found. Moving on.")
+                continue
+
+        photon_df = pandas.read_hdf(photon_results_df_fname)
+
+        for gid1, gid2 in bad_gid_list:
+            # If no photons in this dataset come from the bad granule, just move along to the next one.
+            bad_g_mask = (photon_df["granule_id1"] == gid1) & (photon_df["granule_id2"] == gid2)
+            if numpy.count_nonzero(bad_g_mask) == 0:
+                continue
+
+            # If we found any photons from a bad granule in this DEM validation,
+            # eliminate all the results files from it.
+            results_suffixes = ["_results.h5",
+                                "_results_ICESat2_error_map.tif",
+                                "_results_photon_level_results.h5",
+                                "_results_plot.png",
+                                "_results_summary_stats.txt"]
+            for suffix in results_suffixes:
+                r_fname = results_base + suffix
+                if os.path.exists(r_fname):
+                    # Add it to our list of deleted files
+                    files_removed.append(r_fname)
+                    # Delete the file
+                    os.remove(r_fname)
+                    # Say that we deleted the file.
+                    if verbose:
+                        print(os.path.split(r_fname)[1], "deleted.")
+
+            # After deleting the files, we don't need to keep looking for bad granule data in that file.
+            break
+
+    # If we've removed some files and the cumulative summary dataset exists, remove that too to have it regenerated.
+    if len(files_removed) > 0:
+        dirname_base = os.path.splitext(os.path.split(dirname)[1])[0]
+        h5_results_fname = os.path.join(results_dir, dirname_base + "_results.h5")
+        files_to_remove = [h5_results_fname]
+
+        if place_name != None:
+            # Also remove the plots and stats, which tend to be named after the place name, not the subdir.
+            plot_fname = os.path.join(results_dir, place_name + "_results.png")
+            txt_fname = os.path.join(results_dir, place_name + "_results.txt")
+            files_to_remove.extend([plot_fname, txt_fname])
+
+        for fname in files_to_remove:
+            if os.path.exists(fname):
+                # Add it to our list of deleted files
+                files_removed.append(fname)
+                # Delete the file
+                os.remove(fname)
+                # Say that we deleted the file.
+                if verbose:
+                    print(os.path.split(fname)[1], "deleted.")
+
+    return files_removed
+
+if __name__ == "__main__":
+    # gr = get_list_of_granules_to_reject(refind_bad_granules = True, regenerate_bad_granule_csv = True)
+    # if len(gr) > 0:
+    #     print("GRANULES TO EXCLUDE")
+    #     for g in gr:
+    #         print("\t", g)
+
+    # 1. Find the bad granules in a dataset.
     # find_bad_granules_in_a_dataset("CUDEM_CONUS")
+
+    # 2. Put them into the master bad_granules.csv list.
+    create_master_list_of_bad_granules("CUDEM_CONUS")
+
+    # Test to see here what results we get back based on our filters.
+    print(get_list_of_granules_to_reject())
+
+    # 3. Delete files that contain data from the bad granules.
+    dirname_list = [os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d) \
+                    for d in \
+                    os.listdir("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/") \
+                        if os.path.isdir(os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d))]
+    for dn in dirname_list:
+        print("===", os.path.split(dn)[1], "===")
+        delete_results_with_bad_granules(dn)
+
     # gids = find_granules_that_are_separate_from_others(\
     #        "/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/AL_nwFL/ncei19_n30X50_w085X25_2019v1.tif",
     #        dem_vdatum="navd88",

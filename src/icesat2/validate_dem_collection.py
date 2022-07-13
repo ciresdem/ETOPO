@@ -279,6 +279,7 @@ def validate_list_of_dems(dem_list_or_dir,
                           include_photon_validation=True,
                           write_result_tifs=False,
                           shapefile_name = None,
+                          omit_bad_granules = True,
                           # omission_bboxes = None,
                           verbose=True):
     """Take a list of DEMs, presumably in a single area, and output validation files for those DEMs.
@@ -416,6 +417,7 @@ def validate_list_of_dems(dem_list_or_dir,
                                            skip_icesat2_download = True,
                                            plot_results = create_individual_results,
                                            mark_empty_results=True,
+                                           omit_bad_granules = omit_bad_granules,
                                            quiet=not verbose)
 
         if os.path.exists(results_h5_file):
@@ -503,7 +505,7 @@ def define_and_parse_args():
         help="Name of a shapefile to save locations of the granule paths. Default: No shapefile created.")
 
     parser.add_argument('--use_icesat2_photon_database', '-is2db', action='store_true', default=False,
-                        help="Use the optimized ICESat-2 photon database rather than downloading granules separately. This can save time & memory if the database has already been built on this machine.")
+        help="Use the optimized ICESat-2 photon database rather than downloading granules separately. This can save time & memory if the database has already been built on this machine.")
 
     parser.add_argument("--overwrite", "-o", action="store_true", default=False,
         help="Overwrite all files, including intermittent data files. Default: False (skips re-computing already-computed reseults.")

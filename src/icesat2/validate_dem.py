@@ -29,6 +29,7 @@ import icesat2.nsidc_download as nsidc_download
 import icesat2.plot_validation_results as plot_validation_results
 import icesat2.classify_icesat2_photons as classify_icesat2_photons
 import icesat2.icesat2_photon_database as icesat2_photon_database
+import icesat2.find_bad_icesat2_granules as find_bad_icesat2_granules
 
 # import subprocess
 from osgeo import gdal, osr
@@ -367,6 +368,7 @@ def validate_dem_parallel(dem_name,
                           plot_results = True,
                           location_name = None,
                           mark_empty_results = True,
+                          omit_bad_granules = True,
                           quiet=False):
     """The main function. Do it all here. But do it on more than one processor.
     TODO: Document all these method parameters. There are a bunch and they need better explanation.
@@ -661,6 +663,32 @@ def validate_dem_parallel(dem_name,
     ph_xcoords = ph_xcoords[ph_bbox_mask]
     ph_ycoords = ph_ycoords[ph_bbox_mask]
 
+    # Omit any photons from "bad granules" found from find_bad_icesat2_granules.py
+    # NOTE: After we've filtered out bad granules from the ICESat-2 database, we can
+    # un-set the "omit_bad_granules" flag because the database will have already globally been
+    # filtered out of bad-granule entries.
+    if omit_bad_granules:
+        bad_granules_gid_list = \
+            find_bad_icesat2_granules.get_list_of_granules_to_reject(refind_bad_granules = False,
+                                                                     return_as_gid_numbers = True,
+                                                                     verbose=not quiet)
+
+        if len(bad_granules_gid_list) > 0:
+            ph_bad_granule_mask = None
+            for gid1, gid2 in bad_granules_gid_list:
+                bad_g_mask = (photon_df["granule_id1"] == gid1) & (photon_df["granule_id2"] == gid2)
+                if ph_bad_granule_mask is None:
+                    ph_bad_granule_mask = bad_g_mask
+                elif numpy.count_nonzero(bad_g_mask) > 0:
+                    ph_bad_granule_mask = ph_bad_granule_mask | bad_g_mask
+
+            # If we found some bad photons in bad granules (bad granules!), mask them out.
+            if (ph_bad_granule_mask is not None) and (numpy.count_nonzero(ph_bad_granule_mask) > 0):
+                photon_df = photon_df[~ph_bad_granule_mask].copy()
+                ph_xcoords = ph_xcoords[~ph_bad_granule_mask]
+                ph_ycoords = ph_ycoords[~ph_bad_granule_mask]
+
+
     photon_df["i"] = numpy.floor((ph_ycoords - ystart) / ystep).astype(int)
     photon_df["j"] = numpy.floor((ph_xcoords - xstart) / xstep).astype(int)
 
@@ -749,6 +777,13 @@ def validate_dem_parallel(dem_name,
         print("{:,}".format(num_goodpixels), "nonzero land cells exist in the DEM.")
         if num_goodpixels == 0:
             print("No land cells found in DEM with overlapping ICESat-2 data. Stopping and moving on.")
+
+            if mark_empty_results:
+                # Just create an empty file to makre this dataset as done.
+                with open(empty_results_filename, 'w') as f:
+                    f.close()
+                if not quiet:
+                    print("Created", empty_results_filename, "to indicate no data was returned here.")
             return None
         else:
             print("{:,} ICESat-2 photons overlap".format(len(photon_df)),

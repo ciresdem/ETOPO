@@ -24,10 +24,10 @@ except ImportError:
     import icesat2.atl_granules as atl_granules
 
 # LISTS OF VARIABLES NEEDED FROM EACH ATL DATASET FOR THE "get_photon_data" routine.
-ATL03_variables_needed = ["lat_ph", "lon_ph", "h_ph", "segment_ph_cnt", "segment_id",
-                          "delta_time", "dist_ph_along", "segment_dist_x",
-                          "geoid", "geoid_free2mean", "signal_conf_ph", "quality_ph"]
-ATL08_variables_needed = ["classed_pc_flag", "ph_segment_id", "classed_pc_indx"]
+# ATL03_variables_needed = ["lat_ph", "lon_ph", "h_ph", "segment_ph_cnt", "segment_id",
+#                           "delta_time", "dist_ph_along", "segment_dist_x",
+#                           "geoid", "geoid_free2mean", "signal_conf_ph", "quality_ph"]
+# ATL08_variables_needed = ["classed_pc_flag", "ph_segment_id", "classed_pc_indx"]
 
 # def get_photon_data_in_bounding_box(return_type=numpy.ndarray,
 #                                     bounding_box = None,
