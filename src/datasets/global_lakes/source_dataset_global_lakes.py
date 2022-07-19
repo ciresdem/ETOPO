@@ -21,3 +21,20 @@ class source_dataset_global_lakes(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the global_lakes source dataset object."""
 
         super(source_dataset_global_lakes, self).__init__("global_lakes", configfile)
+
+    def create_globathy_global_lakes(self, resolution_s=15):
+        """Create the global lakes tiles at whichever resolution is needed."""
+        
+        # 1) Get the tile outlines and resolutions of each grid to create. (Use the etopo empty tiles to do this.)
+        
+        # 2) Get the directory of the output files and filenames for each output
+        
+        # 3) Generate all the output grids. Lakes everywhere!
+        
+        # 4) Then think about generating the gebco outlines where they should exist.
+        
+    def create_gebco_global_lakes(self, resolution=15):
+        """Create a global lakes outline dataset with GEBCO elevations in it.
+
+        Test to see where this is valid and where it isn't.
+        Run the create_globathy_global_lakes() method first to get all the lake outlines."""
