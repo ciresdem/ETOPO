@@ -7,6 +7,7 @@ import pandas
 import numpy
 import matplotlib.pyplot as plt
 import re
+import argparse
 # import scipy.stats
 
 ####################################3
@@ -178,7 +179,8 @@ def find_bad_granules_in_a_dataset(dataset_name_or_object,
     if type(dataset_name_or_object) == str:
         dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_object)
 
-    elif type(dataset_name_or_object) == datasets.etopo_source_dataset.ETOPO_source_dataset:
+    elif isinstance(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset) \
+        or issubclass(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset):
         dset = dataset_name_or_object
 
     else:
@@ -539,26 +541,64 @@ def accumulate_bad_granule_dfs(dataset_name_or_obj,
 
 def create_master_list_of_bad_granules(dataset_name,
                                        master_bad_granule_csv = my_config._abspath(my_config.icesat2_bad_granules_csv),
-                                       verbose=True):
+                                       append = True,
+                                       verbose = True):
     """Go through a dataset that has been validated with "photon-level results", and that has already had
     find_bad_granules_in_a_dataset() called on it.
 
     Pick out all the _BAD_GRANULES.csv files from it, add their records to the master list if they are not already in there.
     """
-    bad_granules_df = accumulate_bad_granule_dfs(dataset_name, verbose=verbose)
-    if bad_granules_df is None:
+    new_bad_granules_df = accumulate_bad_granule_dfs(dataset_name, verbose=verbose)
+    if new_bad_granules_df is None or len(new_bad_granules_df) == 0:
         if verbose:
             print(f"No bad granules found in dataset '{dataset_name}'")
-        return
 
-    bad_granules_df.to_csv(master_bad_granule_csv, index=False)
-    if verbose:
-        print(master_bad_granule_csv, "written.")
-    return
+        if append and os.path.exists(master_bad_granule_csv):
+            existing_bad_granules_df = pandas.read_csv(master_bad_granule_csv, index_col=False)
+            if verbose:
+                print("Read existing", os.path.split(master_bad_granule_csv)[1])
+
+            return existing_bad_granules_df
+        else:
+            return new_bad_granules_df
+
+    if append:
+        if os.path.exists(master_bad_granule_csv):
+            existing_bad_granules_df = pandas.read_csv(master_bad_granule_csv, index_col=False)
+            if verbose:
+                print("Read existing", os.path.split(master_bad_granule_csv)[1])
+        else:
+            existing_bad_granules_df = None
+
+        # Check whether the new bad granule records already exist (or not) in the existing db.
+        # Create an n-length vector so later we can just filter out records that are actuall new.
+        new_records_mask = numpy.zeros((len(new_bad_granules_df),), dtype=bool)
+        for idx, row in new_bad_granules_df.iterrows():
+            # Mark "true" for any granule records that do not already exist in the dataframe from that DEM validation.
+            if (existing_bad_granules_df.csv_filename == row.csv_filename).sum() == 0:
+                new_records_mask[idx] = True
+
+        if numpy.count_nonzero(new_records_mask) > 0:
+            bad_granules_df = pandas.concat([existing_bad_granules_df, new_bad_granules_df[new_records_mask]], axis=0, ignore_index=True)
+            print("Added", numpy.count_nonzero(new_records_mask), "new granule records to", os.path.split(master_bad_granule_csv)[1])
+            bad_granules_df.to_csv(master_bad_granule_csv, index=False)
+            print(os.path.split(master_bad_granule_csv)[1], "written with", len(bad_granules_df), "records.")
+
+            return bad_granules_df
+        else:
+            return existing_bad_granules_df
+
+    else:
+        new_bad_granules_df.to_csv(master_bad_granule_csv, index=False)
+        if verbose:
+            print(os.path.split(master_bad_granule_csv)[1], "written.")
+
+        return new_bad_granules_df
 
 def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_config.icesat2_bad_granules_csv),
                                    refind_bad_granules = False,
                                    regenerate_bad_granule_csv = False,
+                                   append_if_regenerating_bad_granule_csv = True,
                                    dataset_name_if_regenerating = "CUDEM_CONUS", # TODO: Change this to Copernicus when ready to do the whole world.
                                    files_identified_threshold = 2,
                                    min_photons_threshold = 1000,
@@ -577,7 +617,8 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
     if regenerate_bad_granule_csv:
         create_master_list_of_bad_granules(dataset_name_if_regenerating,
                                            master_bad_granule_csv = bad_granule_csv,
-                                           verbose=verbose)
+                                           append = append_if_regenerating_bad_granule_csv,
+                                           verbose = verbose)
 
     if not os.path.exists(bad_granule_csv):
         if verbose:
@@ -710,7 +751,58 @@ def delete_results_with_bad_granules(dirname,
 
     return files_removed
 
+def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
+                                                       results_subdir = "icesat2_results",
+                                                       verbose=True):
+    """After a dataset has been validated (or even just partially validated) against ICESat-2
+    with photon_results included, go back and check whether any granules contain bad data.
+    If so, append them to the bad-granules csv, delete all the results that contain any bad
+    granules. After this, the analysis can be re-run without the bad data and results
+    re-computed.
+
+    This is kinda the "do-it-all" functino for this module."""
+    if type(dataset_name_or_obj) == str:
+        dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
+    else:
+        assert isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset)
+        dset = dataset_name_or_obj
+
+    find_bad_granules_in_a_dataset(dset,
+                                   make_histogram_plots_if_bad = True,
+                                   verbose=verbose)
+
+    create_master_list_of_bad_granules(dset, append=True, verbose=verbose)
+
+    # list_of_bad_granules = get_list_of_granules_to_reject()
+    # if len(list_of_bad_granules) > 0 and verbose:
+    #     print(len(list_of_bad_granules), "granules found to be deleted.")
+
+    # dirname_list = [os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d) \
+    #                 for d in \
+    #                 os.listdir("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/") \
+    #                     if os.path.isdir(os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d))]
+
+    deleted_list = delete_results_with_bad_granules(dset.config.source_datafiles_directory,
+                                                    dem_regex = dset.config.datafiles_regex,
+                                                    place_name = dset.config.dataset_name,
+                                                    delete_master_results_too = True,
+                                                    verbose=verbose)
+
+    if verbose:
+        print(len(deleted_list), "results files deleted.")
+
+
+def read_and_parse_args():
+    parser = argparse.ArgumentParser(description="Look through photon validation results, pick out any bad ICESat-2 granules, and delete result datafiles that relied on those granules.")
+    parser.add_argument("NAME", help="Dataset name to check results for bad granules. Should be an ETOPO source dataset object.")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+
+    args = read_and_parse_args()
+
+    check_for_and_remove_bad_granules_after_validation(args.NAME)
+
     # gr = get_list_of_granules_to_reject(refind_bad_granules = True, regenerate_bad_granule_csv = True)
     # if len(gr) > 0:
     #     print("GRANULES TO EXCLUDE")
@@ -721,19 +813,19 @@ if __name__ == "__main__":
     # find_bad_granules_in_a_dataset("CUDEM_CONUS")
 
     # 2. Put them into the master bad_granules.csv list.
-    create_master_list_of_bad_granules("CUDEM_CONUS")
+    # create_master_list_of_bad_granules("CUDEM_CONUS")
 
     # Test to see here what results we get back based on our filters.
-    print(get_list_of_granules_to_reject())
+    # print(get_list_of_granules_to_reject())
 
     # 3. Delete files that contain data from the bad granules.
-    dirname_list = [os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d) \
-                    for d in \
-                    os.listdir("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/") \
-                        if os.path.isdir(os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d))]
-    for dn in dirname_list:
-        print("===", os.path.split(dn)[1], "===")
-        delete_results_with_bad_granules(dn)
+    # dirname_list = [os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d) \
+                    # for d in \
+                    # os.listdir("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/") \
+                        # if os.path.isdir(os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d))]
+    # for dn in dirname_list:
+        # print("===", os.path.split(dn)[1], "===")
+        # delete_results_with_bad_granules(dn)
 
     # gids = find_granules_that_are_separate_from_others(\
     #        "/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/AL_nwFL/ncei19_n30X50_w085X25_2019v1.tif",

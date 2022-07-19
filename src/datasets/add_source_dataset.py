@@ -40,6 +40,7 @@ import os
 import shutil
 import pandas
 import dataset_geopackage
+import argparse
 
 ###############################################################################
 # Import the project /src directory into PYTHONPATH, in order to import all the
@@ -138,6 +139,13 @@ def make_list_of_ranks_and_ids(output_csv=os.path.join(os.path.dirname(__file__)
     df.to_csv(output_csv)
     print(output_csv, "written with", len(dset_names), "entries.")
 
+def read_and_parse_args():
+    parser = argparse.ArgumentParser(description = "Generate a new ETOPO dataset layer source object, or create a list of existing objects.")
+    parser.add_argument("NAME", nargs="?", default=None, help="The name of the new dataset to use. A sub-directory will be created using this name, so don't use special non-filename characters.")
+    parser.add_argument("--make_list", action="store_true", default=False, help="Create a list of ranks and IDs of all active datasets into /src/datasets/ETOPO_datasets_ranks_and_ids.csv")
+    parser.add_argument("--overwrite", "-o", action="store_true", default=False, help="Overwrite a dataset module, even if it already exists.")
+
+    return parser.parse_args()
 
 if __name__ == "__main__":
     # populate_all_source_datasets()
@@ -149,4 +157,17 @@ if __name__ == "__main__":
     # populate_dataset_module("CUDEM_VirginIslands")
     # populate_dataset_module("CUDEM_PRVI")
     # populate_dataset_module("global_lakes")
-    make_list_of_ranks_and_ids()
+    # make_list_of_ranks_and_ids()
+
+    args = read_and_parse_args()
+
+    if args.NAME is None and args.make_list == False:
+        print("No arguments given. Either provide a NAME argument or the --make_list flag.")
+        import sys
+        sys.exit(0)
+
+    if args.make_list:
+        make_list_of_ranks_and_ids()
+
+    if args.NAME is not None:
+        populate_dataset_module(args.NAME, overwrite=args.overwrite)
