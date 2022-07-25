@@ -678,9 +678,11 @@ def _main(short_name=None,
                 pass
 
             if isinstance(url_list, Exception):
-                # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
-                # to fix it by going the other way if it doesn't work at first.
-                if str(url_list).lower().find("too many requests") >= 0:
+                # The above cmr_search function has been modified. Rather than raising errors directly, it'll
+                # just return them if they happen, and we can handle them as we like.
+
+                err_str = str(url_list).lower()
+                if err_str.find("too many requests") >= 0:
                     print("HTTP Error 429: Too Many Requests. Waiting 1 minute and trying again.")
                     wait_time_sec = 60
                     for i in range(wait_time_sec):
@@ -690,14 +692,24 @@ def _main(short_name=None,
                     print("\r  0:00")
                     try_again = True # This is redundant but just make sure.
 
+                elif err_str.find("name resolution") >= 0 or err_str.find("temporary") >= 0:
+                    print(str(url_list) + "; trying again...")
+                    time.sleep(1)
+                    try_again = True
+
+                # Due to the weird polygon orientation bug that I haven't yet fully diagnosed, I'm just trying
+                # to fix it by going the other way if it doesn't work at first.
                 elif polygon is not None and not tried_polygon_switch_already:
                     polygon = put_polygon_string_in_correct_rotation(polygon, direction="counterclockwise")
                     tried_polygon_switch_already = True
+                    print(str(url_list) + "; swapping polygon and trying again...")
                     try_again = True
 
-                # If it's *still* returning an Exception error of some other kind, just raise it and get out.
+                # If it's *still* returning an Exception error of some other kind, try again?
                 else:
-                    raise url_list
+                    print(str(url_list) + "; trying again...")
+                    time.sleep(1)
+                    try_again = True
 
             else:
                 try_again = False
