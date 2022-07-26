@@ -31,13 +31,24 @@ def validate_dataset(dataset_name,
     and go from there.
     """
     # Create source dataset object
-    dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name)
+    dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name, verbose=verbose)
+    if dset is None:
+        return
+
     # Get the list of files.
     dem_list = dset.retrieve_all_datafiles_list(verbose=verbose)
     # Get the other metadata variables needed.
     input_vdatum = dset.config.dataset_vdatum_name
     dset_name = dset.config.dataset_name
-    dem_regex = dset.config.datafiles_regex
+    # If we have a separate regex for land-only data files to validate, use that.
+    if hasattr(dset.config, "datafiles_to_validate_regex"):
+        dem_regex = dset.config.datafiles_to_validate_regex
+    else:
+        # Otherwise, just use the default regex.
+        dem_regex = dset.config.datafiles_regex
+
+    print(dem_regex)
+    print(dem_list[-1], dem_list[-2])
 
     # First find what the original bad granules were, and then we'll see if anything was added.
     orig_bad_granule_list = icesat2.find_bad_icesat2_granules.get_list_of_granules_to_reject(verbose=verbose)
@@ -49,7 +60,7 @@ def validate_dataset(dataset_name,
                                                           results_h5 = None,
                                                           fname_filter = dem_regex,
                                                           output_dir = results_subdir,
-                                                          inputa_vdatum = input_vdatum,
+                                                          input_vdatum = input_vdatum,
                                                           output_vdatum = output_vdatum,
                                                           place_name = dset_name,
                                                           create_individual_results = True,
@@ -82,7 +93,7 @@ def validate_dataset(dataset_name,
                                                               results_h5 = None,
                                                               fname_filter = dem_regex,
                                                               output_dir = results_subdir,
-                                                              inputa_vdatum = input_vdatum,
+                                                              input_vdatum = input_vdatum,
                                                               output_vdatum = output_vdatum,
                                                               place_name = dset_name,
                                                               create_individual_results = True,

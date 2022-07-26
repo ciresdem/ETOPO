@@ -82,12 +82,14 @@ def validate_region(basedir,
                                                           skip_icesat2_download=False,
                                                           delete_datafiles=False,
                                                           include_photon_validation = include_photon_validations,
+                                                          omit_bad_granules=True,
                                                           write_result_tifs=True,
                                                           shapefile_name = None,
                                                           verbose=True)
 
 # Default directory ... just validate the 1/9" tiles, not the 1/3" tiles (which are bathy only)
-def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_datafiles_directory), "NCEI_ninth_Topobathy_2014_8483")):
+def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_datafiles_directory), "NCEI_ninth_Topobathy_2014_8483"),
+                 verbose=True):
     """Validate all the CUDEM_CONUS regions, one at a time."""
     # Get a list of all the subdirs in this base directory (these are the various regions).
     subdirs_list = [dirname for dirname in os.listdir(basedir) if os.path.isdir(os.path.join(basedir, dirname))]
@@ -96,11 +98,14 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
     output_vdatum = "EGM2008"
     datafiles_regex = cudem_config.datafiles_regex
 
+    # First find what the original bad granules were, and then we'll see if anything was added.
+    orig_bad_granule_list = icesat2.find_bad_icesat2_granules.get_list_of_granules_to_reject(verbose=verbose)
+
     for subdir in subdirs_list:
         # # Start with Alabama & Florida, for starters.
         # if subdir not in ("AL_nwFL", "FL"):
-        if subdir == "SF_Bay_navd88":
-            continue
+        # if subdir == "SF_Bay_navd88":
+        #     continue
         place_name = place_names_dict[subdir]
         print("\n===========", place_name, "===========")
 
@@ -114,6 +119,45 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
                         input_vdatum = input_vdatum,
                         include_photon_validations = True,
                         output_vdatum = output_vdatum)
+
+    # Run the find_bad_granules.py code to find bad granules in this dataset and add them to the whole dataset.
+    icesat2.find_bad_icesat2_granules.find_bad_granules_in_a_dataset("CUDEM_CONUS", verbose=verbose)
+    # Add any "bad granule" records to the whole dataset
+    icesat2.find_bad_icesat2_granules.create_master_list_of_bad_granules("CUDEM_CONUS", append=True, verbose=verbose)
+    # Get an updated list of granules to avoid.
+    new_bad_granule_list = icesat2.find_bad_icesat2_granules.get_list_of_granules_to_reject(verbose=verbose)
+    # Check to see if any *new* bad granules have been added to the list since running this validation.
+    if len(new_bad_granule_list) > len(orig_bad_granule_list):
+        # *IF* bad granules are detected in this dataset, delete the results
+        #   files that contain photons from that dataset, and run them again
+        #   with the bad granules filtered out.
+        deleted_list = icesat2.find_bad_icesat2_granules.check_for_and_remove_bad_granules_after_validation("CUDEM_CONUS",
+                                                                                                            results_subdir = "icesat2_results",
+                                                                                                            verbose = verbose)
+        # Then, we'll run the fuckin' validation again.
+        if len(deleted_list) > 0:
+            if verbose:
+                print("*** Re-running ICESat-2 analysis after removing bad granule data. ***")
+        # Re-run the icesat-2 validation
+
+        for subdir in subdirs_list:
+            # # Start with Alabama & Florida, for starters.
+            # if subdir not in ("AL_nwFL", "FL"):
+            if subdir == "SF_Bay_navd88":
+                continue
+            place_name = place_names_dict[subdir]
+            print("\n===========", place_name, "===========")
+
+            if subdir == "northeast_sandy":
+                print("Hitting errors in post-Sandy DEMs, skipping for now.")
+                continue
+            validate_region(basedir,
+                            subdir,
+                            datafiles_regex = datafiles_regex,
+                            place_name = place_name,
+                            input_vdatum = input_vdatum,
+                            include_photon_validations = True,
+                            output_vdatum = output_vdatum)
 
 if __name__ == "__main__":
     validate_all()

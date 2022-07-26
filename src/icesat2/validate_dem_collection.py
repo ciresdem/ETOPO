@@ -298,7 +298,15 @@ def validate_list_of_dems(dem_list_or_dir,
         else:
             stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
     else:
-        stats_and_plots_dir = output_dir
+        if os.path.isdir(output_dir):
+            stats_and_plots_dir = output_dir
+        else:
+            # If the output dir appears to be a relative path, then join it with the input dir.
+            if type(dem_list_or_dir) == str:
+                stats_and_plots_dir = os.path.join(os.path.dirname(dem_list_or_dir), output_dir)
+            else:
+                stats_and_plots_dir = os.path.join(os.path.dirname(dem_list_or_dir[0]), output_dir)
+
 
     if place_name is None:
         stats_and_plots_base = "summary_results"
@@ -392,8 +400,11 @@ def validate_list_of_dems(dem_list_or_dir,
 
         if output_dir is None:
             this_output_dir = os.path.split(dem_path)[0]
-        else:
+        elif os.path.isdir(output_dir):
             this_output_dir = output_dir
+        else:
+            # If it's a relative dir, append it to where the dems are.
+            this_output_dir = os.path.join(os.path.dirname(dem_list[0]), output_dir)
 
         results_h5_file = os.path.join(this_output_dir, os.path.splitext(os.path.split(dem_path)[1])[0] + "_results.h5")
 

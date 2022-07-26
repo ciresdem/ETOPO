@@ -30,14 +30,27 @@ import utils.configfile
 import utils.progress_bar as progress_bar
 import datasets.dataset_geopackage as dataset_geopackage
 
-def get_source_dataset_object(dataset_name):
+def get_source_dataset_object(dataset_name, verbose=True):
     """Given the name of a dataset, import the dataset object from the subdirectory that contains that derived object.
     Using ETOPO source naming convention, the source code will reside in
     datasets.[name].source_dataset_[name].py:source_dataset_[name]"""
     dname = dataset_name.strip()
     module_name = "datasets.{0}.source_dataset_{0}".format(dname)
-    module = importlib.import_module(module_name)
-    class_obj = getattr(module, "source_dataset_{0}".format(dname))()
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        if verbose:
+            print("Module {0} not found.".format(module_name))
+        return None
+
+    try:
+        class_name = "source_dataset_{0}".format(dname)
+        class_obj = getattr(module, class_name)()
+    except AttributeError:
+        if verbose:
+            print("No class definition for '{0}' found in {1}.".format(class_name, module_name))
+        return None
+
     return class_obj
 
 

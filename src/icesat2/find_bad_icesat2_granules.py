@@ -525,6 +525,8 @@ def accumulate_bad_granule_dfs(dataset_name_or_obj,
     bad_granule_file_list = utils.traverse_directory.list_files(dset_obj.config._abspath(dset_obj.config.source_datafiles_directory),
                                                                 regex_match=bad_granule_regex,
                                                                 include_base_directory=True)
+    # Make sure we're only dealing in absolute paths here.
+    bad_granule_file_list = [os.path.abspath(p) for p in bad_granule_file_list]
 
     if len(bad_granule_file_list) > 0:
         bad_granule_dfs = [pandas.read_csv(fn, index_col=False) for fn in bad_granule_file_list]
@@ -550,8 +552,8 @@ def create_master_list_of_bad_granules(dataset_name_or_obj,
     new_bad_granules_df = accumulate_bad_granule_dfs(dataset_name_or_obj, verbose=verbose)
     if new_bad_granules_df is None or len(new_bad_granules_df) == 0:
         if verbose:
-            print(f"No bad granules found in dataset '{0}'".format(dataset_name_or_obj if (type(dataset_name_or_obj) == str) \
-                                                                                       else dataset_name_or_obj.dataset_name))
+            print("No bad granules found in dataset '{0}'".format(dataset_name_or_obj if (type(dataset_name_or_obj) == str) \
+                                                                                      else dataset_name_or_obj.dataset_name))
 
         if append and os.path.exists(master_bad_granule_csv):
             existing_bad_granules_df = pandas.read_csv(master_bad_granule_csv, index_col=False)
@@ -634,7 +636,7 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
         num_files_identified = len(subset_df)
         num_photons = subset_df["photon_count"].sum()
 
-        if (num_files_identified >= files_identified_threshold) or (num_photons >= min_photons_threshold):
+        if (num_files_identified >= files_identified_threshold) and (num_photons >= min_photons_threshold):
             granules_to_exclude.append(uniq_gr)
 
     if return_as_gid_numbers:
@@ -752,6 +754,7 @@ def delete_results_with_bad_granules(dirname,
     return files_removed
 
 def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
+                                                       base_dir_if_not_default = None,
                                                        results_subdir = "icesat2_results",
                                                        verbose=True):
     """After a dataset has been validated (or even just partially validated) against ICESat-2
