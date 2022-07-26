@@ -1,8 +1,0 @@
-NOTE: Digital Coast does't like robot wget commands. On Chris A's advice, use these flags to get around that:
-
-wget -np -r -nH -L -e robots=off --no-check-certificate --cut-dirs=3
-
-https://chs.coast.noaa.gov/htdata/raster2/elevation/NCEI_ninth_Topobathy_2014_8483/
-
-List of updated 1/3 and 1/9" DEMs here:
-https://docs.google.com/document/d/1sY6q250SDV9pQh_UQBRFxvdM-vbEMp5WFTKMxj1NdoE/edit
