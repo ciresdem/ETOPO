@@ -3,6 +3,7 @@
 """Source code for the global_lakes ETOPO source dataset class."""
 
 import os
+import geopandas
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -13,6 +14,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 ##############################################################################
 
 import datasets.etopo_source_dataset as etopo_source_dataset
+import utils.configfile
 
 class source_dataset_global_lakes(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
@@ -24,15 +26,25 @@ class source_dataset_global_lakes(etopo_source_dataset.ETOPO_source_dataset):
 
     def create_globathy_global_lakes(self, resolution_s=15):
         """Create the global lakes tiles at whichever resolution is needed."""
-        
+
         # 1) Get the tile outlines and resolutions of each grid to create. (Use the etopo empty tiles to do this.)
-        
+        etopo_config = utils.configfile.config()
+        if resolution_s == 1:
+            etopo_gpkg_name = etopo_config.etopo_tile_geopackage_1s
+        elif resolution_s == 15:
+            etopo_gpkg_name = etopo_config.etopo_tile_geopackage_15s
+        elif resolution_s == 60:
+            etopo_gpkg_name = etopo_config.etopo_tile_geopackage_60s
+        else:
+            raise ValueError("Unhandled value for parameter 'resolution_s':", resolution_s)
+
         # 2) Get the directory of the output files and filenames for each output
-        
+
+
         # 3) Generate all the output grids. Lakes everywhere!
-        
+
         # 4) Then think about generating the gebco outlines where they should exist.
-        
+
     def create_gebco_global_lakes(self, resolution=15):
         """Create a global lakes outline dataset with GEBCO elevations in it.
 
