@@ -167,7 +167,6 @@ def plot_stacked_histograms_with_bad_granule_marked(dem_fname,
     return
 
 def find_bad_granules_in_a_dataset(dataset_name_or_object,
-                                   # csv_list_fname,
                                    make_histogram_plots_if_bad = True,
                                    verbose = True):
     """Loop through all the validation results of a dataset that has been validated.
@@ -539,7 +538,7 @@ def accumulate_bad_granule_dfs(dataset_name_or_obj,
     else:
         return None
 
-def create_master_list_of_bad_granules(dataset_name,
+def create_master_list_of_bad_granules(dataset_name_or_obj,
                                        master_bad_granule_csv = my_config._abspath(my_config.icesat2_bad_granules_csv),
                                        append = True,
                                        verbose = True):
@@ -548,10 +547,11 @@ def create_master_list_of_bad_granules(dataset_name,
 
     Pick out all the _BAD_GRANULES.csv files from it, add their records to the master list if they are not already in there.
     """
-    new_bad_granules_df = accumulate_bad_granule_dfs(dataset_name, verbose=verbose)
+    new_bad_granules_df = accumulate_bad_granule_dfs(dataset_name_or_obj, verbose=verbose)
     if new_bad_granules_df is None or len(new_bad_granules_df) == 0:
         if verbose:
-            print(f"No bad granules found in dataset '{dataset_name}'")
+            print(f"No bad granules found in dataset '{0}'".format(dataset_name_or_obj if (type(dataset_name_or_obj) == str) \
+                                                                                       else dataset_name_or_obj.dataset_name))
 
         if append and os.path.exists(master_bad_granule_csv):
             existing_bad_granules_df = pandas.read_csv(master_bad_granule_csv, index_col=False)
@@ -571,7 +571,7 @@ def create_master_list_of_bad_granules(dataset_name,
             existing_bad_granules_df = None
 
         # Check whether the new bad granule records already exist (or not) in the existing db.
-        # Create an n-length vector so later we can just filter out records that are actuall new.
+        # Create an n-length vector so later we can just filter out records that are actually new.
         new_records_mask = numpy.zeros((len(new_bad_granules_df),), dtype=bool)
         for idx, row in new_bad_granules_df.iterrows():
             # Mark "true" for any granule records that do not already exist in the dataframe from that DEM validation.
@@ -790,6 +790,8 @@ def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
 
     if verbose:
         print(len(deleted_list), "results files deleted.")
+
+    return deleted_list
 
 
 def read_and_parse_args():
