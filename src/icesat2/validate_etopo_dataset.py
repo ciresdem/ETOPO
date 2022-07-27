@@ -47,9 +47,6 @@ def validate_dataset(dataset_name,
         # Otherwise, just use the default regex.
         dem_regex = dset.config.datafiles_regex
 
-    print(dem_regex)
-    print(dem_list[-1], dem_list[-2])
-
     # First find what the original bad granules were, and then we'll see if anything was added.
     orig_bad_granule_list = icesat2.find_bad_icesat2_granules.get_list_of_granules_to_reject(verbose=verbose)
 
