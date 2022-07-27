@@ -205,7 +205,7 @@ def create_coastline_mask(input_dem,
 
 def create_coastal_mask_filename(dem_name, target_dir=None):
     """If given a DEM name, create a filename for the coastal mask."""
-    fdir, fname = os.path.split(dem_name)
+    fdir, fname = os.path.split(os.path.abspath(dem_name))
     base, ext = os.path.splitext(fname)
     coastline_mask_fname = os.path.join(fdir if (target_dir is None) else target_dir, base + "_coastline_mask" + ext)
     return coastline_mask_fname
@@ -250,9 +250,6 @@ def get_coastline_mask_and_other_dem_data(dem_name,
                                                         return_bounds_step_epsg=False,
                                                         output_file=coastline_mask_file,
                                                         verbose=verbose)
-
-        # # Switch items 1,2 in bounding box (minx,maxx,miny,maxy) --> (minx,miny,maxx,maxy)
-        # dem_bbox[1], dem_bbox[2] = dem_bbox[2], dem_bbox[1]
 
         assert coastline_mask_file == coastline_mask_file_out
 
