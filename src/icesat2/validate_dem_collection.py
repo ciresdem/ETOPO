@@ -405,6 +405,8 @@ def validate_list_of_dems(dem_list_or_dir,
         else:
             # If it's a relative dir, append it to where the dems are.
             this_output_dir = os.path.join(os.path.dirname(dem_list[0]), output_dir)
+            if not os.path.exists(this_output_dir):
+                os.mkdir(this_output_dir)
 
         results_h5_file = os.path.join(this_output_dir, os.path.splitext(os.path.split(dem_path)[1])[0] + "_results.h5")
 
