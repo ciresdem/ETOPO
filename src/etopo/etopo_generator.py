@@ -17,6 +17,7 @@ import pathlib
 
 try:
     import cudem
+    cudem
 except ModuleNotFoundError:
     print("""Warning, CUDEM code does not appear to be installed in this python installation.
           Some ETOPO_Generator functionality may not work.""")
