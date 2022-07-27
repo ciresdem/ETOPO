@@ -133,7 +133,7 @@ class ETOPO_source_dataset:
         return os.path.splitext(self.config._abspath(self.config.geopackage_filename))[0] + ".datalist"
 
     def retrieve_all_datafiles_list(self, verbose=True):
-        """Return a list of every one of the data files in this dataset."""
+        """Return a list of every one of the DEM tiff data files in this dataset."""
         gdf = self.get_geodataframe()
         return gdf['filename'].tolist()
 
@@ -283,6 +283,14 @@ class ETOPO_source_dataset:
             return self.config.dataset_vdatum_name
         else:
             return self.config.dataset_vdatum_epsg
+
+    def get_dataset_validation_results(self):
+        """After a validation has been run on this dataset, via the validate_dem_collection.py
+        or validate_etopo_dataset.py scripts, collect a dataframe of all the validation results.
+
+        This is probably in a summary results.h5 file. If we're dealing with CUDEM_CONUS,
+        it would be the composite of all the summary results.h5 files for each region."""
+        # TODO: Finish
 
 if __name__ == "__main__":
 
