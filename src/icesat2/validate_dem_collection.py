@@ -294,7 +294,10 @@ def validate_list_of_dems(dem_list_or_dir,
             elif type(dem_list_or_dir) == str:
                 stats_and_plots_dir = os.path.dirname(dem_list_or_dir)
             else:
-                stats_and_plots_dir = os.path.dirname(dem_list_or_dir[0])
+                dem_list_fitting_filter = [fn for fn in dem_list_or_dir if (((fname_filter is None) or (re.search(fname_filter, os.path.split(fn)[1]) != None)) \
+                                                                            and \
+                                                                            ((fname_omit is None) or (re.search(fname_omit, os.path.split(fn)[1]) == None)))]
+                stats_and_plots_dir = os.path.dirname(dem_list_fitting_filter[0])
         else:
             stats_and_plots_dir = os.path.split(os.path.abspath(photon_h5))[0]
     else:
@@ -305,7 +308,10 @@ def validate_list_of_dems(dem_list_or_dir,
             if type(dem_list_or_dir) == str:
                 stats_and_plots_dir = os.path.join(os.path.dirname(dem_list_or_dir), output_dir)
             else:
-                stats_and_plots_dir = os.path.join(os.path.dirname(dem_list_or_dir[0]), output_dir)
+                dem_list_fitting_filter = [fn for fn in dem_list_or_dir if (((fname_filter is None) or (re.search(fname_filter, os.path.split(fn)[1]) != None)) \
+                                                                            and \
+                                                                            ((fname_omit is None) or (re.search(fname_omit, os.path.split(fn)[1]) == None)))]
+                stats_and_plots_dir = os.path.join(os.path.dirname(dem_list_fitting_filter[0]), output_dir)
 
 
     if place_name is None:
