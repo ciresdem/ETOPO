@@ -238,31 +238,6 @@ class ETOPO_source_dataset:
 
         return ["{0} {1} {2}".format(fname, DTYPE_CODE, weight) \
                 for fname in list_of_overlapping_files]
-    # def create_intermediate_grids(self, etopo_config_obj,
-    #                                     include_ranking = True,
-    #                                     resolution_s = 1,
-    #                                     vdatum_out = "irtf2014",
-    #                                     overwrite = False,
-    #                                     verbose = True):
-    #     """Generate intermeiate grid files from the source dataset.
-    #     This will take the source topo data, re-grid it (using 'waffles') into
-    #     the same grids at the ETOPO dataset, and use the ETOPO empty values for
-    #     all no-data regions.
-
-    #     If 'include_ranking' is set (default True), it will also create an idential
-    #     grid of ranking for the dataset values.
-
-    #     These intermediate grids will be combined together (using the ranking scores
-    #     of each source dataset) to create the final ETOPO grids.
-    #     """
-    #     # TODO: For each source dataset, create an ETOPO grid for each ETOPO grid-cell.
-    #     # Use waffles, and the datalist for that dataset to do so.
-    #     # Fill in empty values for NDV cells (figure out how to do this).
-
-    #     # Then, open up the grids 1-by-1, in increasing order of priority (lowest priority to start)
-    #     # overlay the values into an ETOPO grid for that grid-cell. The intermediate tiles will
-    #     # already be on the same grid with same dimensions, making this a simple numpy array operation.
-    #     # Also do the same for the source-tile code designations.
 
 
     def get_dataset_ranking_score(self, fname=None):
@@ -270,8 +245,6 @@ class ETOPO_source_dataset:
         If the dataset contains no files in that region, return the 'default_ranking_score' of
         the dataset, provided in the constructor."""
 
-        # TODO: Use ICESat-2 to calculate accuracies, provide a ranking score spatially through
-        # the dataset.
         return self.default_ranking_score
 
     def get_dataset_vdatum(self, name=True):
