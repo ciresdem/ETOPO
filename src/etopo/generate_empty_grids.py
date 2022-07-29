@@ -50,7 +50,7 @@ def create_empty_tiles(directory,
                        dtype = "float32",
                        tile_width_deg = 15,
                        resolution_s = 15,
-                       ndv = -99999.0,
+                       ndv = my_config.etopo_ndv,
                        verbose=True,
                        compression_options = ["COMPRESS=DEFLATE", "PREDICTOR=2"],
                        also_write_geopackage = True):
@@ -222,7 +222,7 @@ def get_azerbaijan_1deg_bboxes():
 def create_list_of_tile_tuples(resolution = 15,
                                config_obj = my_config,
                                verbose=True):
-    """Based on the Copernicus DEM tiles, create a list of 1° x 1° tiles to include.
+    """Based on the Copernicus DEM tiles (but including missing areas over Azerbaijan & Armenia), create a list of 1° x 1° tiles to include.
 
     Each item will be a 2-tuple containing the (southernmost_latitude, westernmost_logitude).
     Add 1 to each number to get the (norternmost_latitude, easternmost_longitude) bbox coordinates."""
