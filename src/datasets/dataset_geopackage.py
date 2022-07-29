@@ -192,13 +192,13 @@ class DatasetGeopackage:
         return polygon, proj, xleft, ytop, xres, yres, xsize, ysize
 
 
-    def subset_by_polygon(self, polygon, polygon_crs):
+    def subset_by_polygon(self, polygon, polygon_crs, verbose=True):
         """Given a shapely polygon object, return all records that intersect the polygon.
 
         If the polygon_crs does not match the geopackage crs, conver the polygon into
         the geopackage CRS before performing the intersection.
         """
-        gdf = self.get_gdf()
+        gdf = self.get_gdf(verbose=verbose)
 
         gdf_crs_obj  = pyproj.crs.CRS(gdf.crs)
         poly_crs_obj = pyproj.crs.CRS(polygon_crs)
@@ -240,6 +240,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
     """Inherited from the DatasetGeopackage, slightly modified __init__()
     interface to handle specifically the ETOPO source files."""
     def __init__(self, resolution):
+        resolution = int(resolution)
         assert resolution in (1,15,60)
 
         ## These member variables are the same as the ones initiated in DatasetGeopackage.__init__()
@@ -264,6 +265,24 @@ class ETOPO_Geopackage(DatasetGeopackage):
         ## These member variables are unique to the ETOPO grids specifically.
 
         self.dlist_dir = self.config.etopo_datalist_directory
+
+    def get_gdf(self, crm_only_if_1s=False, verbose=True):
+        """Sub-class method of get_gdf, with the option to subset to only CRM tiles (US East Coast)
+        if we're in 1-deg tile space."""
+        # If we're not at 1s resolution, or we're not flagged to only get the CRM tiles, then just move along.
+        if (self.resolution != 1) or (crm_only_if_1s == False):
+            return super().get_gdf(verbose=verbose)
+
+        # Otherwise, only send back the geodataframe that includes the CRM tiles.
+        assert (self.resolution == 1) and (crm_only_if_1s is True)
+        crm_gdf = geopandas.read_file(self.config.crm_tiles_outline_shapefile)
+        # It should just be a one-feature shapefile. Sanity check here.
+        assert len(crm_gdf) == 1
+
+        # Get the one polygon from the crm outline shapefile.
+        crm_polygon = crm_gdf.geometry.tolist()[0]
+        # Return the subset of the geodataframe that intersects the CRM outline polygon.
+        return self.subset_by_polygon(crm_polygon, crm_gdf.crs, verbose=verbose)
 
     def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
