@@ -17,39 +17,8 @@ import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 import utils.configfile
 my_config = utils.configfile.config()
 
-# import validate_dem
 
-# Our picklefiles output from validate_dem.validate_dem_parallel
-# freeport_dem_copernicus = "/home/mmacferrin/Research/DATA/DEMs/CopernicusDEM/data/30m_WGS84/Copernicus_DSM_COG_10_N26_00_W079_00_DEM_WGS84.tif"
-# freeport_dem_nasa_srtm = "/home/mmacferrin/Research/DATA/DEMs/NASADEM/data/NASADEM_WGS84/NASADEM_HGT_n26w079_WGS84.tif"
-# freeport_dem_merit = "/home/mmacferrin/Research/DATA/DEMs/MERIT_DEM/data/merit_dem_1.0.2_reprojected/n25w080_WGS84.tif"
-# freeport_dem_aw3d30 = "/home/mmacferrin/Research/DATA/DEMs/AW3D30/data/tiles/N025W080_N030W075/ALPSMLC30_N026W079_DSM_WGS84.tif"
-
-# copernicus_icesat_data = "../data/freeport_bahamas/Copernicus_DSM_COG_10_N26_00_W079_00_DEM_WGS84_ICESat2_results.hdf"
-# nasa_srtm_icesat_data  = "../data/freeport_bahamas/NASADEM_HGT_n26w079_WGS84_ICESat2_results.hdf"
-# merit_icesat_data      = "../data/freeport_bahamas/n25w080_WGS84_ICESat2_results.hdf"
-# aw3d30_icesat_data     = "../data/freeport_bahamas/ALPSMLC30_N026W079_DSM_WGS84_ICESat2_results.hdf"
-
-
-# figure_titles_dict = {copernicus_icesat_data: "Copernicus 1\" N26 W79",
-#                       nasa_srtm_icesat_data:  "NASADEM 1\" N26 W79",
-#                       merit_icesat_data:      "MERIT DEM 3\" N25 W80",
-#                       aw3d30_icesat_data:     "ALOS 3D 1\" N26 W79"}
-
-# fnames = [copernicus_icesat_data,
-#           nasa_srtm_icesat_data,
-#           merit_icesat_data,
-#           aw3d30_icesat_data]
-
-# h5_dir = '/home/mmacferrin/Research/DATA/DEMs/NCEI/ma_nh_me_deliverables20211007105912/ma_nh_me_deliverables/1_9_wgs84'
-# h5_dir = '../data/temp/ne_dems_copernicus'
-# fnames = os.listdir(h5_dir)
-# h5_names =  [os.path.join(h5_dir, f) for f in fnames if os.path.splitext(f)[1] == ".h5" and f.find("ATL0") < 0]
-
-# print(h5_names)
-# foobar
-
-def iterable(obj):
+def is_iterable(obj):
     """Tell whether an object is a non-string iterable. (list, tuple, etc)."""
     return ( isinstance(obj, collections.Iterable) \
             and not isinstance(obj, six.string_types))
@@ -60,7 +29,7 @@ def get_data_from_h5_or_list(h5_name_or_list,
     """Return the data either from a single hdf5 results file, or a list of them. Filter out empty (bad data) values."""
     if type(h5_name_or_list) == str:
         data = pandas.read_hdf(h5_name_or_list)
-    elif iterable(h5_name_or_list):
+    elif is_iterable(h5_name_or_list):
         data_list = []
         for h5_file in h5_name_or_list:
             if os.path.exists(h5_file):
@@ -93,6 +62,8 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
                                             empty_val = my_config.etopo_ndv,
                                             place_name=None,
                                             figsize=None,
+                                            labels_uppercase = True,
+                                            dpi = 600,
                                             verbose=True):
     """Generate a 4-panel figure of error stats.
     1) Histograms of mean errors
@@ -137,16 +108,23 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     # Generate figure. If a figure size isn't given, use the matplotlib.rcParams default.
     if figsize is None:
         figsize = matplotlib.rcParams['figure.figsize']
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=600, figsize=figsize, tight_layout=True)
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=dpi, figsize=figsize, tight_layout=True)
+
+    plot_label_margin = [0.015, 0.97]
+    plot_label_ha = "left"
+    plot_label_va = "top"
+    plot_label_size = "large"
+    plot_label_weight = "book"
 
     nbins = 1000
     #############################################################################
     # Plot 1, differences from iceast-2 mean.
     ax1.hist(meandiff, bins=nbins)
-    ax1.set_title("DEM - ICESat2 mean (m)")
+    # Unicode "minus" sign is \u2212
+    ax1.set_title("DEM " + u"\u2212" + " ICESat-2 mean")
     ax1.set_ylabel("% of data cells")
     ax1.set_xlabel("Elevation difference (m)")
-    ax1.yaxis.set_major_formatter(ticker.PercentFormatter(len(meandiff)))
+    ax1.yaxis.set_major_formatter(ticker.PercentFormatter(len(meandiff), decimals=0))
 
     # Add the lines for mean +- std
     center = numpy.mean(meandiff)
@@ -168,7 +146,8 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
 
     # Detect whether the mean line is closer to the left or the right (we'll put the text box on the other side)
     text_left = not ((center - cutoffs[0]) < (cutoffs[1] - center))
-    txt = ax1.text(0.03 if text_left else 0.97, 0.95,
+    txt = ax1.text(0.12 if text_left else 0.97,
+                   0.95, # 0.85 if text_left else 0.95,
                    "{0:.2f} $\pm$ {1:.2f} m".format(center, std),
                    ha="left" if text_left else "right",
                    va="top",
@@ -176,14 +155,32 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
                    transform=ax1.transAxes)
     txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
 
+    # Add subplot label "a"
+    # Add it on the opposite (horizontal) side of wherever the other text has been placed, in this case.
+    # if text_left:
+    #     ax1_label_x = plot_label_margin[0] + 0.15
+    #     ax1_ha = "right"
+    # else:
+    #     ax1_label_x = plot_label_margin[0]
+    #     ax1_ha = "left"
+    ax1.text(*plot_label_margin,
+             "A" if labels_uppercase else "a",
+             ha = plot_label_ha,
+             va = plot_label_va,
+             fontsize = plot_label_size,
+             fontweight = plot_label_weight,
+             transform = ax1.transAxes)
+    # lbltxt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
+
     # 2) Plot 1:1 line of DEM/ICESat-2 elevations.
     #############################################################################
     # Subplot 2, elev-elev correlation line
     dotsize=2
     alpha = 0.25 * max(0.0025, min(4, (math.log10(100)/math.log10(len(mean_elev)))))
     ax2.scatter(mean_elev, dem_elev, s=dotsize, linewidth=0, alpha=alpha)
+    ax2.set_title("DEM vs. ICESat-2")
     ax2.set_ylabel("DEM elevation (m)")
-    ax2.set_xlabel("ICESat2 elevation (m)")
+    ax2.set_xlabel("ICESat-2 elevation (m)")
     # ax2.autoscale(False) # Keep the line-plotting from expanding the x,y-axes
     xlim = ax2.get_xlim()
     ylim = ax2.get_ylim()
@@ -197,67 +194,95 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     xticks = ax2.get_xticks()
     ax2.set_yticks(xticks)
 
+    # Add subplot label "b"
+    ax2.text(*plot_label_margin,
+             "B"  if labels_uppercase else "b",
+             ha=plot_label_ha,
+             va=plot_label_va,
+             fontsize=plot_label_size,
+             fontweight=plot_label_weight,
+             transform=ax2.transAxes)
+    # lbltxt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
 
-    # Draw thin lines to the 1:1 line at the ticks.
-    # for xtick in xticks:
+
+    # 3) Plot Histogram of # of ICESat-2 photons per cell.
+    #############################################################################
+    # Plot 4, number of photons in interdecile range
+    ax3.hist(numphotons_intd, bins=(numphotons_intd.max() - numphotons_intd.min() + 1), color="darkred")
+    ax3.set_title("Number of photons")
+    ax3.set_xlabel("Photon count per DEM cell")
+    ax3.set_ylabel("% of data cells")
+    ax3.yaxis.set_major_formatter(ticker.PercentFormatter(len(numphotons_intd), decimals=0))
+
+    # Crop the left & right, right at 98 percentile.
+    cutoff = numpy.percentile(numphotons_intd, 98)
+    xmin = ax3.get_xlim()[0]
+    ax3.set_xlim(xmin*0.5, cutoff)
+
+    center = numpy.mean(numphotons_intd)
+    std = numpy.std(numphotons_intd)
+
+    ax3.text(0.95, 0.95, "{0:d} $\pm$ {1:d} photons per cell".format(int(numpy.round(center)), int(numpy.round(std))),
+             ha="right", va="top",
+             fontsize="small",
+             transform=ax3.transAxes)
+
+    # Add subplot label "c"
+    ax3.text(*plot_label_margin,
+             "C"  if labels_uppercase else "c",
+             ha=plot_label_ha,
+             va=plot_label_va,
+             fontsize=plot_label_size,
+             fontweight=plot_label_weight,
+             transform=ax3.transAxes)
+    # lbltxt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
 
 
-    # 3) Plot Histogram of canopy cover.
+    # 4) Plot Histogram of canopy cover.
     #############################################################################
     # Plot 3, percent canopy cover
     canopy_fraction = (canopy_fraction * 100).astype(float)
-    # print(canopy_fraction)
-    # print("min", min(canopy_fraction), "max", max(canopy_fraction), "median", numpy.median(canopy_fraction), "mean", numpy.mean(canopy_fraction))
-    ax3.hist(canopy_fraction, bins=50,color="darkgreen")
-    ax3.set_title("Canopy Cover (%)")
-    ax3.set_xlabel("% Canopy Cover")
-    ax3.set_ylabel("% of data cells")
-    ax3.yaxis.set_major_formatter(ticker.PercentFormatter(len(canopy_fraction)))
-    # ax4.set_xlim([-3,75])
+    ax4.hist(canopy_fraction, bins=50,color="darkgreen")
+    ax4.set_title("Canopy Cover (%)")
+    ax4.set_xlabel("% Canopy Cover")
+    ax4.yaxis.set_major_formatter(ticker.PercentFormatter(len(canopy_fraction), decimals=0))
 
-    # Crop the right edge at the 97th percentile
-    cutoff = numpy.percentile(canopy_fraction, 97)
-    xmin = ax3.get_xlim()[0]
-    ax3.set_xlim(xmin, cutoff)
+    # Crop the right edge at the 99th percentile
+    cutoff = numpy.percentile(canopy_fraction, 99)
+    # Add just a bit of padding on the left to make more room for the "D" label.
+    xmin = ax4.get_xlim()[0] - 0.025*(cutoff - ax4.get_xlim()[0])
+    ax4.set_xlim(xmin, cutoff)
 
     # center = numpy.mean(canopy_fraction)
     # # std = numpy.std(canopy_fraction)
     # median = numpy.median(canopy_fraction)
     canopy_mask = (canopy_fraction > 0.0) & numpy.isfinite(canopy_fraction) & ~numpy.isnan(canopy_fraction)
 
-    ax3.text(0.95, 0.95, "{0:0.1f} % of cells have >0 cover:\n{1:0.1f} $\pm$ {2:0.1f} % canopy cover\nin non-zero cells".format( \
+    ax4.text(0.95, 0.95, "{0:0.1f} % of cells have >0 cover:\n{1:0.1f} $\pm$ {2:0.1f} % canopy cover\nin non-zero cells".format( \
                          numpy.count_nonzero(canopy_mask) * 100 / canopy_fraction.size,
                          numpy.mean(canopy_fraction[canopy_mask]),
                          numpy.std(canopy_fraction[canopy_mask])),
-             ha="right", va="top", transform=ax3.transAxes,
+             ha="right", va="top", transform=ax4.transAxes,
              fontsize="small")
 
-    # 4) Plot Histogram of # of ICESat-2 photons per cell.
-    #############################################################################
-    # Plot 4, number of photons in interdecile range
-    ax4.hist(numphotons_intd, bins=nbins, color="darkred")
-    ax4.set_title("Number of photons")
-    ax4.set_xlabel("Photon count per grid cell")
-    ax4.yaxis.set_major_formatter(ticker.PercentFormatter(len(numphotons_intd)))
-
-    # Crop the left & right, right at 98 percentile.
-    cutoff = numpy.percentile(numphotons_intd, 98)
-    xmin = ax4.get_xlim()[0]
-    ax4.set_xlim(xmin*0.5, cutoff)
-
-    center = numpy.mean(numphotons_intd)
-    std = numpy.std(numphotons_intd)
-
-    ax4.text(0.95, 0.95, "{0:d} $\pm$ {1:d} photons per cell".format(int(numpy.round(center)), int(numpy.round(std))),
-             ha="right", va="top",
-             fontsize="small",
+    # Add subplot label "d"
+    ax4.text(*plot_label_margin,
+             "D"  if labels_uppercase else "d",
+             ha=plot_label_ha,
+             va=plot_label_va,
+             fontsize=plot_label_size,
+             fontweight=plot_label_weight,
              transform=ax4.transAxes)
+    # lbltxt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
 
+
+    # Figure title
     if place_name is None:
         place_name = "DEM"
     fig.suptitle("{0} Errors and Distributions\n(N = {1:,} cells)".format(place_name, len(meandiff)))
     fig.tight_layout()
 
+    # Save the figure to disk.
     fig.savefig(output_figure_name)
     if verbose:
         print(output_figure_name, "written.")
@@ -304,7 +329,7 @@ def plot_histograms(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     #############################################################################
     # Plot 1, differences from iceast-2 mean.
     ax1.hist(meandiff, bins=nbins)
-    ax1.set_title("DEM - ICESat2 mean (m)")
+    ax1.set_title("DEM - ICESat-2 mean (m)")
     ax1.set_ylabel("Grid cells")
     ax1.set_xlabel("Elevation diff (m)")
 
@@ -441,7 +466,7 @@ def plot_error_stats(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     # Subplot 1, elev-elev correlation line
     ax1.scatter(mean_elev, dem_elev, s=dotsize)
     ax1.set_ylabel("DEM elevation (m)")
-    ax1.set_xlabel("ICESat2 elevation (m)")
+    ax1.set_xlabel("ICESat-2 elevation (m)")
     xlim = ax1.get_xlim()
     ax1.autoscale(False) # Keep the line-plotting from expanding the x,y-axes
     ax1.plot(xlim, xlim, ls="--", c=".3", lw=1)
