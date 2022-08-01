@@ -11,6 +11,8 @@ import re
 import numpy
 import shapely.geometry
 import shutil
+import tables
+import time
 
 #####################################
 # Suppress the annoying pandas.FutureWarning warnings caused by library version conflicts.
@@ -31,7 +33,6 @@ import datasets.CopernicusDEM.source_dataset_CopernicusDEM as Copernicus
 import utils.configfile
 import etopo.generate_empty_grids
 import utils.progress_bar
-import time
 
 class ICESat2_Database:
     """A database to manage ICESat-2 photon clouds for land-surface validations.
@@ -491,22 +492,67 @@ class ICESat2_Database:
         for i,(photon_db,atl3,atl8) in enumerate(zip(atl03_photon_db_filenames, atl03_granules, atl08_granules)):
             df = None
 
+            # Generate a temporary empty textfile to indicate this file is currently being downloaded.
+            # This helps prevent multiple processes from downloading the files all at the same time.
+            # CAUTION: If this process is terminated or does not complete successfully and the _TEMP_DOWNLOADING.txt
+            # file is not removed, this could cause a locking problem where some/all of the processes in subsequent runs are
+            # waiting on some non-existent process to supposedly finish downloading. A locking problem.
+            # I sort of pre-empted this somewhat by
+            # deleting the file in the exception block, but if the code truly is killed instantly
+            # (say, if the power suddenly goes out on your computer)
+            # the exception block will not be reached and that will not work. This is a somewhat reliable solution
+            # under normal operating conditions and handles most typical execution errors, but is not a 100% thread-safe locking solution.
+            # A better solution would take more time to implement and this counts as "good enough for now, until the photon database is complete."
+            downloading_fbase, downloading_fext = os.path.splitext(photon_db)
+            downloading_fname = downloading_fbase + "_TEMP_DOWNLOADING.txt"
+
             df_is_read = False
             while not df_is_read:
                 # If the tile doesn't exist, get the granules needed for it.
                 if not os.path.exists(photon_db):
                     # If the granules don't exist, download them.
+
+                    # Check for existence of "_TEMP_DOWNLOADING.txt" file.
+                    # Skip if this file already exists.
+                    if os.path.exists(downloading_fname):
+                        time.sleep(1)
+                        continue
+
                     if not os.path.exists(atl3) or not os.path.exists(atl8):
+
+                        # Create an emtpy textfile marking the existence of a process
+                        # that is currently downloading the data for this granule.
+                        with open(downloading_fname, 'w') as f:
+                            f.close()
+
                         # If either of the granules aren't there, download them from NSIDC
-                        nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
-                                                         region=bbox_bounds,
-                                                         local_dir = self.etopo_config.icesat2_granules_directory,
-                                                         dates = date_range,
-                                                         download_only_matching_granules = False,
-                                                         query_only = False,
-                                                         fname_filter = os.path.split(atl3)[1][5:], # Get only the files with this granule ID number
-                                                         quiet = not verbose
-                                                         )
+                        try:
+                            list_of_files = nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
+                                                                             region=bbox_bounds,
+                                                                             local_dir = self.etopo_config.icesat2_granules_directory,
+                                                                             dates = date_range,
+                                                                             download_only_matching_granules = False,
+                                                                             query_only = False,
+                                                                             fname_filter = os.path.split(atl3)[1][5:], # Get only the files with this granule ID number
+                                                                             quiet = not verbose
+                                                                             )
+                        except Exception as e:
+                            # The download_granules() method can return an exception,
+                            # or raise one, either way, just assign it to the return
+                            # variable to be handled immediately below.
+                            list_of_files = e
+
+                        if isinstance(list_of_files, Exception):
+                            # If the download script return an exception, or one is raised, delete the file saying that a download is happening.
+                            if os.path.exists(downloading_fname):
+                                os.remove(downloading_fname)
+
+                            if isinstance(list_of_files, KeyboardInterrupt):
+                                # If the session ended because it was killed, then just exit the hell outta here. We're done.
+                                raise list_of_files
+                            else:
+                                # Otherwise, go back to the top of the loop and try again.
+                                continue
 
                     # Create the photon database if it doesn't already exist. (And grab the datframe from it.)
                     df = classify_icesat2_photons.save_granule_ground_photons(atl3,
@@ -514,13 +560,17 @@ class ICESat2_Database:
                                                                               overwrite = False,
                                                                               verbose=verbose)
 
+                    # TODO: Remove the temp downloading file.
+                    if os.path.exists(downloading_fname):
+                        os.remove(downloading_fname)
+
                 # At this point, the photon database should exist locally. So read it.
                 # Then, subset within the bounding box.
                 if df is None:
                     try:
                         df = pandas.read_hdf(photon_db, mode='r')
-                    except AttributeError:
-                        print("===== ERROR: Photon database {0} corrupted. =====".format(os.path.split(photon_db)[1]))
+                    except (AttributeError, tables.exceptions.HDF5ExtError):
+                        print("===== ERROR: Photon database {0} corrupted. Will build anew. =====".format(os.path.split(photon_db)[1]))
                         print("Removing", photon_db)
                         # Remove the corrupted database.
                         os.remove(photon_db)

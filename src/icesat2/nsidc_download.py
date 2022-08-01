@@ -671,8 +671,8 @@ def _main(short_name=None,
                 url_list = cmr_search(sname, version, time_start_str, time_end_str,
                                       bounding_box=bounding_box, polygon=polygon,
                                       filename_filter=fname_filter, quiet=quiet)
-            except KeyboardInterrupt:
-                return
+            except KeyboardInterrupt as e:
+                return e
 
             except:
                 pass
@@ -830,7 +830,10 @@ def _main(short_name=None,
         # TODO: Put a wget script here.
         pass
     else:
-        cmr_download(urls_to_download, download_dir=local_dir, force=force, quiet=quiet)
+        try:
+            cmr_download(urls_to_download, download_dir=local_dir, force=force, quiet=quiet)
+        except Exception as e:
+            return e
 
     return local_files
 
