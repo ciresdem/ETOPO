@@ -148,3 +148,4 @@ download_progress.csv
 Thumbs.db
 /.user_credentials
 *.gpkg-*
+*.feather
