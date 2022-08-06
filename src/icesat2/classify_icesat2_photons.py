@@ -13,15 +13,16 @@ import geopandas
 import os
 import shapely
 import sys
-# import timeit
-# from osgeo import ogr, osr
 
-# There are some weird import issues if we're using this file locally or calling it from another module.
-# One of these two should work.
-try:
-    import atl_granules
-except ImportError:
-    import icesat2.atl_granules as atl_granules
+####################################3
+# Include the base /src/ directory of thie project, to add all the other modules.
+import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+####################################3
+
+import icesat2.atl_granules as atl_granules
+import utils.configfile
+my_config = utils.configfile.config()
+
 
 # LISTS OF VARIABLES NEEDED FROM EACH ATL DATASET FOR THE "get_photon_data" routine.
 # ATL03_variables_needed = ["lat_ph", "lon_ph", "h_ph", "segment_ph_cnt", "segment_id",
@@ -110,7 +111,7 @@ def classify_photon_data_multiple_granules(gid_list,
 def classify_photon_data(granule_id,
                          beam=None,
                          return_type=numpy.ndarray,
-                         output_h5 = None,
+                         output_db = None,
                          overwrite = False,
                          bounding_box = None,
                          bbox_converter = None,
@@ -157,10 +158,17 @@ def classify_photon_data(granule_id,
         atl08_gid = granule_id
         atl03_gid = granule_id.replace("ATL08", "ATL03")
     else:
-        raise FileNotFoundError("Granule ID does not appear to be an ATL03 or ATL08 granule: {granule_id}")
+        raise FileNotFoundError(f"Granule ID does not appear to be an ATL03 or ATL08 granule: {granule_id}")
 
-    if (output_h5 is not None) and os.path.exists(output_h5) and (not overwrite):
-        df = pandas.read_hdf(output_h5, key="icesat2", mode="r")
+    if (output_db is not None) and (not overwrite) and (os.path.exists(output_db) or (os.path.exists(os.path.splitext(output_db)[0] + (".feather" if (os.path.splitext(output_db)[1].lower() == ".h5") else ".h5")) )):
+        base, ext = os.path.splitext(output_db)
+        ext = ext.lower()
+        if os.path.exists(base + ".feather"):
+            df = pandas.read_feather(base + ".feather")
+        else:
+            df = pandas.read_hdf(base + ".h5", key="icesat2", mode="r")
+
+
     else:
         # Get both data granules.
         atl03 = atl_granules.ATL03_granule(atl03_gid)
@@ -434,14 +442,22 @@ def classify_photon_data(granule_id,
         else:
             raise ValueError("Unknown return type: {}".format( str(return_type)))
 
-    if (output_h5 is not None) and (overwrite or not os.path.exists(output_h5)):
-        df.to_hdf(output_h5, "icesat2", mode='w', complib='zlib', complevel=3)
+    if (output_db is not None) and (overwrite or not os.path.exists(output_db)):
+        base, ext = os.path.splitext(output_db)
+        ext = ext.lower()
+        if ext == ".h5":
+            df.to_hdf(output_db, "icesat2", mode='w', complib='zlib', complevel=3)
+        else:
+            assert ext == ".feather"
+            df.to_feather(output_db,
+                          compression = my_config.feather_database_compress_algorithm,
+                          compression_level = my_config.feather_database_compress_level)
         if verbose:
-            print("\n" + os.path.split(output_h5)[1], "written with {0:,} total photons.".format(len(df)))
+            print("\n" + os.path.split(output_db)[1], "written with {0:,} total photons.".format(len(df)))
 
     # If we ware given a bounding box, only return photons that lie within that
     # bounding box. This cuts down the total data volume significantly, efficiently.
-    # NOTE: This has only been tested on the numpy.ndarray types.
+    # NOTE: This has only been tested on the numpy.ndarray and pandas.DataFrame types.
     if bounding_box:
         xmin, ymin, xmax, ymax = bounding_box
         if bbox_converter:
@@ -477,7 +493,7 @@ def classify_photon_data(granule_id,
     return df
 
 def save_photon_data_from_directory_or_list_of_granules(dirname_or_list_of_granules,
-                                                        photon_h5="photons.h5",
+                                                        photon_db="photons.h5",
                                                         bounding_box= None,
                                                         bbox_converter=None,
                                                         beam=None,
@@ -524,32 +540,59 @@ def save_photon_data_from_directory_or_list_of_granules(dirname_or_list_of_granu
 
     # If a path is given for the photon_h5 file, keep it. Otherwise, put it in the
     # current working directory.
-    if os.path.split(photon_h5)[0] == "":
-        photon_h5 = os.path.join(os.getcwd(), photon_h5)
+    if os.path.split(photon_db)[0] == "":
+        photon_db = os.path.join(os.getcwd(), photon_db)
 
-    dataframe.to_hdf(photon_h5, "icesat2", complib="zlib", complevel=3, mode='w')
+    base, ext = os.path.splitext(photon_db)
+    ext = ext.lower()
+    if ext == ".h5":
+        dataframe.to_hdf(photon_db, "icesat2", complib="zlib", complevel=3, mode='w')
+    else:
+        assert ext == ".feather"
+        dataframe.to_feather(photon_db,
+                             compression = my_config.feather_database_compress_algorithm,
+                             compression_level = my_config.feather_database_compress_level)
     if verbose:
-        print(photon_h5, "written.")
+        print(photon_db, "written.")
 
     return dataframe
 
 def read_or_create_granule_photons(granule_path,
-                                   output_h5 = None,
+                                   output_db = None,
                                    overwrite = False,
                                    verbose = True):
-    if output_h5 is None:
-        output_h5 = os.path.splitext(granule_path) + "_photons.h5"
+    if output_db is None:
+        output_db_h5 = os.path.splitext(granule_path)[0] + "_photons.h5"
+        output_db_feather = os.path.splitext(output_db)[0] + ".feather"
+        # Default to the feather file format, for quicker read/writes.
+        output_db = output_db_feather
+    else:
+        base, ext = os.path.splitext(output_db)
+        ext = ext.lower()
+        if ext == ".h5":
+            output_db_h5 = output_db
+            output_db_feather = base + ".feather"
+        else:
+            assert ext == ".feather"
+            output_db_h5 = base + ".h5"
+            output_db_feather = output_db
 
-    if os.path.exists(output_h5):
+    if os.path.exists(output_db_feather):
         if verbose:
-            print("Reading", output_h5 + "...", end="")
-        dataframe = pandas.read_hdf(output_h5, key="icesat2", mode="r")
+            print("Reading", os.path.split(output_db_feather)[1] + "...", end="")
+        dataframe = pandas.read_feather(output_db_feather)
+        if verbose:
+            print(" Done.")
+    elif os.path.exists(output_db_h5):
+        if verbose:
+            print("Reading", os.path.split(output_db_h5)[1] + "...", end="")
+        dataframe = pandas.read_hdf(output_db_h5, key="icesat2", mode="r")
         if verbose:
             print(" Done.")
 
     else:
         dataframe = save_granule_ground_photons(granule_path,
-                                                output_h5 = output_h5,
+                                                output_db = output_db,
                                                 overwrite = overwrite,
                                                 verbose = verbose)
 
@@ -557,7 +600,7 @@ def read_or_create_granule_photons(granule_path,
 
 
 def save_granule_ground_photons(granule_path,
-                                output_h5 = None,
+                                output_db = None,
                                 delete_granules = True,
                                 overwrite = False,
                                 verbose = True):
@@ -565,23 +608,33 @@ def save_granule_ground_photons(granule_path,
 
     No bounding-box subsetting, just save it all.
     """
-    if output_h5 is None:
-        output_h5 = os.path.splitext(granule_path) + "_photons.h5"
+    if output_db is None:
+        output_db = os.path.splitext(granule_path)[0] + "_photons.feather"
+
+    base, ext = os.path.splitext(output_db)
+    ext = ext.lower()
+    if ext == ".h5":
+        output_h5 = output_db
+        output_feather = base + ".feather"
+    else:
+        assert ext == ".feather"
+        output_h5 = base + ".h5"
+        output_feather = photon_db
 
     # If the granule is the ATL08 granule, name it after the ATL03 granule instead.
-    if (os.path.split(output_h5)[1].find("ATL03") < 0) and (os.path.split(output_h5)[1].find("ATL08") >= 0):
-        output_h5 = os.path.join(os.path.dirname(output_h5), os.path.split(output_h5)[1].replace("ATL08", "ATL03"))
+    if (os.path.split(output_db)[1].find("ATL03") < 0) and (os.path.split(output_db)[1].find("ATL08") >= 0):
+        output_db = os.path.join(os.path.dirname(output_db), os.path.split(output_db)[1].replace("ATL08", "ATL03"))
 
-    if os.path.exists(output_h5):
+    if os.path.exists(output_db):
         if overwrite:
-            os.remove(output_h5)
+            os.remove(output_db)
         else:
             if verbose:
-                print(output_h5, "already exists.")
+                print(output_db, "already exists.")
             return
 
     if verbose:
-        print(os.path.split(output_h5)[1], end="... ")
+        print(os.path.split(output_db)[1], end="... ")
         # Make sure it actually gets printed to the screen.
         sys.stdout.flush()
 
@@ -600,7 +653,13 @@ def save_granule_ground_photons(granule_path,
     # Save only 1,2,3 photons.
     dataframe = dataframe.loc[dataframe.class_code.between(1,3,inclusive="both")]
 
-    dataframe.to_hdf(output_h5, "icesat2", complib="zlib", complevel=3, mode='w')
+    if ext == ".h5":
+        dataframe.to_hdf(output_db, "icesat2", complib="zlib", complevel=3, mode='w')
+    else:
+        assert ext == ".feather"
+        dataframe.to_feather(output_db,
+                             compression = my_config.feather_database_compress_algorithm,
+                             compression_level = my_config.feather_database_compress_level)
 
     if verbose:
         print("Done.")

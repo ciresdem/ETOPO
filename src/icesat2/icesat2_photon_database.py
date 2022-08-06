@@ -114,7 +114,6 @@ class ICESat2_Database:
                 for tile_ymin in bbox_yrange:
                     tile_ymax = tile_ymin + self.tile_resolution_deg
                     tile_fname = os.path.join(self.tiles_directory, "photon_tile_{0:s}{1:05.2f}_{2:s}{3:06.2f}_{4:s}{5:05.2f}_{6:s}{7:06.2f}.h5".format(\
-                    # tile_fname = "photon_tile_{0:s}{1:05.2f}_{2:s}{3:06.2f}_{4:s}{5:05.2f}_{6:s}{7:06.2f}.h5".format(\
                                                             "S" if (tile_ymin < 0) else "N",
                                                             abs(tile_ymin),
                                                             "W" if (tile_xmin < 0) else "E",
@@ -412,11 +411,11 @@ class ICESat2_Database:
             # database already exists in their respective folders. It might be a good idea down
             # the line to not rely upon this assumption. Maybe include the empty tile in the
             # git repository so we ensure it's there.
-            list_of_files = [fn for fn in os.listdir(self.tiles_directory) if (re.search("\Aphoton_tile_[\w\.]+\.h5\Z", fn) != None)]
+            list_of_files = [fn for fn in os.listdir(self.tiles_directory) if (re.search("\Aphoton_tile_[\w\.]+\.((h5)|(feather))\Z", fn) != None)]
             if len(list_of_files) > 0:
                 example_file = os.path.join(self.tiles_directory, list_of_files[0])
             else:
-                list_of_files = [fn for fn in os.listdir(self.etopo_config.icesat2_granules_directory) if re.search("\AATL03_(\w)+_photons.h5", fn) != None]
+                list_of_files = [fn for fn in os.listdir(self.etopo_config.icesat2_granules_directory) if re.search("\AATL03_(\w)+_photons\.((h5)|(feather))\Z", fn) != None]
                 if len(list_of_files) == 0:
                     raise FileNotFoundError("Could not find an existing photon tile or granule to use to create the file", self.etopo_config.icesat2_photon_empty_tile)
                 example_file = os.path.join(self.etopo_config.icesat2_granules_directory, list_of_files[0])
@@ -492,6 +491,15 @@ class ICESat2_Database:
         for i,(photon_db,atl3,atl8) in enumerate(zip(atl03_photon_db_filenames, atl03_granules, atl08_granules)):
             df = None
 
+            # I am making is so the photon databases can be either .h5 or .feather database formats.
+            # .h5 (saved flat)
+            base, ext = os.path.splitext(photon_db)
+            ext = ext.lower()
+            if ext == ".h5":
+                photon_db_other = base + ".feather"
+            else:
+                photon_db_other = base + ".h5"
+
             # Generate a temporary empty textfile to indicate this file is currently being downloaded.
             # This helps prevent multiple processes from downloading the files all at the same time.
             # CAUTION: If this process is terminated or does not complete successfully and the _TEMP_DOWNLOADING.txt
@@ -509,7 +517,7 @@ class ICESat2_Database:
             df_is_read = False
             while not df_is_read:
                 # If the tile doesn't exist, get the granules needed for it.
-                if not os.path.exists(photon_db):
+                if not (os.path.exists(photon_db) or os.path.exists(photon_db_other)):
                     # If the granules don't exist, download them.
 
                     # Check for existence of "_TEMP_DOWNLOADING.txt" file.
@@ -556,7 +564,7 @@ class ICESat2_Database:
 
                     # Create the photon database if it doesn't already exist. (And grab the datframe from it.)
                     df = classify_icesat2_photons.save_granule_ground_photons(atl3,
-                                                                              output_h5 = photon_db,
+                                                                              output_db = photon_db,
                                                                               overwrite = False,
                                                                               verbose=verbose)
 
@@ -568,13 +576,23 @@ class ICESat2_Database:
                 # Then, subset within the bounding box.
                 if df is None:
                     try:
-                        df = pandas.read_hdf(photon_db, mode='r')
+                        if ext == ".h5":
+                            df = pandas.read_hdf(photon_db, mode='r')
+                        else:
+                            df = pandas.read_feather(photon_db)
                     except (AttributeError, tables.exceptions.HDF5ExtError):
-                        print("===== ERROR: Photon database {0} corrupted. Will build anew. =====".format(os.path.split(photon_db)[1]))
-                        print("Removing", photon_db)
+                        db_to_remove = photon_db if os.path.exists(photon_db) else photon_db_other
+                        print("===== ERROR: Photon database {0} corrupted. Will build anew. =====".format(os.path.split(db_to_remove)[1]))
+                        print("Removing", db_to_remove)
                         # Remove the corrupted database.
                         os.remove(photon_db)
                         continue
+                    except FileNotFoundError:
+                        # If the file is not found, try to find the other one. One of them should be in here.
+                        if ext == ".h5":
+                            df = pandas.read_feather(photon_db_other)
+                        else:
+                            df = pandas.read_hdf(photon_db_other, mode='r')
 
                 # Select only photons within the bounding box, that are land (class_code==1) or canopy (==2,3) photons
                 df_subset = df[df.longitude.between(bbox_bounds[0], bbox_bounds[2], inclusive="left") & \
@@ -591,7 +609,14 @@ class ICESat2_Database:
         else:
             tile_df = pandas.concat(photon_dfs, ignore_index=True)
         # Save the database.
-        tile_df.to_hdf(tilename, "icesat2", complib="zlib", complevel=3, mode='w')
+        ext_out = os.path.splitext(tilename)[1].lower()
+
+        if ext_out == ".h5":
+            tile_df.to_hdf(tilename, "icesat2", complib="zlib", complevel=3, mode='w')
+        elif ext_out == ".feather":
+            tile_df.to_feather(tilename,
+                               compression=self.etopo_config.feather_database_compress_algorithm,
+                               compression_level=self.etopo_config.feather_database_compress_level)
         if verbose:
             print(os.path.split(tilename)[1], "written.")
 
@@ -640,7 +665,7 @@ class ICESat2_Database:
 
         num_files_removed = 0
         for csv_fname in csv_filenames:
-            tile_fname = csv_fname.replace("_summary.csv", ".h5")
+            tile_fname = csv_fname.replace("_summary.csv", ".h5") # Right now this only works if .h5 names are in the database. TOOD: Change for future inclusion of .h5 or .feather.
             gdf_record = gdf.loc[gdf.filename == tile_fname]
             assert len(gdf_record) == 1
             if gdf_record['is_populated'].tolist()[0] == True:
@@ -729,9 +754,30 @@ class ICESat2_Database:
     def read_photon_tile(self, tilename):
         """Read a photon tile. If the tilename doesn't exist, return None."""
         # Check to make sure this is actually an HDF5 file we're reading.
-        assert os.path.splitext(tilename)[1].lower() == ".h5"
+        ext = os.path.splitext(tilename)[1].lower()
+        assert ext in (".h5",".feather")
         # Read it here and return it. Pretty simple.
-        return pandas.read_hdf(tilename, mode='r')
+
+        # To make the HDF5 and Feather formats basically interchangeable, first look for the one.
+        # Then if you can't find it, look for the other.
+        if ext == ".h5":
+            try:
+                return pandas.read_hdf(tilename, mode='r')
+            except FileNotFoundError:
+                feather_name = os.path.splitext(tilename)[0] + ".feather"
+                if os.path.exists(feather_name):
+                    return pandas.read_feather(tilename)
+                else:
+                    return None
+        else:
+            try:
+                return pandas.read_feather(tilename)
+            except FileNotFoundError:
+                h5_name = os.path.splitext(tilename)[0] + ".h5"
+                if os.path.exists(h5_name):
+                    return pandas.read_hdf(tilename, mode='r')
+                else:
+                    return None
 
     def get_tiling_progress_mapname(self):
         """Output a map of the tiling progress so far.

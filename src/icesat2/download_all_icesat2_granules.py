@@ -700,9 +700,9 @@ def generate_all_photon_tiles(map_interval = 25,
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
 
-            # For now, speed things up. We already know everything from -58 S to +58 N is finished.
+            # For now, speed things up. We already know everything from -78 S to +78 N is finished, just skip ahead.
             # TODO: Delete later when finished, or when rebuilding the database.
-            if -68 <= ymin <= 68:
+            if -78 <= ymin <= 78:
                 continue
 
             # A flag to see if any tiles have been actually generated in this box.
@@ -724,7 +724,9 @@ def generate_all_photon_tiles(map_interval = 25,
                 in zip(fnames, tile_xmins, tile_xmaxs, tile_ymins, tile_ymaxs, is_populated_list):
                 # If the tile already exists and we're not overwriting, and it's already populated in the database, just skip it and move along.
                 summary_csv_fname = os.path.splitext(tilename)[0] + "_summary.csv"
-                if not overwrite and os.path.exists(tilename) and (is_populated or os.path.exists(summary_csv_fname)):
+                if not overwrite and \
+                    (os.path.exists(os.path.splitext(tilename)[0]+".h5") or os.path.exists(os.path.splitext(tilename)[0]+".feather")) \
+                     and (is_populated or os.path.exists(summary_csv_fname)):
                     continue
 
                 # We'll just keep looping until this process gets added onto the queue.
@@ -764,6 +766,8 @@ def generate_all_photon_tiles(map_interval = 25,
                     # If we have space available in the running process queue, kick this off.
                     if len(running_procs_list) < numprocs:
                         # Create the new process with the args here.
+                        # Save it as a feather file rather than a .h5 file.
+                        tilename = tilename.replace(".h5", ".feather")
                         newproc = multiprocessing.Process(target=is2db.create_photon_tile,
                                                           args=((tile_xmin, tile_ymin, tile_xmax, tile_ymax),
                                                                 tilename),
@@ -781,7 +785,7 @@ def generate_all_photon_tiles(map_interval = 25,
                         running_procs_list.append(newproc)
                         process_started = True
 
-                    # Sleep for 1/100 th of a second, enough to keep this loop from eating CPU continuously.
+                    # Sleep for 1/100 th of a second, enough to keep this loop from eating CPU egregiously.
                     time.sleep(0.01)
 
                 if (tiles_built_since_last_map_output_counter >= map_interval) and mapping_process is None:
@@ -836,7 +840,7 @@ def generate_all_photon_tiles(map_interval = 25,
     except Exception as e:
         # Generally speaking, if we error out, it'll likely be during the (long) generation
         # of tile tile .h5 file. If we'd already created that file but hadn't yet created the _summary.csv,
-        # then just get rid of it.
+        # then it is probably only a partially-written tile. Just get rid of it.
         for fname in running_fnames_list:
             if overwrite or (os.path.exists(fname) and not os.path.exists(os.path.splitext(fname)[0] + "_summary.csv")):
                 print("Deleting partial file", os.path.split(fname)[1])
