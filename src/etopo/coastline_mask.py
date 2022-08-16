@@ -41,7 +41,8 @@ def is_this_run_in_ipython():
         return False
 
 def get_bounding_box_and_step(gdal_dataset, invert_for_waffles=False):
-    """Get the [xmin, xmax, ymin, ymax] from the gdal geotransform, as well as the [xstep, ystep]."""
+    """Get the [xmin, ymin, xmax, ymax] from the gdal geotransform, as well as the [xstep, ystep].
+    If 'invert_for_waffles', bbox returned as [xmin, xmax, ymin, ymax]."""
     geotransform = gdal_dataset.GetGeoTransform()
     x_size, y_size = gdal_dataset.RasterXSize, gdal_dataset.RasterYSize
 
