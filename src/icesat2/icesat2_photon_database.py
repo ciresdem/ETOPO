@@ -704,7 +704,7 @@ class ICESat2_Database:
         # Get the filenames from the csv files.
         csv_filenames = [os.path.join(self.tiles_directory,fname) for fname in os.listdir(self.tiles_directory) if (re.search("_summary\.csv\Z", fname) != None)]
         if verbose and len(csv_filenames) > 0:
-            print("Found", len(csv_filenames), "csv records to update the tile database. ", end="")
+            print("Found", len(csv_filenames), "csv records to update the tile database... ", end="")
 
         # print(gdf)
 
@@ -717,6 +717,10 @@ class ICESat2_Database:
             # print(csv_gdf['filename'].tolist()[0])
             # insert the record into the database.
             gdf_record = gdf.loc[gdf.filename == csv_gdf['filename'].tolist()[0]]
+            # Sometimes the filename can be a .feather but the database still has a .h5 listed in it. Try that instead.
+            if len(gdf_record) == 0:
+                fname = os.path.splitext(csv_gdf['filename'].tolist()[0])[0] + ".h5"
+                gdf_record = gdf.loc[gdf.filename == fname]
             # print(gdf_record)
             idx = gdf_record.index
             # print(idx)
@@ -738,7 +742,7 @@ class ICESat2_Database:
         self.gdf = gdf
 
         if verbose and len(csv_filenames) > 0:
-            print("Done.")
+            print("done updating.")
 
         if len(csv_filenames) > 0 and save_to_disk:
             if verbose:

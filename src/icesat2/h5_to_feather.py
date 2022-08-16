@@ -78,8 +78,8 @@ def convert_files_in_directory(dirname,
                 feather_size = os.stat(feather_name).st_size
                 print(prog_str,
                       os.path.split(feather_name)[1],
-                      "{0:<20s}".format("{0} -> {1}".format(utils.sizeof_format.sizeof_fmt(h5_size),
-                                                                     utils.sizeof_format.sizeof_fmt(feather_size))),
+                      "{0:>8s} -> {1:>8s}".format(utils.sizeof_format.sizeof_fmt(h5_size),
+                                                  utils.sizeof_format.sizeof_fmt(feather_size)),
                       "({0:>6s})".format("{0:+.1f}%".format(100.0 * (feather_size - h5_size) / h5_size)))
             else:
                 print(os.path.split(feather_name)[1], "NOT written." + ("" if os.path.exists(h5) else " Deleted."))

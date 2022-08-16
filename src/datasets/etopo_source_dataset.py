@@ -90,12 +90,12 @@ class ETOPO_source_dataset:
             self.geopkg = dataset_geopackage.DatasetGeopackage(self.config)
         return self.geopkg
 
-    def get_geodataframe(self, verbose=True):
+    def get_geodataframe(self, resolution_s = 15, verbose=True):
         """Retrieve the geodataframe of the tile outlines. The geometries are polygons.
         If the dataframe does not exist where it says, it will be created.
         """
         geopkg = self.get_geopkg_object(verbose=verbose)
-        return geopkg.get_gdf(verbose=verbose)
+        return geopkg.get_gdf(resolution_s = resolution_s, verbose=verbose)
 
     def get_crs(self, as_epsg=True):
         """Get the CRS or EPSG of the coordinate reference system associated with this dataset."""
@@ -105,14 +105,14 @@ class ETOPO_source_dataset:
         else:
             return gdf.crs
 
-    def create_waffles_datalist(self, verbose=True):
+    def create_waffles_datalist(self, resolution_s = None, verbose=True):
         """Create a datalist file for the dataset, useful for cudem "waffles" processing.
         It will use the same name as the geopackage
         object, just substituting '.gpkg' for '.datalist'.
         """
-        datalist_fname = self.get_datalist_fname()
+        datalist_fname = self.get_datalist_fname(resolution_s = resolution_s)
 
-        gdf = self.get_geodataframe(verbose=verbose)
+        gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
         filenames = gdf['filename'].tolist()
         DLIST_DTYPE = 200 # Datalist rasters are data-type #200
         ranking_score = self.get_dataset_ranking_score()
@@ -126,23 +126,34 @@ class ETOPO_source_dataset:
             if verbose:
                 print(datalist_fname, "written.")
 
-    def get_datalist_fname(self):
+    def get_datalist_fname(self, resolution_s=15):
         """Derive the source datalist filename from the geopackage filename.
         Just substitute .gpkg or .datalist
         """
-        return os.path.splitext(self.config._abspath(self.config.geopackage_filename))[0] + ".datalist"
+        # If the geopackage filename contains a {0} to insert a resolution (1 or 15), use it.
+        if self.config.geopackage_filename.find("{0}") >= 0:
+            gpkg_fname = self.config.geopackage_filename.format(resolution_s)
+        else:
+            gpkg_fname = self.config.geopackage_filename
+        return os.path.splitext(self.config._abspath(gpkg_fname))[0] + ".datalist"
 
     def retrieve_all_datafiles_list(self, verbose=True):
         """Return a list of every one of the DEM tiff data files in this dataset."""
         gdf = self.get_geodataframe()
         return gdf['filename'].tolist()
 
-    def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs, verbose=True):
+    def retrieve_list_of_datafiles_within_polygon(self, polygon, polygon_crs, return_fnames_only=True, verbose=True):
         """Given a shapely polygon object, return a list of source data files that
-        intersect that polygon (even if only partially)."""
+        intersect that polygon (even if only partially).
+
+        If return_fnames_only is True, just return a list of the filenames.
+        Else, return the subset of the dataframe table."""
         geopkg = self.get_geopkg_object(verbose=verbose)
         subset = geopkg.subset_by_polygon(polygon, polygon_crs)
-        return subset["filename"].tolist()
+        if return_fnames_only:
+            return subset["filename"].tolist()
+        else:
+            return subset
 
     def vdatum_shift_original_tiles(self, input_tile_fname,
                                           output_tile_fname,
@@ -284,4 +295,6 @@ if __name__ == "__main__":
     # print(COP.config.dem_ndv)
     # COP.set_ndv_individual_tile("/home/mmacferrin/Research/DATA/DEMs/CopernicusDEM/data/30m/COP30_hh/Copernicus_DSM_COG_10_N00_00_E006_00_DEM.tif",
     #                             COP.config.dem_ndv)
-#     print(get_source_dataset_object("CopernicusDEM"))
+
+    GB = get_source_dataset_object("global_lakes_globathy")
+    GB.create_waffles_datalist(resolution_s = 1)
