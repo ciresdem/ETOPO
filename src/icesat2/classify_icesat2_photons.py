@@ -613,13 +613,13 @@ def save_granule_ground_photons(granule_path,
 
     base, ext = os.path.splitext(output_db)
     ext = ext.lower()
-    if ext == ".h5":
-        output_h5 = output_db
-        output_feather = base + ".feather"
-    else:
-        assert ext == ".feather"
-        output_h5 = base + ".h5"
-        output_feather = photon_db
+    # if ext == ".h5":
+    #     output_h5 = output_db
+    #     output_feather = base + ".feather"
+    # else:
+    #     assert ext == ".feather"
+    #     output_h5 = base + ".h5"
+    #     output_feather = output_db
 
     # If the granule is the ATL08 granule, name it after the ATL03 granule instead.
     if (os.path.split(output_db)[1].find("ATL03") < 0) and (os.path.split(output_db)[1].find("ATL08") >= 0):
