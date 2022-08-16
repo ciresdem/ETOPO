@@ -21,7 +21,7 @@ class config:
         self._parse_config_into_attrs()
 
 
-    def _abspath(self, path, only_if_actual_path_doesnt_exist=True):
+    def _abspath(self, path, only_if_actual_path_doesnt_exist=False):
         """In this project, absolute paths are relative to the location of the
         configfile. In this case. join them with the path to the config file and
         return an absolute path rather than a relative path."""
