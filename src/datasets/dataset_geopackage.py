@@ -44,17 +44,27 @@ class DatasetGeopackage:
         self.default_layer_name = "DEMs"
         self.regex_filter = self.config.datafiles_regex
 
-    def get_gdf(self, verbose=True):
+    def get_gdf_filename(self, resolution_s = None):
+        if (self.filename.find("{0}") >= 0) and (resolution_s != None):
+            return self.filename.format(resolution_s)
+        else:
+            return self.filename
+
+    def get_gdf(self, resolution_s = None, verbose=True):
+
+        filename = self.get_gdf_filename(resolution_s = resolution_s)
+
         if not self.gdf is None:
             return self.gdf
-        elif os.path.exists(self.filename):
-            self.gdf = geopandas.read_file(self.filename, layer=self.default_layer_name)
+
+        elif os.path.exists(filename):
+            self.gdf = geopandas.read_file(filename, layer=self.default_layer_name)
             if verbose:
-                print(self.filename, "read.")
+                print(filename, "read.")
         else:
             if verbose:
-                print(self.filename, "does not exist. Creating...")
-            self.gdf = self.create_dataset_geopackage(dir_or_list_of_files=self.base_dir,
+                print(filename, "does not exist. Creating...")
+            self.gdf = self.create_dataset_geopackage(resolution_s = resolution_s,
                                                       verbose=verbose)
             if verbose:
                 print("Done.")
@@ -62,6 +72,7 @@ class DatasetGeopackage:
         return self.gdf
 
     def create_dataset_geopackage(self, dir_or_list_of_files = None,
+                                        resolution_s = None,
                                         recurse_directory = True,
                                         allow_epsg_matches_only = True,
                                         verbose = True):
@@ -77,7 +88,15 @@ class DatasetGeopackage:
 
         If geopackage_to_write is given, writes out the geopackage."""
         if not dir_or_list_of_files:
-            dir_or_list_of_files = self.base_dir
+            if resolution_s is None:
+                dir_or_list_of_files = self.base_dir
+            else:
+                if resolution_s == 15 and hasattr(self.config, "source_datafiles_directory_15s"):
+                    dir_or_list_of_files = self.config._abspath(self.config.source_datafiles_directory_15s)
+                elif resolution_s == 1 and hasattr(self.config, "source_datafiles_directory_1s"):
+                    dir_or_list_of_files = self.config._abspath(self.config.source_datafiles_directory_1s)
+                else:
+                    dir_or_list_of_files = self.base_dir
 
         # geopackage_to_write = self.base_dir
 
@@ -163,9 +182,11 @@ class DatasetGeopackage:
         gdf = geopandas.GeoDataFrame(gdf_dict, geometry="geometry", crs=dset_crs)
 
         # Save the output file as a GeoPackage.
-        gdf.to_file(self.filename, layer=self.default_layer_name, driver="GPKG")
+        gpkg_fname = self.get_gdf_filename(resolution_s = resolution_s)
+
+        gdf.to_file(gpkg_fname, layer=self.default_layer_name, driver="GPKG")
         if verbose:
-            print(self.filename, "written with {0} data tile outlines.".format(len(gdf.index)))
+            print(gpkg_fname, "written with {0} data tile outlines.".format(len(gdf.index)))
 
         return gdf
 
@@ -327,21 +348,24 @@ def create_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    ET1 = ETOPO_Geopackage(1)
-    # print(ET1.get_gdf().columns)
-    # print(ET1.get_gdf())
-    ET1.create_dataset_geopackage()
-    ET1.add_dlist_paths_to_gdf()
     import sys
     sys.exit(0)
 
-    args = create_and_parse_args()
-    dataset_object = DatasetGeopackage(args.geopackage_file,
-                                       base_dir=args.directory_name)
+    # ET1 = ETOPO_Geopackage(1)
+    # # print(ET1.get_gdf().columns)
+    # # print(ET1.get_gdf())
+    # ET1.create_dataset_geopackage()
+    # ET1.add_dlist_paths_to_gdf()
+    # import sys
+    # sys.exit(0)
 
-    dataset_object.create_dataset_geopackage(dir_or_list_of_files = args.directory_name,
-                                             geopackage_to_write = args.geopackage_file,
-                                             recurse_directory= not args.no_recurse,
-                                             file_filter_regex=args.file_filter_regex,
-                                             verbose = not args.quiet
-                                             )
+    # args = create_and_parse_args()
+    # dataset_object = DatasetGeopackage(args.geopackage_file,
+    #                                    base_dir=args.directory_name)
+
+    # dataset_object.create_dataset_geopackage(dir_or_list_of_files = args.directory_name,
+    #                                          geopackage_to_write = args.geopackage_file,
+    #                                          recurse_directory= not args.no_recurse,
+    #                                          file_filter_regex=args.file_filter_regex,
+    #                                          verbose = not args.quiet
+    #                                          )
