@@ -17,6 +17,10 @@ my_config = utils.configfile.config()
 # Define a quick little function for taking an int/float/str and turning it into a 2-digit zero-padded integer string representation.
 # We use this little function several times in the following lines.
 def num_to_2digit_str(int_float_or_str):
+    """Return a zero-leading two-digit representation of an integer.
+
+    Can take int, float or str formats. This is used multiple times by move_granules_to_alternate_location(),
+    so I made a quick little helper function for it."""
     return "{0:02d}".format(int(int_float_or_str))
 
 
@@ -27,7 +31,7 @@ def bytes_available_on_drive(file_location):
 
 def move_granules_to_alternate_location(src = my_config.icesat2_granules_directory,
                                         dst = my_config.icesat2_granules_directory_alternate,
-                                        region_numbers = [1,2,6,7,8,9,13,14]):
+                                        region_numbers = [1,2,3,5,6,7,8,9,10,12,13,14]):
     """Hard drive is filling up, making it difficult to work. Here, move some of the granules off
     to an external hard drive. Specify region numbers so that we can know to only move granules
     that have already been fully-processed into "tile" files, so it won't affect our processing
@@ -35,7 +39,7 @@ def move_granules_to_alternate_location(src = my_config.icesat2_granules_directo
 
     # Will replace [SEGMENT_NUMBER] with the 2-digit segment number here, or the regex to select from a list of segment numbers.
     # Looking either for raw ATL03/ATL08 grnaule names, or the derived "_photons.h5" files generated from them.
-    icesat2_granule_template = r"ATL0[38]_(\d){14}_(\d){6}[SEGMENT_NUMBER]_(\d){3}_(\d){2}(_photons)?\.h5"
+    icesat2_granule_template = r"ATL0[38]_(\d){14}_(\d){6}[SEGMENT_NUMBER]_(\d){3}_(\d){2}(_photons)?\.((h5)|(feather))"
 
     if type(region_numbers) in (int, float, str):
         region_str = num_to_2digit_str(region_numbers)
