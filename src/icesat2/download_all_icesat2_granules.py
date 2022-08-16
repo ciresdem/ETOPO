@@ -678,7 +678,7 @@ def generate_all_photon_tiles(map_interval = 25,
     if overwrite:
         N_so_far = 0
     else:
-        N_so_far = len([fname for fname in os.listdir(is2db.tiles_directory) if re.search('\Aphoton_tile_[\w\.]+\.h5\Z', fname) != None])
+        N_so_far = len([fname for fname in os.listdir(is2db.tiles_directory) if re.search('\Aphoton_tile_[\w\.]+\.((h5)|(feather))\Z', fname) != None])
     assert (N >= N_so_far)
     N_to_do = N - N_so_far
     if verbose:
@@ -760,7 +760,7 @@ def generate_all_photon_tiles(map_interval = 25,
                         writing_gpkg_process.join()
                         writing_gpkg_process.close()
                         if verbose:
-                            print(os.path.split(is2db.gpkg_fname)[1], "written.")
+                            print(os.path.split(is2db.gpkg_fname)[1].strip(), "written.")
                         writing_gpkg_process = None
 
                     # If we have space available in the running process queue, kick this off.
