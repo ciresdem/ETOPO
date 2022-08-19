@@ -316,7 +316,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         If "save_to_file_if_not_already_there", save this datalsit to the file
         if it doesn't already exist in the geodataframe."""
-        gdf = self.get_gdf(resolution_s = self.resolution, verbose=verbose)
+        gdf = self.get_gdf(verbose=verbose)
 
         # If the "dlist" column already exists, just return it.
         if 'dlist' in gdf.columns:
