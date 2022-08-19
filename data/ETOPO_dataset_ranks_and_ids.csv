@@ -1,0 +1,24 @@
+dset_name,name_long,ranking_score,id_number,vdatum_name,vdatum_epsg,is_active
+AW3D30,ALOS World 3D 30m,0,9,EGM96,5773,False
+ArcticDEM,Arctic DEM,1,4,WGS84,4326,False
+BedMachine,BedMachine,0,8,,0,False
+BlueTopo,BlueTopo,5,5,NAVD88,5703,True
+CUDEM_AmericanSamoa,CUDEM American Samoa,6,6,ASVD02,6643,True
+CUDEM_CONUS,CUDEM Continental US,7,7,NAVD88,5703,True
+CUDEM_Guam,CUDEM Guam,8,8,GUVD04,6644,True
+CUDEM_Hawaii,CUDEM Hawaii,9,9,MSL,5174,True
+CUDEM_Northern_Mariana,CUDEM Northern Mariana Islands,10,10,GUVD04,6644,True
+CUDEM_Puerto_Rico,CUDEM Puerto Rico,11,11,PRVD02,6641,True
+CUDEM_USVI,CUDEM US Virgin Islands,12,12,PRVD02,6641,True
+CoastalDEM,CoastalDEM,0,14,,0,False
+CopernicusDEM,Copernicus DEM,3,3,EGM2008,3855,True
+EMODnet,EMODnet,0,11,MSL,5714,False
+ETOPO1,ETOPO1,0,-1,msl,5714,False
+FABDEM,FABDEM,4,4,EGM2008,3855,True
+GEBCO,GEBCO,1,1,MSL,5714,True
+GLOBathy,GLOBathy,11,0,,0,False
+NASADEM,NASA DEM,0,12,EGM96,5773,False
+REMA,REMA,0,5,WGS84,4326,False
+TanDEMX,TanDEMX,2,2,WGS84,7660,True
+global_lakes_gebco,Global Lakes GEBCO-derived,14,14,EGM2008,3855,True
+global_lakes_globathy,Global Lakes GLOBathy-derived,13,13,EGM2008,3855,True
