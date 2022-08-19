@@ -5,7 +5,6 @@
 
 import os
 import imp # TODO: Use an implementation using importlib (imp has been deprecated)
-# import shutil
 import shapely.geometry
 import subprocess
 import multiprocessing
@@ -14,6 +13,9 @@ import time
 import re
 import shutil
 import pathlib
+import sys
+import pandas
+import datetime
 
 try:
     import cudem
@@ -36,6 +38,7 @@ import utils.progress_bar
 import utils.parallel_funcs
 import utils.traverse_directory
 import datasets.dataset_geopackage as dataset_geopackage
+import datasets.etopo_source_dataset
 
 class ETOPO_Generator:
     # Tile naming conventions. ETOPO_2022_v1_N15E175.tif, e.g.
@@ -140,6 +143,176 @@ class ETOPO_Generator:
     #         print("-------", dset_name, ":")
     #         dset_obj = datasets_dict[dset_name]
     #         dset_obj.create_waffles_datalist(verbose=verbose)
+
+    def replace_config_value(self, all_txt, configfilename, fieldname, replacement_value):
+        """Quick little helper function to replace the text of a value with another value in a configfile text string."""
+        # Find the fieldname with either whitespace, newline, or \A (start of string) in front of it.
+        # First find the fieldname
+
+        try:
+            fieldname_span = re.search(r"\s" + fieldname.strip(), all_txt).span()
+        except AttributeError:
+            try:
+                fieldname_span = re.search(r"\A" + fieldname.strip(), all_txt).span()
+            except AttributeError:
+                raise AttributeError("Configfile '{0}' has no attribute '{1}'.".format(os.path.split(configfilename)[1], fieldname))
+
+        txt_after_fieldname = all_txt[fieldname_span[1]:]
+        # Find the equal sign surrounded by any whitespace.
+        equal_span = re.search("(\s*)=(\s*)", txt_after_fieldname).span()
+        # This span should start at 0. Check that.
+        assert equal_span[0] == 0
+        txt_after_equal = txt_after_fieldname[equal_span[1]:]
+
+        # Get the right pattern for the dtype involved, for int, float, str
+        # NOTE: This assumes the input value is the same type as the value replacing it.
+        # This may break if that isn't true, but it should be true in this case.
+        if type(replacement_value) == int:
+            pstr = "\A(\-?)(\d+)"
+        elif type(replacement_value) == float:
+            # if numpy.isnan(replacement_value):
+                # If it's a Nan value, could just be an empty string. Treat it as such.
+            pstr = "\A((\-?)((\d+\.\d*)|(\d*\.\d+))|(\w+)|((?P<quote>[\'\"]).*?(?P=quote)))"
+            # Floating points must have a decimal place, with integers either preceding it or after it.
+            # pstr = "\A((\d+\.\d*)|(\d*\.\d+))"
+        elif type(replacement_value) in (str, type(None)):
+            # Look for either single words alone or groups of words surrounded by a single-or-double quote.
+            # Same if we're replacing it with None, we'll just do an empty string.
+            pstr = r'\A((\w+)|((?P<quote>[\'\"]).*?(?P=quote)))'
+        elif type(replacement_value) == bool:
+            # Look for "True" or "False"
+            pstr = r'((True)|(False))'
+        else:
+            raise TypeError("Uknown type of value for '{0}': {1}".format(replacement_value, type(replacement_value)))
+
+        try:
+            value_span = re.search(pstr, txt_after_equal, flags=re.MULTILINE).span()
+        except AttributeError:
+            raise ValueError('Regex call:\n\tre.search(r"{0}", r\'{1}\') returned None.'.format(
+                pstr, txt_after_equal))
+
+        if type(replacement_value) == str:
+            # If this string has whitespace in it, surround it with quotes if it isn't already.
+            if re.search("\s", replacement_value) != None:
+                if replacement_value[0] not in ('"', "'"):
+                    replacement_value = '"' + replacement_value
+                if replacement_value[-1] != replacement_value[0]:
+                    replacement_value = replacement_value + replacement_value[0]
+        elif type(replacement_value) == type(None):
+            replacement_value = '""'
+        elif type(replacement_value) == float and numpy.isnan(replacement_value):
+            replacement_value = '""'
+
+        # If the existing value is the same as what we're replacing it with, just return the original text unchanged.
+        if txt_after_equal[value_span[0]:value_span[1]] == str(replacement_value):
+            return all_txt
+
+        # Return the entire string before the previous value,
+        # the string of the replacement value,
+        # and all the text after the previous value.
+        return all_txt[:(fieldname_span[1] + equal_span[1])] + \
+            str(replacement_value) + \
+            all_txt[(fieldname_span[1] + equal_span[1] + value_span[1]):]
+
+
+    def write_ranks_and_ids_from_csv(self, save_old = True, verbose=True):
+        """Write out any changes to the "ranks_and_ids" csv back to the respective
+        config.ini files of the objects. This speeds up editing significantly.
+
+        If 'save_old', then save the old configfile to an _old.ini file to preserve it."""
+        csv_name = self.etopo_config._abspath(self.etopo_config.etopo_dataset_ranks_and_ids_csv)
+        if not os.path.exists(csv_name):
+            raise FileNotFoundError(csv_name + " does not exist.")
+
+        df = pandas.read_csv(csv_name, index_col=False)
+
+        # a small dictionary for translating CSV field names to config.ini field names.
+        fieldnames_lookup = {"name_long"    : "dataset_name",
+                             "ranking_score": "default_ranking_score",
+                             "id_number"   : "dataset_id_number",
+                             "vdatum_name"  : "dataset_vdatum_name",
+                             "vdatum_epsg"  : "dataset_vdatum_epsg",
+                             "is_active"    : "is_active"}
+
+        for _, row in df.iterrows():
+            dset_obj = datasets.etopo_source_dataset.get_source_dataset_object(row["dset_name"])
+            configfile = dset_obj.configfilename
+
+            if save_old:
+                base, ext = os.path.splitext(configfile)
+                old_configfile = base + "_old" + ext
+                # Copy the current configfile over to the "_old" version. Overwrite the 'old' old if it already exists.
+                shutil.copy(configfile, old_configfile)
+                if verbose:
+                    print(os.path.split(old_configfile)[1], "written.")
+
+            with open(configfile, 'r') as f:
+                c_txt = f.read()
+
+            for fieldname in row.keys():
+                # Skip the name of the dataset, which doesn't appear in the configfile.
+                if fieldname == "dset_name":
+                    continue
+                # Replace the text of the configfile with the value given in the CSV.
+                fieldname_config = fieldnames_lookup[fieldname]
+                c_txt = self.replace_config_value(c_txt, configfile, fieldname_config, row[fieldname])
+
+            with open(configfile, 'w') as f:
+                f.write(c_txt)
+                if verbose:
+                    print(os.path.split(configfile)[1], "written.")
+
+        return
+
+    def export_ranks_and_ids_csv(self, verbose=True):
+        """This is not used by the code, but output a list of all the ETOPO datasets,
+        with their ranks and ID numbers, and "is_active" status, and whether or not the
+        datalist for it exists yet. This is useful for tweaking all the ranks
+        and id #'s in the respective config.ini files and avoiding conflicts between
+        datasets."""
+        dsets_dict = self.fetch_etopo_source_datasets(active_only=False, verbose=verbose, return_type=dict)
+
+        dset_names = []
+        dset_names_long = []
+        dset_ranks = []
+        dset_ids = []
+        dset_vdatum_names = []
+        dset_vdatum_epsgs = []
+        dset_is_actives = []
+
+        for dset_name in sorted(dsets_dict.keys()):
+            config = dsets_dict[dset_name].config
+
+            try:
+                dset_names.append(dset_name)
+                dset_names_long.append(config.dataset_name)
+                dset_ranks.append(config.default_ranking_score)
+                dset_ids.append(config.dataset_id_number)
+                dset_vdatum_names.append(config.dataset_vdatum_name)
+                dset_vdatum_epsgs.append(config.dataset_vdatum_epsg)
+                dset_is_actives.append(config.is_active)
+            except AttributeError as e:
+                print("ERROR: Dataset {0} doesn't have a '{1}' attribute in {2}".format(
+                       dset_name,
+                       re.search("(?<=has no attribute \')\w+(?=\')", str(e)).group(),
+                       config._configfile),
+                            file=sys.stderr)
+                raise e
+
+        df = pandas.DataFrame(data = {"dset_name": dset_names,
+                                      "name_long": dset_names_long,
+                                      "ranking_score": dset_ranks,
+                                      "id_number": dset_ids,
+                                      "vdatum_name": dset_vdatum_names,
+                                      "vdatum_epsg": dset_vdatum_epsgs,
+                                      "is_active": dset_is_actives})
+
+        csv_name = self.etopo_config._abspath(self.etopo_config.etopo_dataset_ranks_and_ids_csv)
+        df.to_csv(csv_name, index=False)
+        if verbose:
+            print(os.path.split(csv_name)[1], "written with {0} entries.".format(len(df)))
+
+        return df
 
     def generate_etopo_tile_datalist(self, resolution=1,
                                            etopo_tile_fname = None,
@@ -255,8 +428,19 @@ class ETOPO_Generator:
     #     # TODO: Finish
     #     pass
 
+
+    def add_datestamp_to_filename(self, tilename):
+        """Add a _YYYY.MM.DD stamp to the end of the ETOPO filename.
+
+        Useful when debugging the ETOPO tiles."""
+        base, ext = os.path.splitext(tilename)
+        nowstr = datetime.datetime.now().strftime("%Y.%m.%d")
+        assert len(nowstr) == 10
+        return base + "_" + nowstr + ext
+
     def generate_all_etopo_tiles(self, resolution=1,
                                        numprocs=utils.parallel_funcs.physical_cpu_count(),
+                                       add_datestamp_to_files = False,
                                        overwrite=False,
                                        verbose=True):
         """Geenerate all of the ETOPO tiles at a given resolution."""
@@ -289,8 +473,8 @@ class ETOPO_Generator:
         active_procs = []
         active_tempdirs = []
         total_finished_procs = 0
-        # N = 6
-        N = len(etopo_tiles)
+        N = 6
+        # N = len(etopo_tiles)
         waiting_procs = [None] * N
         temp_dirnames = [None] * N
         current_max_running_procs = numprocs # "max_running_procs" can change depending how many tiles are left.
@@ -304,6 +488,10 @@ class ETOPO_Generator:
                 break
 
             dest_tile = tile.replace("empty_tiles", "finished_tiles")
+            # If we're debugging, add the datestamp to the end of the filename.
+            if add_datestamp_to_files:
+                dest_tile = self.add_datestamp_to_filename(dest_tile)
+
             # If the destination tile already exists, just leave it and put a None in the process' place
             if (not overwrite) and os.path.exists(dest_tile):
                 proc = None
@@ -467,7 +655,7 @@ class ETOPO_Generator:
         self.datasets_dict = dataset_objects_dict
 
         if verbose:
-            print("Datasets active:", ", ".join([d for d in sorted(self.datasets_dict.keys())]))
+            print("Datasets ", "(Active) " if active_only else "", ":" + ", ".join([d for d in sorted(self.datasets_dict.keys())]))
 
         if return_type == dict:
             return self.datasets_dict
@@ -588,11 +776,17 @@ def generate_single_etopo_tile(dest_tile_fname,
                                verbose = True):
     """Use waffles to generate an ETOPO tiles from a datalist.
 
-    Defined as a standalone process to more easilyi enable multi-processing."""
+    Defined as a standalone process to more easily enable multi-processing."""
 
     # Get the bounds of the polygon (which we already know is a vertically-aligned square,
     # so I don't need to do anything special here.)
     dest_tile_bounds = shapely.geometry.MultiPoint(dest_tile_polygon.exterior.coords).bounds
+
+    # NOTE: The datalist must be present (already generated) for this.
+    # For effiency sake we don't pass the etopo generator object to this method to create it.
+    # Just assume it's already there. It's up to the calling function to create it.
+    if not os.path.exists(datalist_fname):
+        raise FileNotFoundError(datalist_fname + " not found.")
 
     waffles_args = ["waffles",
                     "-M", "stacks:supercede=True:keep_weights=True",
@@ -643,16 +837,19 @@ if __name__ == "__main__":
     # EG.create_etopo_geopackages()
 
 
-    EG.generate_all_etopo_tiles(resolution=15, overwrite=False)
-    EG.copy_finished_tiles_to_onedrive(resolution=15, use_symlinks=True)
+    # EG.generate_all_etopo_tiles(resolution=15, overwrite=False)
+    # EG.copy_finished_tiles_to_onedrive(resolution=15, use_symlinks=True)
 
-    EG.generate_all_etopo_tiles(resolution=60, overwrite=True)
-    EG.copy_finished_tiles_to_onedrive(resolution=60, use_symlinks=True)
-
-
-    EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
-    EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
+    # EG.generate_all_etopo_tiles(resolution=60, overwrite=True)
+    # EG.copy_finished_tiles_to_onedrive(resolution=60, use_symlinks=True)
 
 
-    EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
-    EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
+    # EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
+    # EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
+
+
+    # EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
+    # EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
+
+    # EG.export_ranks_and_ids_csv()
+    EG.write_ranks_and_ids_from_csv()

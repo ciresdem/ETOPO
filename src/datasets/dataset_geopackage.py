@@ -213,13 +213,13 @@ class DatasetGeopackage:
         return polygon, proj, xleft, ytop, xres, yres, xsize, ysize
 
 
-    def subset_by_polygon(self, polygon, polygon_crs, verbose=True):
+    def subset_by_polygon(self, polygon, polygon_crs, resolution_s = None, verbose=True):
         """Given a shapely polygon object, return all records that intersect the polygon.
 
         If the polygon_crs does not match the geopackage crs, conver the polygon into
         the geopackage CRS before performing the intersection.
         """
-        gdf = self.get_gdf(verbose=verbose)
+        gdf = self.get_gdf(resolution_s = resolution_s, verbose=verbose)
 
         gdf_crs_obj  = pyproj.crs.CRS(gdf.crs)
         poly_crs_obj = pyproj.crs.CRS(polygon_crs)
@@ -235,12 +235,15 @@ class DatasetGeopackage:
         # Get all the tiles that truly intersect but don't just "touch" the polygon on its boundary without overlapping.
         return gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
 
-    def subset_by_geotiff(self, gtif_file):
+    def subset_by_geotiff(self, gtif_file, resolution_s = None, verbose = True):
         """Given a geotiff file, return all records that intersect the bounding-box outline of this geotiff."""
         polygon, crs, _, _, _, _, _, _ = self.create_outline_geometry_of_geotiff(gtif_file)
-        return self.subset_by_polygon(polygon, crs)
+        return self.subset_by_polygon(polygon,
+                                      crs,
+                                      resolution_s = resolution_s,
+                                      verbose = verbose)
 
-    def print_full_gdf(self):
+    def print_full_gdf(self, resolution_s = None, verbose = True):
         """Print a full geodataframe, with all rows and columnns. Resets display options back to defaults afterward."""
         # Get the original default options for pandas displays
         orig_max_rows_opt = geopandas.get_option("max_rows")
@@ -250,7 +253,7 @@ class DatasetGeopackage:
         geopandas.set_option('max_rows', None)
         geopandas.set_option('max_columns', None)
         # Print out the dataset
-        print(self.get_gdf(verbose=False))
+        print(self.get_gdf(resolution_s = resolution_s, verbose=verbose))
 
         # Re-set them to their original values.
         geopandas.set_option('max_rows', orig_max_rows_opt)
@@ -292,7 +295,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
         if we're in 1-deg tile space."""
         # If we're not at 1s resolution, or we're not flagged to only get the CRM tiles, then just move along.
         if (self.resolution != 1) or (crm_only_if_1s == False):
-            return super().get_gdf(verbose=verbose)
+            return super().get_gdf(resolution_s = self.resolution, verbose=verbose)
 
         # Otherwise, only send back the geodataframe that includes the CRM tiles.
         assert (self.resolution == 1) and (crm_only_if_1s is True)
@@ -313,7 +316,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         If "save_to_file_if_not_already_there", save this datalsit to the file
         if it doesn't already exist in the geodataframe."""
-        gdf = self.get_gdf(verbose=verbose)
+        gdf = self.get_gdf(resolution_s = self.resolution, verbose=verbose)
 
         # If the "dlist" column already exists, just return it.
         if 'dlist' in gdf.columns:
