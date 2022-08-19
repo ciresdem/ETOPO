@@ -52,6 +52,10 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         in the same grid as the grid_datafile.
         Save to output_fname.
         """
+        # If it already exists, work is done. Just exit da fuck outta here.
+        if os.path.exists(output_fname):
+            return
+
         assert os.path.exists(grid_datafile)
         ds = gdal.Open(grid_datafile, gdal.GA_ReadOnly)
         epsg = coastline_mask.get_dataset_epsg(ds)
@@ -64,7 +68,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         outf_base, outf_ext = os.path.splitext(output_fname)
         assert outf_ext.lower() == ".tif"
 
-        stacks_args = ["waffles", "-M", "stacks",
+        stacks_args = ["waffles", "-M", "stacks:supercede=True",
                        "-R", "/".join([str(x) for x in bbox]),
                        "-E", "/".join([str(abs(x)) for x in xy_step]),
                        "-S", resample_alg,
@@ -72,6 +76,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                        "-P", "epsg:" + str(epsg),
                        "-F", "GTiff",
                        "-O", outf_base,
+                       "-w", # use weights (necessary for 'stacks')
                        datalist_fname
                        ]
 
@@ -90,6 +95,14 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
 
         return
 
+
+    def get_data_directory(self, resolution_s):
+        if int(resolution_s) == 15:
+            return self.config.source_datafiles_directory_15s
+        elif int(resolution_s) == 1:
+            return self.config.source_datafiles_directory_1s
+        else:
+            return self.config.source_datafiles_directory
 
     def create_gebco_global_lakes(self, resolution_s=15, verbose=True):
         """Create a global lakes outline dataset with GEBCO elevations in it.
@@ -136,7 +149,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
             # If no lakes appear in this dataset, simply move along.
             if numpy.all(array == ndv):
                 if verbose:
-                    print("0 lakes found. Moving on.")
+                    print("\t0 lakes found. Moving on.")
                 continue
 
             # Label the image with skimage.label to find all the lakes
@@ -170,24 +183,46 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
             gebco_lakes_grid = array.copy()
             gebco_lakes_grid[:,:] = ndv
 
+            ymin = row.ytop + (row.yres * row.ysize)
+
+            gebco_lakes_fname = self.config.global_lakes_fname_template.format("N" if (ymin >= 0) else "S",
+                                                                               int(abs(ymin)),
+                                                                               "E" if (row.xleft >= 0) else "W",
+                                                                               int(abs(row.xleft)))
+            gebco_lakes_fpath = os.path.join(self.get_data_directory(resolution_s), gebco_lakes_fname)
+            if os.path.exists(gebco_lakes_fpath):
+                if verbose:
+                    print("\tAlready exists. Moving on.")
+                continue
+
             # Create copernicus temp file
             # Create GEBCO "nearest neighbor" temp file.
             # Create GEBCO "bilinear" temp file.
+            if verbose:
+                print("  Creating source grids... ", end="")
             for j, (dlist, fname, algorithm) in enumerate(zip([copernicus_datalist, gebco_datalist, gebco_datalist],
                                                               [copernicus_grid_fname, gebco_grid_nearest_fname, gebco_grid_bilinear_fname],
                                                               ["near", "near", "bilinear"])):
 
-                print('#############', os.path.split(fname)[1], '#############')
+                if verbose:
+                    print("Copernicus... " if j == 0 else ("GEBCO nearest... " if j == 1 else "GEBCO bilinear... "), end="")
+                # print("\tCreating", os.path.split(fname)[1])
                 self.create_subdata_tempgrid(gb_fname,
                                              dlist,
                                              fname,
                                              ndv=0 if (j==0) else ndv, # Use zero for NDV of copernicus, the default NDV otherwise.
                                              resample_alg=algorithm,
-                                             verbose=verbose)
+                                             verbose=False)
+            if verbose:
+                print("Done.")
+
 
             copernicus_array = self.get_array_from_gtiff(copernicus_grid_fname)
             gebco_nearest_array = self.get_array_from_gtiff(gebco_grid_nearest_fname)
             gebco_bilinear_array = self.get_array_from_gtiff(gebco_grid_bilinear_fname)
+
+            used_any_gebco_elevs = False
+            numlakes_included = 0
 
             # Loop through all the lakes in the dataset, starting with lake # 1 (0 is background).
             for LN in range(1,nlabels):
@@ -203,10 +238,14 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                     if gebco_bilinear_elevs[0] < copernicus_elevs[0]:
                         gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
                         used_gebco_elevs = True
+                        used_any_gebco_elevs = True
+                        numlakes_included += 1
                         gebco_data = gebco_bilinear_elevs
                     elif gebco_nearest_elevs[0] < copernicus_elevs[0]:
                         gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
                         used_gebco_elevs = True
+                        used_any_gebco_elevs = True
+                        numlakes_included += 1
                         gebco_data = gebco_nearest_elevs
                     # Otherwise, just don't skip that lake and don't use the GEBCO elevations (use globathy)
                     else:
@@ -220,11 +259,15 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                     if numpy.all(gebco_bilinear_elevs < copernicus_elevs):
                         gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
                         used_gebco_elevs = True
+                        used_any_gebco_elevs = True
+                        numlakes_included += 1
                         gebco_data = gebco_bilinear_elevs
 
                     elif numpy.all(gebco_nearest_elevs < copernicus_elevs):
                         gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
                         used_gebco_elevs = True
+                        used_any_gebco_elevs = True
+                        numlakes_included += 1
                         gebco_data = gebco_nearest_elevs
                     else:
                         used_gebco_elevs = False
@@ -255,6 +298,8 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                         gebco_bilinear_elevs[gebco_bilinear_elevs >= copernicus_surface_elev] = next_shallowest_depth
                         gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
                         used_gebco_elevs = True
+                        used_any_gebco_elevs = True
+                        numlakes_included += 1
                     else:
                         used_gebco_elevs = False
 
@@ -266,28 +311,54 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                 globathy_lake_data = array[lake_mask]
 
                 # Add this metadata to the lake record.
-                lks_df.loc[len(lks_df.index)] = [row.xleft,
-                                                 row.ytop + (row.yres * row.ysize),
-                                                 LN,
-                                                 lake_size,
-                                                 xstart,
-                                                 xstop,
-                                                 ystart,
-                                                 ystop,
-                                                 copernicus_surface_elev,
-                                                 copernicus_mode_fraction,
-                                                 numpy.mean(gebco_data) if lake_size > 1 else gebco_data[0],
-                                                 numpy.std(gebco_data) if lake_size > 1 else 0,
-                                                 numpy.min(gebco_data),
-                                                 numpy.max(gebco_data),
-                                                 numpy.mean(globathy_lake_data) if lake_size > 1 else globathy_lake_data[0],
-                                                 numpy.std(globathy_lake_data) if lake_size > 1 else 0,
-                                                 numpy.min(globathy_lake_data),
-                                                 numpy.max(globathy_lake_data),
-                                                 used_gebco_elevs]
+                lks_df.loc[lks_df.index.max()+1] = [row.xleft,
+                                                    ymin,
+                                                    LN,
+                                                    lake_size,
+                                                    xstart,
+                                                    xstop,
+                                                    ystart,
+                                                    ystop,
+                                                    copernicus_surface_elev,
+                                                    copernicus_mode_fraction,
+                                                    numpy.mean(gebco_data) if lake_size > 1 else gebco_data[0],
+                                                    numpy.std(gebco_data) if lake_size > 1 else 0,
+                                                    numpy.min(gebco_data),
+                                                    numpy.max(gebco_data),
+                                                    numpy.mean(globathy_lake_data) if lake_size > 1 else globathy_lake_data[0],
+                                                    numpy.std(globathy_lake_data) if lake_size > 1 else 0,
+                                                    numpy.min(globathy_lake_data),
+                                                    numpy.max(globathy_lake_data),
+                                                    used_gebco_elevs]
 
+            if used_any_gebco_elevs:
+                # Save out the data file.
+                gdal.GetDriverByName("GTiff").CreateCopy(gebco_lakes_fpath, gb_ds)
+                if verbose:
+                    print(os.path.split(gebco_lakes_fpath)[1], "created with {0} lakes, ".format(numlakes_included), end="")
 
+                gc_ds = gdal.Open(gebco_lakes_fpath, gdal.GA_Update)
+                band = gc_ds.GetRasterBand(1)
+                band.WriteArray(gebco_lakes_grid)
+                band.SetNoDataValue(ndv)
+                band.ComputeStatistics(0)
 
+                band = None
+                gc_ds = None
+                gb_band = None
+                gb_ds = None
+                del band, gc_ds, gb_band, gb_ds
+                if verbose:
+                    print("and updated.")
+
+            # Strip off any zero rows if they exist.
+            if (lks_df.lake_size_pix == 0).sum() > 0:
+                lks_df = lks_df[lks_df.lake_size_pix > 0]
+                # Reset the index number, so that the append operation up top is still inserting at the end.
+                lks_df.reset_index(drop=True, inplace=True)
+
+            if len(lks_df.index) > 0:
+                self.write_lakes_csv(lks_df, self.config.gebco_lakes_stats_csv.format(resolution_s), verbose=verbose)
 
         # If lake elevation is less than Copernicus height, and (1-2 pixels, *or* of varied heights in GEBCO),
         # Flag it as a probable GEBCO accurate lakebed elevation.
@@ -330,13 +401,13 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         df = pandas.DataFrame(data=columns_data)
 
         self.write_lakes_csv(df, csv_fname, verbose=verbose)
-        return
+        return df
 
     def write_lakes_csv(self, df, csv_fname, verbose=True):
         """Write out the lakes stats dataframe to disk."""
         df.to_csv(csv_fname, index=False)
         if verbose:
-            print(os.path.split(csv_fname)[1], "written with {0} entries.".format(len(df)))
+            print(os.path.split(csv_fname)[1], "written with {0} entries.".format(len(df.index)))
 
     def get_data_dir(self, resolution_s = 15):
         if resolution_s == 15:
@@ -355,4 +426,5 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
 
 if __name__ == "__main__":
     gl = source_dataset_global_lakes_gebco()
-    gl.create_gebco_global_lakes(resolution_s = 1)
+    # gl.create_gebco_global_lakes(resolution_s = 1)
+    gl.create_gebco_global_lakes(resolution_s = 15)
