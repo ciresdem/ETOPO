@@ -16,6 +16,8 @@ import shapely.geometry
 import shapely.ops
 import geopandas
 import pyproj
+import pygeos
+import numpy
 
 # Import the parent directory so I can import anything else I need.
 import import_parent_dir
@@ -219,7 +221,7 @@ class DatasetGeopackage:
         If the polygon_crs does not match the geopackage crs, conver the polygon into
         the geopackage CRS before performing the intersection.
         """
-        gdf = self.get_gdf(resolution_s = resolution_s, verbose=verbose)
+        gdf = DatasetGeopackage.get_gdf(self, resolution_s = resolution_s, verbose=verbose)
 
         gdf_crs_obj  = pyproj.crs.CRS(gdf.crs)
         poly_crs_obj = pyproj.crs.CRS(polygon_crs)
@@ -230,10 +232,25 @@ class DatasetGeopackage:
         # the geopackage CRS and go from there.
         else:
             project = pyproj.Transformer.from_crs(poly_crs_obj, gdf_crs_obj, always_xy=True).transform
-            polygon_to_use = shapely.ops.transform(project, polygon)
+            # Interpolate the polygon into a lot more segments, to better handle warping in reprojected coordinates.
+            polygon_interpolated = shapely.geometry.Polygon([polygon.boundary.interpolate(i, normalized=True) for i in numpy.linspace(0,1,401)])
+            polygon_to_use = shapely.ops.transform(project, polygon_interpolated)
 
         # Get all the tiles that truly intersect but don't just "touch" the polygon on its boundary without overlapping.
-        return gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
+        try:
+            return gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
+        except pygeos.GEOSException:
+            # Sometimes the polygon is (at least partially) outside the bounds of this
+            # projection, creating instances where coordinates are giving infinite values, causing issues here.
+            # If this happens, just return the empty dataframe, as the polygon realistically (in the case
+            # of all ETOPO's data sources) does not overlap any parts of this dataset.
+            # This could omit things in devious cases where polygons cover large portions of the earth's surface.
+            # However, for ETOPO, this is not really the case.
+            return gdf[gdf.index == (gdf.index.min()-1)]
+        except RuntimeWarning as e:
+            print("Insersection warning in datasdet", self.config.dataset_name)
+            return gdf[gdf.index == (gdf.index.min()-1)]
+
 
     def subset_by_geotiff(self, gtif_file, resolution_s = None, verbose = True):
         """Given a geotiff file, return all records that intersect the bounding-box outline of this geotiff."""
@@ -308,7 +325,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
         # Return the subset of the geodataframe that intersects the CRM outline polygon.
         return self.subset_by_polygon(crm_polygon, crm_gdf.crs, verbose=verbose)
 
-    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, verbose=True):
+    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, crm_only_if_1s = True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
         approrpriate source-datasets dlist for each ETOPO tile.
 
@@ -316,7 +333,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         If "save_to_file_if_not_already_there", save this datalsit to the file
         if it doesn't already exist in the geodataframe."""
-        gdf = self.get_gdf(verbose=verbose)
+        gdf = self.get_gdf(crm_only_if_1s = crm_only_if_1s, verbose=verbose)
 
         # If the "dlist" column already exists, just return it.
         if 'dlist' in gdf.columns:

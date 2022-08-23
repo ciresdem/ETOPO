@@ -310,14 +310,15 @@ class ETOPO_Generator:
         csv_name = self.etopo_config._abspath(self.etopo_config.etopo_dataset_ranks_and_ids_csv)
         df.to_csv(csv_name, index=False)
         if verbose:
-            print(os.path.split(csv_name)[1], "written with {0} entries.".format(len(df)))
+            print("\n" + os.path.split(csv_name)[1], "written with {0} entries.".format(len(df)))
 
         return df
 
-    def generate_etopo_tile_datalist(self, resolution=1,
-                                           etopo_tile_fname = None,
-                                           active_sources_only = True,
-                                           verbose=True):
+    def generate_etopo_tile_datalists(self, resolution=1,
+                                            etopo_tile_fname = None,
+                                            crm_only_if_1s = True,
+                                            active_sources_only = True,
+                                            verbose=True):
         """For each ETOPO tile (or just the one given), produce a waffles datalist of
         all the source tiles that overlap it (and thus would be included with it),
 
@@ -334,7 +335,7 @@ class ETOPO_Generator:
         """
         # Retrieve the dataset_geopackage object for this ETOPO grid.
         etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
-        etopo_gdf = etopo_geopkg_obj.get_gdf(verbose=verbose)
+        etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, verbose=verbose)
         config_obj = self.etopo_config
         etopo_crs = etopo_gdf.crs
 
@@ -350,7 +351,23 @@ class ETOPO_Generator:
 
             # We want to query the finished tiles of the dataset, not the empty tiles.
             dlist_filenames = [fn.replace("empty_tiles", "finished_tiles") for fn in etopo_15s_gdf['filename'].tolist()]
-            assert numpy.all([os.path.exists(fn) for fn in dlist_filenames])
+
+            # This breaks if we've been date-tagging the files.
+            try:
+                assert numpy.all([os.path.exists(fn) for fn in dlist_filenames])
+            except AssertionError as e:
+                # If files were date-tagged, then fist get the list of all the files that *are* in the finished_tiles_directory
+                finished_tiles_dir = os.path.dirname(dlist_filenames[0])
+                finished_tiles_in_dir = [fn for fn in os.listdir(finished_tiles_dir) if (re.search("ETOPO_2022_[\w\.]+\.tif\Z", fn) != None)]
+                # Then search for the tile that matches the base of the tile name we're looking for.
+                matching_tiles_found_in_dir = []
+                for i, fname in enumerate(dlist_filenames):
+                    tile_match = [fn for fn in finished_tiles_in_dir if (re.search(os.path.splitext(os.path.split(fname)[1])[0], fn) != None)]
+                    assert len(tile_match) == 1
+                    matching_tiles_found_in_dir.append(os.path.join(finished_tiles_dir, tile_match[0]))
+                assert len(matching_tiles_found_in_dir) == len(dlist_filenames)
+                dlist_filenames = matching_tiles_found_in_dir
+
             datalist_lines = ["{0} 200 1".format(fn) for fn in dlist_filenames]
             datalist_text = "\n".join(datalist_lines)
 
@@ -391,6 +408,7 @@ class ETOPO_Generator:
                 for dset_obj in datasets_list:
                     this_dlist_entries = dset_obj.generate_tile_datalist_entries(etopo_poly,
                                                                                  polygon_crs = etopo_crs,
+                                                                                 resolution_s = resolution,
                                                                                  verbose = verbose)
                     if len(this_dlist_entries) > 0:
                         datalist_lines.extend(this_dlist_entries)
@@ -401,7 +419,7 @@ class ETOPO_Generator:
                     f.write(datalist_text)
                     f.close()
                     if verbose:
-                        print("\r" + " "*120, end="")
+                        print("\r" + (" "*120), end="\r")
                         print(etopo_tile_datalist_fname, "written with", len(datalist_lines), "entries.")
 
                 # Get rid of any previous .inf or .json files with the same name.
@@ -441,12 +459,16 @@ class ETOPO_Generator:
     def generate_all_etopo_tiles(self, resolution=1,
                                        numprocs=utils.parallel_funcs.physical_cpu_count(),
                                        add_datestamp_to_files = False,
+                                       crm_only_if_1s = True,
                                        overwrite=False,
                                        verbose=True):
         """Geenerate all of the ETOPO tiles at a given resolution."""
         # Get the ETOPO_geopackage object, with the datalist filenames in it
         # (if they're not in there already, they may be)
-        etopo_gdf = dataset_geopackage.ETOPO_Geopackage(resolution).add_dlist_paths_to_gdf()
+        etopo_gdf = dataset_geopackage.ETOPO_Geopackage(resolution).add_dlist_paths_to_gdf(\
+                                        save_to_file_if_not_already_there = True,
+                                        crm_only_if_1s = crm_only_if_1s,
+                                        verbose = verbose)
 
         # Sort the lists, just 'cuz.
         etopo_tiles  = etopo_gdf['filename'].to_numpy()
@@ -461,10 +483,11 @@ class ETOPO_Generator:
         # Look through all the dlists, (re-)generate if necessary.
         if verbose:
             print("Generating tile datalists:")
-        self.generate_etopo_tile_datalist(resolution=resolution,
-                                          etopo_tile_fname=None,
-                                          active_sources_only=True,
-                                          verbose=verbose)
+        self.generate_etopo_tile_datalists(resolution=resolution,
+                                           crm_only_if_1s = crm_only_if_1s,
+                                           etopo_tile_fname=None,
+                                           active_sources_only=True,
+                                           verbose=verbose)
 
         if verbose:
             print("Generating", len(etopo_tiles), "ETOPO tiles at", str(resolution) + "s resolution:")
@@ -473,8 +496,8 @@ class ETOPO_Generator:
         active_procs = []
         active_tempdirs = []
         total_finished_procs = 0
-        N = 6
-        # N = len(etopo_tiles)
+        # N = 6
+        N = len(etopo_tiles)
         waiting_procs = [None] * N
         temp_dirnames = [None] * N
         current_max_running_procs = numprocs # "max_running_procs" can change depending how many tiles are left.
@@ -830,7 +853,16 @@ def generate_single_etopo_tile(dest_tile_fname,
 
 if __name__ == "__main__":
     EG = ETOPO_Generator()
-    # EG.generate_etopo_tile_datalist(resolution=1, overwrite=True)
+
+    # for res in (15,60,1):
+    for res in (15,60,1):
+        EG.generate_all_etopo_tiles(resolution=res,
+                                    add_datestamp_to_files = True,
+                                    crm_only_if_1s=True,
+                                    overwrite=False,
+                                    verbose=True)
+
+    # EG.generate_etopo_tile_datalists(resolution=1, overwrite=True)
     # EG.generate_tile_source_dlists(source="all",active_only=True,verbose=True)
     # EG.generate_etopo_source_master_dlist()
     # EG.create_empty_grids(resolution_s=60)
@@ -852,4 +884,4 @@ if __name__ == "__main__":
     # EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
 
     # EG.export_ranks_and_ids_csv()
-    EG.write_ranks_and_ids_from_csv()
+    # EG.write_ranks_and_ids_from_csv()

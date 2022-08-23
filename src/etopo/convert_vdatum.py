@@ -101,6 +101,7 @@ def convert_vdatum(input_dem,
                    output_dem,
                    input_vertical_datum="itrf2014",
                    output_vertical_datum="itrf2014",
+                   cwd = None,
                    verbose=True):
     """Input a DEM of a known vetical datum, and convert the elevations to another vertical datum.
 
@@ -130,7 +131,7 @@ def convert_vdatum(input_dem,
 
     if verbose:
         print("Running:", command)
-    retproc = subprocess.run(cmd_smart_split(command), capture_output=not verbose)
+    retproc = subprocess.run(cmd_smart_split(command), capture_output=not verbose, cwd=cwd)
 
     if verbose and retproc.returncode != 0:
         print("ERROR: Process\n'{0}'\n... returned status code {1}.".format(command, retproc.returncode))
