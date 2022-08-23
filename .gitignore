@@ -149,3 +149,8 @@ Thumbs.db
 /.user_credentials
 *.gpkg-*
 *.feather
+*_config_old.ini
+/.idea/ETOPO.iml
+/.idea/inspectionProfiles/profiles_settings.xml
+/.idea/modules.xml
+/.idea/vcs.xml
