@@ -48,6 +48,8 @@ import argparse
 import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ###############################################################################
 import etopo.etopo_generator
+import utils.configfile
+etopo_config = utils.configfile.config()
 
 
 def populate_dataset_module(dataset_name, overwrite=True):
@@ -111,33 +113,33 @@ def populate_all_source_datasets(overwrite=True):
     for subdir in subdir_list:
         populate_dataset_module(subdir, overwrite=True)
 
-def make_list_of_ranks_and_ids(output_csv=os.path.join(os.path.dirname(__file__), "ETOPO_dataset_ranks_and_ids.csv")):
-    """Go through all the datasets. From their source data, list all the ranks, ids, vdatum_name, vdatum_number, and whether they're active or not."""
-    datasets_dict = etopo.etopo_generator.ETOPO_Generator().fetch_etopo_source_datasets(active_only=False, verbose=True, return_type=dict)
-    dset_names = sorted(datasets_dict.keys())
-    is_active = [None] * len(dset_names)
-    ranks = [None] * len(dset_names)
-    ids = [None] * len(dset_names)
-    vdatum_names = [None] * len(dset_names)
-    vdatum_numbers = [None] * len(dset_names)
+# def make_list_of_ranks_and_ids(output_csv=etopo_config.etopo_dataset_ranks_and_ids_csv):
+#     """Go through all the datasets. From their source data, list all the ranks, ids, vdatum_name, vdatum_number, and whether they're active or not."""
+#     datasets_dict = etopo.etopo_generator.ETOPO_Generator().fetch_etopo_source_datasets(active_only=False, verbose=True, return_type=dict)
+#     dset_names = sorted(datasets_dict.keys())
+#     is_active = [None] * len(dset_names)
+#     ranks = [None] * len(dset_names)
+#     ids = [None] * len(dset_names)
+#     vdatum_names = [None] * len(dset_names)
+#     vdatum_numbers = [None] * len(dset_names)
 
-    for i,dset_name in enumerate(dset_names):
-        dset = datasets_dict[dset_name]
-        is_active[i] = dset.is_active()
-        ranks[i] = dset.config.default_ranking_score
-        ids[i] = dset.config.dataset_id_number
-        vdatum_names[i] = dset.config.dataset_vdatum_name
-        vdatum_numbers[i] = dset.config.dataset_vdatum_epsg
+#     for i,dset_name in enumerate(dset_names):
+#         dset = datasets_dict[dset_name]
+#         is_active[i] = dset.is_active()
+#         ranks[i] = dset.config.default_ranking_score
+#         ids[i] = dset.config.dataset_id_number
+#         vdatum_names[i] = dset.config.dataset_vdatum_name
+#         vdatum_numbers[i] = dset.config.dataset_vdatum_epsg
 
-    df = pandas.DataFrame(data = {"name": dset_names,
-                                  "is_active": is_active,
-                                  "rank": ranks,
-                                  "dset_id": ids,
-                                  "vdatum_name": vdatum_names,
-                                  "vdatum_epsg": vdatum_numbers})
+#     df = pandas.DataFrame(data = {"name": dset_names,
+#                                   "is_active": is_active,
+#                                   "rank": ranks,
+#                                   "dset_id": ids,
+#                                   "vdatum_name": vdatum_names,
+#                                   "vdatum_epsg": vdatum_numbers})
 
-    df.to_csv(output_csv)
-    print(output_csv, "written with", len(dset_names), "entries.")
+#     df.to_csv(output_csv, index=False)
+#     print(output_csv, "written with", len(dset_names), "entries.")
 
 def read_and_parse_args():
     parser = argparse.ArgumentParser(description = "Generate a new ETOPO dataset layer source object, or create a list of existing objects.")
@@ -167,7 +169,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if args.make_list:
-        make_list_of_ranks_and_ids()
+        # make_list_of_ranks_and_ids()
+        etopo.etopo_generator.ETOPO_Generator().export_ranks_and_ids_csv(verbose=True)
 
     if args.NAME is not None:
         populate_dataset_module(args.NAME, overwrite=args.overwrite)
