@@ -22,7 +22,12 @@ def _list_files_recurse(dirname, regex_match = None):
     file_list = []
 
     for entryname in fpath_list:
-        fpath = os.path.join(dirname, entryname)
+        try:
+            fpath = os.path.join(dirname, entryname)
+        except TypeError as e:
+            print("dirname:", dirname)
+            print("entryname:", entryname)
+            raise e
         if os.path.isdir(fpath):
             file_list.extend(_list_files_recurse(fpath, regex_match=regex_match))
         elif (regex_match is None) or (re.search(regex_match, entryname) != None):
