@@ -1,9 +1,14 @@
 dset_name,name_long,ranking_score,id_number,vdatum_name,vdatum_epsg,is_active
 AW3D30,ALOS World 3D 30m,0,9,EGM96,5773,False
-ArcticDEM,Arctic DEM,1,4,WGS84,4979,False
-BedMachine,BedMachine,0,8,WGS84,4979,False
+ArcticDEM,Arctic DEM,1,4,WGS84(Original),4979,False
 BOEM,BOEM,6,6,MSL,5714,True
-BlueTopo,BlueTopo,7,7,NAVD88,5703,True
+BedMachine,BedMachine,5,5,WGS84,4979,True
+BlueTopo,BlueTopo,7,7,EGM2008,3855,False
+BlueTopo_14N,BlueTopo Zone 14N,7,7,NAVD88,5703,True
+BlueTopo_15N,BlueTopo Zone 15N,7,7,NAVD88,5703,True
+BlueTopo_16N,BlueTopo Zone 16N,7,7,NAVD88,5703,True
+BlueTopo_18N,BlueTopo Zone 18N,7,7,NAVD88,5703,True
+BlueTopo_19N,BlueTopo Zone 19N,7,7,NAVD88,5703,True
 CUDEM_AmericanSamoa,CUDEM American Samoa,8,8,ASVD02,6643,True
 CUDEM_CONUS,CUDEM Continental US,9,9,NAVD88,5703,True
 CUDEM_Guam,CUDEM Guam,10,10,GUVD04,6644,True
@@ -20,6 +25,6 @@ GEBCO,GEBCO,1,1,MSL,5714,True
 GLOBathy,GLOBathy,11,0,,0,False
 NASADEM,NASA DEM,0,12,EGM96,5773,False
 REMA,REMA,0,5,WGS84,4979,False
-TanDEMX,TanDEMX,2,2,WGS_84(G1150),7660,True
-global_lakes_gebco,Global Lakes GEBCO-derived,14,14,EGM2008,3855,True
-global_lakes_globathy,Global Lakes GLOBathy-derived,13,13,EGM2008,3855,True
+TanDEMX,TanDEMX,2,2,WGS_84(G1150)(G1150),7660,False
+global_lakes_gebco,Global Lakes GEBCO-derived,16,16,EGM2008,3855,True
+global_lakes_globathy,Global Lakes GLOBathy-derived,15,15,EGM2008,3855,True
