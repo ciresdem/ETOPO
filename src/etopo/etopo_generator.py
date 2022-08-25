@@ -4,7 +4,7 @@
    the ETOPO global topo-bathy DEM."""
 
 import os
-import imp # TODO: Use an implementation using importlib (imp has been deprecated)
+import importlib
 import shapely.geometry
 import subprocess
 import multiprocessing
@@ -17,6 +17,7 @@ import sys
 import pandas
 import datetime
 
+# noinspection PyStatementEffect,IncorrectFormatting
 try:
     import cudem
     cudem
@@ -314,6 +315,35 @@ class ETOPO_Generator:
 
         return df
 
+    def clear_tiles(self, resolution=None, dirname=None, regex_filter = "\.((tif)|(ini))", verbose=True):
+        """Clear out all the old ETOPO tiles to make room for new ones."""
+        if resolution is None:
+            resolution = (1, 15, 60)
+        elif type(resolution) == int:
+            resolution = (resolution,)
+
+        # Default to clearing out the "finished_tiles" and "datalists" directories in data/
+        if dirname is None:
+            dirnames = []
+            for res in resolution:
+                dirnames.extend([os.path.join(self.etopo_config._abspath(self.etopo_config.etopo_datalist_directory),
+                                              "{0:d}s".format(res)),
+                                 os.path.join(self.etopo_config._abspath(self.etopo_config.etopo_finished_tiles_directory),
+                                              "{0:d}s".format(res))])
+        elif type(dirname) in (list, tuple):
+            dirnames = dirname
+        else:
+            dirnames = [dirname]
+
+        for dname in dirnames:
+            files = utils.traverse_directory.list_files(dname, regex_match=regex_filter)
+            for fn in files:
+                os.remove(fn)
+            if verbose:
+                print("{0} files removed from {1}".format(len(files), dname))
+
+        return
+
     def generate_etopo_tile_datalists(self, resolution=1,
                                             etopo_tile_fname = None,
                                             crm_only_if_1s = True,
@@ -384,14 +414,14 @@ class ETOPO_Generator:
         else:
             # 1. If etopo_tile_fname is being used, get the one row corresponding to that fname.
             # Also get the polygons for all the etopo tiles.
-            if etopo_tile_fname == None:
+            if etopo_tile_fname is None:
                 etopo_fnames = etopo_gdf['filename'].tolist()
                 etopo_polygons = etopo_gdf['geometry']
             else:
                 # If we only have one file, make it a one-item list for the 'for' loop.
                 etopo_fnames = [etopo_tile_fname]
                 etopo_polygons = etopo_gdf[etopo_gdf.filename == etopo_tile_fname]['geometry'].tolist()
-            assert(len(etopo_polygons) == len(etopo_fnames))
+            assert (len(etopo_polygons) == len(etopo_fnames))
 
             # 2. Get all the ETOPO source dataset objects.
             datasets_list = self.fetch_etopo_source_datasets(verbose=verbose, return_type=list)
@@ -410,6 +440,7 @@ class ETOPO_Generator:
                                                                                  polygon_crs = etopo_crs,
                                                                                  resolution_s = resolution,
                                                                                  verbose = verbose)
+
                     if len(this_dlist_entries) > 0:
                         datalist_lines.extend(this_dlist_entries)
 
@@ -432,20 +463,10 @@ class ETOPO_Generator:
                     os.remove(json_fname)
 
                 if verbose:
-                    utils.progress_bar.ProgressBar(i+1, N, suffix = "{0}/{1}".format(i+1,N))
+                    utils.progress_bar.ProgressBar(i+1, N, suffix="{0}/{1}".format(i+1, N))
 
         return
         # 7. Test out the waffles -M stacks command to see if it runs faster now.
-
-    # def flag_datalist_mismatches(self, resolution=1,
-    #                                    verbose=True):
-    #     """Right now some of the waffles commands are acting strangely, prioritizing
-    #     lower-ranking datasets instead of taking just the higher-ranking ones. Detect
-    #     those here and list them out.
-    #     """
-    #     # TODO: Finish
-    #     pass
-
 
     def add_datestamp_to_filename(self, tilename):
         """Add a _YYYY.MM.DD stamp to the end of the ETOPO filename.
@@ -660,8 +681,10 @@ class ETOPO_Generator:
             if os.path.exists(module_fname):
                 # Create the import path of the module, relative to the /src
                 # directory (which is imported above)
-                file, pathname, desc = imp.find_module(dataset_class_name, [subdir])
-                module = imp.load_module(dataset_class_name, file, pathname, desc)
+                importpath = "datasets.{0}.{1}".format(dataset_name, dataset_class_name)
+                module = importlib.import_module(importpath)
+                # file, pathname, desc = imp.find_module(dataset_class_name, [subdir])
+                # module = imp.load_module(dataset_class_name, file, pathname, desc)
 
                 # Create an object from the file.
                 dataset_object = getattr(module, dataset_class_name)()
@@ -715,6 +738,43 @@ class ETOPO_Generator:
             if verbose:
                 print(len(weights_fnames_in_tiles_dir), "files moved from", tiles_dir, "to", weights_dir)
 
+
+    def output_empty_csv_comment_files(self, files_dirname = None, regex_filter = r"\d{2}\.tif\Z", outfile_name = None, resolution=None, verbose=True):
+        """After generating a set of tiles, generate an empty CSV folder with all the tiles listed, to allow comments."""
+        # If we don't specify an output file, put it in the finished_tiles directory.
+        if resolution is None:
+            resolution = (1,15,60)
+        elif type(resolution) in (int, float):
+            resolution = (int(resolution),)
+
+        for res in resolution:
+            if outfile_name is None:
+                outfile_fn = os.path.join(self.etopo_config._abspath(self.etopo_config.etopo_finished_tiles_directory), "ETOPO_{0}s_tile_comments.csv".format(res))
+            else:
+                outfile_fn = outfile_name
+
+            if files_dirname is None:
+                dir_to_use = os.path.join(self.etopo_config._abspath(self.etopo_config.etopo_finished_tiles_directory), "{0}s".format(res))
+            else:
+                dir_to_use = os.path.join(files_dirname, "{0}s".format(res))
+                if not os.path.exists(dir_to_use):
+                    dir_to_use = files_dirname
+
+            files_list = utils.traverse_directory.list_files(dir_to_use, regex_match=regex_filter, ordered=False, include_base_directory=False)
+            files_list = sorted([os.path.split(fn)[1] for fn in files_list])
+
+            header = "Filename,Comments"
+            lines = [fn + "," for fn in files_list]
+            text = "\n".join([header] + lines)
+            with open(outfile_fn, 'w') as f:
+                f.write(text)
+                f.close()
+
+            if verbose:
+                print(os.path.split(outfile_fn)[1], "written with", len(files_list), "entries.")
+
+        return
+
     def copy_finished_tiles_to_onedrive(self, resolution=None,
                                               use_symlinks = True,
                                               tile_regex = "\.tif\Z",
@@ -737,7 +797,6 @@ class ETOPO_Generator:
             list_of_matching_files = utils.traverse_directory.list_files(src_dir,
                                                                          regex_match=tile_regex,
                                                                          include_base_directory = False)
-
 
             # print(len(list_of_matching_files), list_of_matching_files[-3:])
             if verbose:
@@ -772,7 +831,7 @@ class ETOPO_Generator:
         """
 
         # If we also want to synchronize everything to OneDrive online, initiate the command here.
-        onedrive_args = ["onedrive", "--synchronize", "--upload_only", "--single_directory"]
+        onedrive_args = ["onedrive", "--synchronize", "--upload-only", "--single_directory"]
         if resolution is None:
             dirname = "ETOPO_Release"
         elif int(resolution) == 1:
@@ -817,8 +876,9 @@ def generate_single_etopo_tile(dest_tile_fname,
                     "-N", str(etopo_ndv),
                     "-E", "{0}/{1}".format(abs(tile_xres), abs(tile_yres)),
                     "-w", # Use the datalist weights.
+                    "-f", # Transform input data if/where needed.
                     # "-a", # Archive the datalist (why again?)
-                    "-k", # Hold onto any cached files.
+                    "-k", # Keep (do not delete) cached files.
                     "-P", "EPSG:4326",
                     "-S", algorithm,
                     "-D", etopo_cache_dir,
@@ -853,21 +913,19 @@ def generate_single_etopo_tile(dest_tile_fname,
 
 if __name__ == "__main__":
     EG = ETOPO_Generator()
-
+    # for res in (1,):
+    #     EG.generate_all_etopo_tiles(resolution=res,
+    #                                 add_datestamp_to_files = True,
+    #                                 crm_only_if_1s=True,
+    #                                 overwrite=False,
+    #                                 verbose=True)
+    # EG.output_empty_csv_comment_files()
+    # EG.clear_tiles()
+    # EG.clear_tiles(dirname=EG.etopo_config.etopo_onedrive_directory)
     # for res in (15,60,1):
-    for res in (15,60,1):
-        EG.generate_all_etopo_tiles(resolution=res,
-                                    add_datestamp_to_files = True,
-                                    crm_only_if_1s=True,
-                                    overwrite=False,
-                                    verbose=True)
+        # EG.copy_finished_tiles_to_onedrive(resolution=res, use_symlinks=True)
 
-    # EG.generate_etopo_tile_datalists(resolution=1, overwrite=True)
-    # EG.generate_tile_source_dlists(source="all",active_only=True,verbose=True)
-    # EG.generate_etopo_source_master_dlist()
-    # EG.create_empty_grids(resolution_s=60)
-    # EG.create_etopo_geopackages()
-
+    # EG.generate_etopo_tile_datalists(resolution=1)
 
     # EG.generate_all_etopo_tiles(resolution=15, overwrite=False)
     # EG.copy_finished_tiles_to_onedrive(resolution=15, use_symlinks=True)
@@ -883,5 +941,5 @@ if __name__ == "__main__":
     # EG.generate_all_etopo_tiles(resolution=1, overwrite=False)
     # EG.copy_finished_tiles_to_onedrive(resolution=1, use_symlinks=True)
 
-    # EG.export_ranks_and_ids_csv()
+    EG.export_ranks_and_ids_csv()
     # EG.write_ranks_and_ids_from_csv()
