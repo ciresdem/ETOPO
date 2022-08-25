@@ -630,14 +630,18 @@ def define_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # TEMP_move_CUDEM_egm2008_tiles()
-    args = define_and_parse_args()
-    for dset_name in ("TanDEMX", "BlueTopo", "CUDEM_AmericanSamoa",
-                      "CUDEM_CONUS", "CUDEM_Guam", "CUDEM_Northern_Mariana",
-                      "CUDEM_Puerto_Rico", "CUDEM_USVI"):
+    for dset_name in ["BlueTopo_{0}N".format(n) for n in (14,15,16,18,19)]:
         dset = get_source_dataset_object(dset_name)
-        print("==============", dset_name, "==============")
-        dset.convert_vdatum(numprocs = args.numprocs)
+        dset.override_gdf_projection(verbose=True)
+
+    # TEMP_move_CUDEM_egm2008_tiles()
+    # args = define_and_parse_args()
+    # for dset_name in ("TanDEMX", "BlueTopo", "CUDEM_AmericanSamoa",
+    #                   "CUDEM_CONUS", "CUDEM_Guam", "CUDEM_Northern_Mariana",
+    #                   "CUDEM_Puerto_Rico", "CUDEM_USVI"):
+    #     dset = get_source_dataset_object(dset_name)
+    #     print("==============", dset_name, "==============")
+    #     dset.convert_vdatum(numprocs = args.numprocs)
     # TanDEMX.set_ndv()
 
     # GEBCO = get_source_dataset_object("GEBCO")
