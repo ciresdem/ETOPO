@@ -149,7 +149,7 @@ class DatasetGeopackage:
             if dset_crs is None:
                 dset_crs = crs
             else:
-                dset_epsg =  pyproj.CRS.from_string(dset_crs).to_epsg()
+                dset_epsg = pyproj.CRS.from_string(dset_crs).to_epsg()
                 dem_epsg = pyproj.CRS.from_string(crs).to_epsg()
                 # Get the CRS of each file, make sure they match the others (all files should have same CRS)
                 # Some of the CUDEM tiles have different EPSG's even though they're both in NAD83 horizontal datums.
