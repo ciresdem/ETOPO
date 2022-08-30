@@ -23,7 +23,10 @@ class CUDEM_Downloader(download_dataset.DatasetDownloader_BaseClass):
     "CUDEM/data/CUDEM_source_urls.txt" file.
     """
     def __init__(self, CUDEM_groupname="CONUS"):
-        self.config = utils.configfile.config(os.path.join(os.path.dirname(__file__),"CUDEM_{0}_config.ini".format(CUDEM_groupname)))
+        configfile = os.path.join(os.path.split(os.path.dirname(__file__))[0],
+                                  "CUDEM_" + CUDEM_groupname,
+                                  "CUDEM_" + CUDEM_groupname + "_config.ini")
+        self.config = utils.configfile.config(configfile)
         local_data_dir = self.config._abspath(self.config.source_datafiles_directory)
 
         self.url_lookup_file = self.config._abspath(self.config.source_urls_lookup_file)
@@ -78,6 +81,8 @@ class CUDEM_Downloader(download_dataset.DatasetDownloader_BaseClass):
         self.download_files(N_subprocs=N_subprocs, include_speed_strings=True, wget_extra_args=wget_args)
 
 if __name__ == "__main__":
-    CU = CUDEM_Downloader(CUDEM_groupname="CONUS")
-    CU.create_list_of_links()
-    CU.download()
+    # for groupname in ("CONUS", "Hawaii", "Guam", "AmericanSamoa", "Puerto_Rico", "USVI", "CNMI"):
+    for groupname in ("Northern_Mariana",):
+        CU = CUDEM_Downloader(CUDEM_groupname=groupname)
+        CU.create_list_of_links()
+        CU.download()
