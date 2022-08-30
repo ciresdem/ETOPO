@@ -24,7 +24,6 @@ import datasets.dataset_geopackage as dataset_geopackage
 import utils.traverse_directory
 import etopo.convert_vdatum
 
-
 class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
 
@@ -73,9 +72,11 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                     print(" ".join(cmd_flags))
                 subprocess.run(cmd_flags,
                                cwd=self.config.source_datafiles_directory,
-                               capture_output=not verbose)
+                               capture_output=True)
 
                 assert os.path.exists(gtif_name)
+                if verbose:
+                    print(gtif_name, "written.")
 
             # Second, filter out non-Greenland elevations (if in Greenland). -- OR JUST DATA FROM NON-Greenland land.
             # Also, filter out ocean elevations in Antarctica.
@@ -107,18 +108,28 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                 # We'll convert to EGM2008 later.
                 elev_array = elev_array + geoid_array
 
+                mask_invalid = None
+
                 if tname.find("BedMachineGreenland") >= 0:
-                    # Get only data that isn't nodata, and is part of Greenland (omit Ellesmere Island)
+                    # Get only data that isn't nodata or not part of Greenland (omit Ellesmere Island)
                     non_greenland_vals = (mask_array == 4)
                     if numpy.count_nonzero(non_greenland_vals) == 0:
                         continue
                     mask_invalid = non_greenland_vals  # | (elev_array == elev_ndv)
                 if tname.find("Antarctica") >= 0:
+                    # We aren't going to use a surface dataset for Antarctica, since Copernicus is higher-res there.
+                    # Simply mask out everything as invalid for the surface dataset. Just use the bed.
+                    if var == 'surface':
+                        mask_invalid = numpy.ones(mask_array.shape, dtype=bool)
                     # Filter out ocean basin in Antarctica. GEBCO is better there.
-                    ocean_cells = (mask_array == 0)
-                    if numpy.count_nonzero(ocean_cells):
-                        continue
-                    mask_invalid = ocean_cells  # | (elev_array == elev_ndv)
+                    #
+                    else:
+                        # For the bed, we just want to use 2: grounded ice and 3: floating ice
+                        assert var == 'bed'
+                        non_bed_cells = (mask_array <= 1)
+                        if numpy.count_nonzero(non_bed_cells):
+                            continue
+                        mask_invalid = non_bed_cells  # | (elev_array == elev_ndv)
 
                 elev_array[mask_invalid] = elev_ndv
                 elev_band.WriteArray(elev_array)
@@ -127,7 +138,7 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                 elev_ds = None
 
                 if verbose:
-                    print(os.path.split(gtif_name)[1], "written with {0:4.1f}% valid data.".format(
+                    print(os.path.split(gtif_name)[1], "written in WGS84 heights with {0:4.1f}% valid data.".format(
                         numpy.count_nonzero(~mask_invalid) / mask_invalid.size * 100))
 
             # Find the ETOPO tiles that overlap this polygon.
@@ -155,6 +166,7 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                 polygon_to_use = shapely.ops.transform(projector, polygon_interpolated)
 
                 if tname.find("Antarctica") >= 0:
+                    # For antarctica, we must wrap the projected polygon around the poles.
                     lons, lats = [numpy.array(a) for a in polygon_to_use.exterior.xy]
                     # print(type(lons), type(lats))
                     # All the latitudes should be negative. Sanity check.
@@ -184,13 +196,13 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                                                                 resolution_s=resolution_s,
                                                                 verbose=verbose)
 
-                # print(etopo_gdf_subset.columns)
+                # Reproject out to all the tiles.
                 for i, row in etopo_gdf_subset.iterrows():
                     # print(row.xleft, row.xres, row.ytop, row.yres)
                     # print(str(proj.to_epsg()))
                     ybottom = round(row.ytop + (row.yres * row.ysize))
                     xright = round(row.xleft + (row.xres * row.xsize))
-                    gtif_fname_only = os.path.split(gtif_name)[1]
+                    # gtif_fname_only = os.path.split(gtif_name)[1]
                     outfile_basename = "BedMachine" + \
                                        ("Greenland" if tname.find("Greenland") >= 0 else "Antarctica") + \
                                        "_{0}s_".format(resolution_s) + \
@@ -204,7 +216,10 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                         print(outfile_basename)
                     # continue
 
-                    projected_name = os.path.join(os.path.dirname(gtif_name), "projected", outfile_basename)
+                    projected_name = os.path.join(os.path.dirname(gtif_name),
+                                                  "{0}s".format(int(resolution_s)),
+                                                  "projected",
+                                                  outfile_basename)
                     if os.path.exists(projected_name) and overwrite:
                         os.remove(projected_name)
 
@@ -228,12 +243,15 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                         print(" ".join(gdal_cmd))
                         subprocess.run(gdal_cmd,
                                        cwd=self.config._abspath(self.config.source_datafiles_directory),
-                                       capture_output=not verbose)
+                                       capture_output=True)
                         print()
                     assert os.path.exists(projected_name)
 
                     base, ext = os.path.splitext(outfile_basename)
-                    converted_fname = os.path.join(os.path.dirname(gtif_name), "converted", base + "_egm2008" + ext)
+                    converted_fname = os.path.join(os.path.dirname(gtif_name),
+                                                   "{0}s".format(int(resolution_s)),
+                                                   "converted",
+                                                   base + "_egm2008" + ext)
 
                     if os.path.exists(converted_fname) and overwrite:
                         os.remove(converted_fname)
@@ -245,7 +263,7 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                                                             input_vertical_datum="wgs84",
                                                             output_vertical_datum="egm2008",
                                                             cwd=os.path.dirname(converted_fname),
-                                                            verbose=verbose)
+                                                            verbose=False)
 
                     if not os.path.exists(converted_fname):
                         print("ERROR: Could not create", os.path.split(converted_fname)[1])
@@ -254,6 +272,8 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
         # Go through the list of converted files and get rid of ones that have no good data. This happens from the
         # Masking above.
         for fname in converted_files_list:
+            if not os.path.exists(fname):
+                continue
             ds = gdal.Open(fname, gdal.GA_ReadOnly)
             band = ds.GetRasterBand(1)
             array = band.ReadAsArray()
@@ -273,4 +293,4 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
 
 if __name__ == "__main__":
     bm = source_dataset_BedMachine()
-    bm.convert_and_reproject_netcdf_to_wgs84_egm2008_geotiffs()
+    bm.convert_and_reproject_netcdf_to_wgs84_egm2008_geotiffs(resolution_s=15)

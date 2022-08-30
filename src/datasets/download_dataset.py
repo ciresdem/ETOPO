@@ -203,6 +203,16 @@ class DatasetDownloader_BaseClass:
                     continue
             else:
                 # exitstatus, fsize_remote, fsize_small = self.query_for_remote_filesize(url, data_dir)
+                # In some cases for CUDEM tiles, we moved them one or two folders up after download. Check there.
+                file_found = False
+                for numdirs_up in (1,2):
+                    dirname, fname = os.path.split(local_filepath)
+                    upper_filepath = os.path.abspath(os.path.join(dirname, "/".join([".."] * numdirs_up), fname))
+                    if os.path.exists(upper_filepath):
+                        file_found = True
+                        break
+                if file_found:
+                    continue
                 urls_to_download.append(url)
                 active_fsize_strings.append(None)
                 wget_commands.append(command)

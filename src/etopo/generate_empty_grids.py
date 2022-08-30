@@ -12,6 +12,10 @@ from osgeo import gdal, osr
 import os
 import numpy
 import re
+import shapely.geometry
+import pyproj
+import numpy
+import geopandas
 
 ###############################################################
 # Quick code for importing the parent /src/ directory, to access other modules.
@@ -51,6 +55,7 @@ def create_empty_tiles(directory,
                        tile_width_deg = 15,
                        resolution_s = 15,
                        ndv = my_config.etopo_ndv,
+                       overwrite=False,
                        verbose=True,
                        compression_options = ["COMPRESS=DEFLATE", "PREDICTOR=2"],
                        also_write_geopackage = True):
@@ -117,6 +122,9 @@ def create_empty_tiles(directory,
                                                                   )
                              )
 
+        if not overwrite and os.path.exists(fname):
+            continue
+
         file_dim_x = file_dim_size
         file_dim_y = int(file_dim_size/2) if (resolution_s == 60) else file_dim_size
 
@@ -158,6 +166,91 @@ def get_azerbaijan_1deg_bboxes():
 
     y = 38
     for x in (45,46,48,49):
+        bboxes.append((x,y,x+1,y+1))
+
+    return bboxes
+
+def get_gulf_1deg_bboxes():
+    """Return boxes over the Gulf of Mexico and off the Eastern US Coast that we want to include in the 1s CRM tiles."""
+    bboxes = []
+    y = 24
+    for x in range(-97,-83):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 25
+    for x in range(-97,-82):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 26
+    for x in range(-97,-83):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 27
+    for x in list(range(-96,-83)) + [-80]:
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 28
+    for x in list(range(-95,-90)) + list(range(-89,-83)) + [-80,-79]:
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 29
+    for x in [-88,-87,-80,-79]:
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 30
+    for x in range(-81,-78):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 31
+    for x in range(-80,-76):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 32
+    for x in range(-79,-74):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 33
+    for x in range(-77,-72):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 34
+    for x in range(-76,-71):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 35
+    for x in range(-75,-70):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 36
+    for x in range(-75,-69):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 37
+    for x in range(-75,-68):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 38
+    for x in range(-74,-67):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 39
+    for x in range(-74,-66):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 40
+    for x in range(-72,-65):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 41
+    for x in range(-69,-65):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 42
+    for x in range(-70,-65):
+        bboxes.append((x,y,x+1,y+1))
+
+    y = 43
+    for x in [-68]:
         bboxes.append((x,y,x+1,y+1))
 
     return bboxes
@@ -258,6 +351,10 @@ def create_list_of_tile_tuples(resolution = 15,
         azerbaijan_bboxes = get_azerbaijan_1deg_bboxes()
         azerbaijan_tuples = [(bbox[1],bbox[0]) for bbox in azerbaijan_bboxes]
         dem_tuples.extend(azerbaijan_tuples)
+        # Also get the 1-deg CRM boxes over the Gulf of Mexico and US Coast
+        gulf_and_east_coast_bboxes = get_gulf_1deg_bboxes()
+        gulf_and_east_coast_tuples = [(bbox[1],bbox[0]) for bbox in gulf_and_east_coast_bboxes]
+        dem_tuples.extend(gulf_and_east_coast_tuples)
         # Sort them out, for good measure.
         dem_tuples.sort()
 
@@ -282,7 +379,32 @@ def create_list_of_tile_tuples(resolution = 15,
 
     return dem_tuples
 
+def create_1s_all_tiles_gpkg(gpkg_fname=os.path.join(my_config._abspath(my_config.etopo_empty_tiles_directory), "1s_global.gpkg")):
+    """Create 1s tiles for the entire world. Just the outlines, in a geopackage of EPSG 4326 (lat/lon).
+
+    This is useful for looking at where tiles are, and where they may be missing."""
+    xmins_list = numpy.arange(-180,180,1)
+    ymins_list = numpy.arange(-90,90,1)
+    xmins, ymins = numpy.meshgrid(xmins_list, ymins_list)
+    xmins = xmins.flatten()
+    ymins = ymins.flatten()
+    xmaxs = xmins + 1
+    ymaxs = ymins + 1
+    polys = [shapely.geometry.Polygon([[xmin,ymin],[xmin,ymax],[xmax,ymax],[xmax,ymin],[xmin,ymin]]) \
+             for xmin,ymin,xmax,ymax in zip(xmins, ymins, xmaxs, ymaxs)]
+
+    gdf = geopandas.GeoDataFrame(data={'xmin': xmins,
+                                       'ymin': ymins,
+                                       'xmax': xmaxs,
+                                       'ymax': ymaxs,
+                                       'geometry': polys},
+                                 geometry='geometry',
+                                 crs=pyproj.crs.CRS.from_epsg(4326))
+    gdf.to_file(gpkg_fname, layer="tiles", driver="GPKG")
+    print(gpkg_fname, "written with", len(gdf), "tile squares.")
+
 if __name__ == "__main__":
+    # create_1s_all_tiles_gpkg()
     create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "1s"),
                        tile_width_deg = 1,
                        resolution_s = 1,

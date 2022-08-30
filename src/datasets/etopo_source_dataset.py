@@ -115,6 +115,9 @@ class ETOPO_source_dataset:
         """Create a datalist file for the dataset, useful for cudem "waffles" processing.
         It will use the same name as the geopackage
         object, just substituting '.gpkg' for '.datalist'.
+
+        NOTE: This function is still usable, but is deprecated. We no longer create a full dataset datalist, but
+        rather datalists for each tile to increase processing speeds.
         """
         datalist_fname = self.get_datalist_fname(resolution_s = resolution_s)
 
@@ -219,14 +222,13 @@ class ETOPO_source_dataset:
         dset = None
         return
 
-
     def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True, weight=None):
         """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
         of all tile entries that would appear in a CUDEM datalist. If no source
         tiles overlap the polygon, return an empty list [].
 
         Each datalist entry is a 3-value string, as such:
-        [filename/path] [format] [weight]
+        [path/filename] [format] [weight]
         In this case, format will always be 200 for raster. Weight will the weights
         returned by self.get_dataset_ranking_score().
 
@@ -630,9 +632,18 @@ def define_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    for dset_name in ["BlueTopo_{0}N".format(n) for n in (14,15,16,18,19)]:
-        dset = get_source_dataset_object(dset_name)
-        dset.override_gdf_projection(verbose=True)
+    
+    # Rebuild the CUDEM datapackages for each one after new files have been downloaded.
+    # for groupname in ("CONUS", "CONUS_Sandy", "Hawaii", "Guam", "AmericanSamoa", "Puerto_Rico", "USVI", "Northern_Mariana"):
+    for groupname in (["BlueTopo_{0:02d}N".format(z) for z in (14,15,16,18,19)]):
+        dset = get_source_dataset_object(groupname)
+        gpkg = dset.get_geopkg_object()
+        gpkg.create_dataset_geopackage()
+        dset.convert_vdatum()
+
+    # for dset_name in ["BlueTopo_{0}N".format(n) for n in (14,15,16,18,19)]:
+    #     dset = get_source_dataset_object(dset_name)
+    #     dset.override_gdf_projection(verbose=True)
 
     # TEMP_move_CUDEM_egm2008_tiles()
     # args = define_and_parse_args()

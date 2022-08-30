@@ -145,6 +145,60 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
             print(os.path.split(gpkg_fname)[1], "written in EPSG:{0}".format(self.get_crs(as_epsg=True)), "with {0} tiles.".format(len(gdf)))
         return
 
+    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True, weight=None):
+        """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
+        of all tile entries that would appear in a CUDEM datalist. If no source
+        tiles overlap the polygon, return an empty list [].
+
+        This is an overloaded function of etopo_source_dataset::generate_tile_datalist_entries.
+        This one assigns a slightly different weight depending upon whether it's a BlueTopo_US5, _US4, or _US3 tile.
+        Since the higher numbers (i.e. US5) are higher resolution, we want those to be slightly differnt, so rather than
+        7, it'll be 7.3, 7.4, and 7.5, respectively.
+        I will need to post-process to make sure the 7.x is changed back to 7 in the end.
+
+        Each datalist entry is a 3-value string, as such:
+        [path/filename] [format] [weight]
+        In this case, format will always be 200 for raster. Weight will the weights
+        returned by self.get_dataset_ranking_score().
+
+        If polygon_crs can be a pyproj.crs.CRS object, or an ESPG number.
+        If poygon_crs is None, we will use the CRS
+        from the source dataset geopackage.
+
+        If weight is None, use the weight returned by self.get_dataset_ranking_score.
+        Else use the weight provided in "weight" for all entries.
+        """
+        if polygon_crs is None:
+            polygon_crs = self.get_crs(as_epsg=False)
+
+        if weight is None:
+            weight = self.get_dataset_ranking_score()
+
+        # Do a command-line "waffles -h" call to see datalist options. The datalist
+        # type for raster files is "200"
+        DTYPE_CODE = 200
+
+        list_of_overlapping_files = self.retrieve_list_of_datafiles_within_polygon(polygon,
+                                                                                   polygon_crs,
+                                                                                   resolution_s = resolution_s,
+                                                                                   verbose=verbose)
+
+        return ["{0} {1} {2}".format(fname, DTYPE_CODE, get_tile_size_from_fname(fname, weight)) \
+                for fname in list_of_overlapping_files]
+
+def get_tile_size_from_fname(fname, orig_weight):
+    """looking at the filename, get the file size from it (3,4,5), and add it as a decimal to the weight.
+
+    The one-digit number immediately after _US in the filename is the tile size indicator.
+    A filename of BlueTopo_US4TX1JG_20211020_egm2008.tiff with an original weight of 7 will return 7.4.
+
+    This will put the bigger numbers (smaller tile sizes) at a greater weight than smaller numbers (larger tiles)."""
+    # Look for the number just after "BlueTopo_US" and just before "LLNLL" wher L is a capital letter and N is a number.
+    tile_size = int(re.search("(?<=BlueTopo_US)\d(?=[A-Z]{2}\d[A-Z]{2})", os.path.split(fname)[1]).group())
+    assert 1 <= tile_size <= 5
+    new_weight = orig_weight + (tile_size / 10.0)
+    return new_weight
+
 if "__main__" == __name__:
     bt = source_dataset_BlueTopo()
     bt.split_files_into_epsg_folders()
