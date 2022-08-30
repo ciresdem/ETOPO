@@ -18,6 +18,7 @@ import geopandas
 import pyproj
 import pygeos
 import numpy
+import warnings
 
 # Import the parent directory so I can import anything else I need.
 import import_parent_dir
@@ -25,6 +26,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 import utils.traverse_directory
 import utils.progress_bar
 import utils.configfile
+import warnings
 
 class DatasetGeopackage:
     """A class for handling geopackage collections of DEMs from various sources."""
@@ -47,7 +49,7 @@ class DatasetGeopackage:
         self.regex_filter = self.config.datafiles_regex
 
     def get_gdf_filename(self, resolution_s = None):
-        if (self.filename.find("{0}") >= 0) and (resolution_s != None):
+        if (self.filename.find("{0}") >= 0) and (resolution_s is not None):
             return self.filename.format(resolution_s)
         else:
             return self.filename
@@ -196,7 +198,9 @@ class DatasetGeopackage:
         """Given a geotiff file name, return a shapely.geometry.Polygon object of the outline and return it.
 
         If 'return_proj_string_too' is set, also return the projection string as a second return value."""
-        dset = gdal.Open(gtif_name)
+        if not os.path.exists(gtif_name):
+            raise FileNotFoundError(gtif_name + " not found.")
+        dset = gdal.Open(gtif_name, gdal.GA_ReadOnly)
         xleft, xres, _, ytop, _, yres = dset.GetGeoTransform()
         xsize, ysize = dset.RasterXSize, dset.RasterYSize
         proj = dset.GetProjection()
@@ -233,12 +237,18 @@ class DatasetGeopackage:
         else:
             project = pyproj.Transformer.from_crs(poly_crs_obj, gdf_crs_obj, always_xy=True).transform
             # Interpolate the polygon into a lot more segments, to better handle warping in reprojected coordinates.
-            polygon_interpolated = shapely.geometry.Polygon([polygon.boundary.interpolate(i, normalized=True) for i in numpy.linspace(0,1,401)])
+            polygon_interpolated = shapely.geometry.Polygon([polygon.boundary.interpolate(i, normalized=True) for i in numpy.linspace(0,1,101)])
             polygon_to_use = shapely.ops.transform(project, polygon_interpolated)
+            # In some projected coordinate systems, some lat/lons will become infinities. Filter those out.
+            Xs,Ys = polygon_to_use.exterior.coords.xy
+            polygon_to_use = shapely.geometry.Polygon([[x,y] for x,y in zip(Xs,Ys) if (x!=numpy.inf and y!=numpy.inf)])
 
         # Get all the tiles that truly intersect but don't just "touch" the polygon on its boundary without overlapping.
         try:
-            return gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
+            warnings.filterwarnings("error")
+            gdf_partial = gdf[gdf.intersects(polygon_to_use) & ~gdf.touches(polygon_to_use)]
+            warnings.filterwarnings("default")
+            return gdf_partial
         except pygeos.GEOSException:
             # Sometimes the polygon is (at least partially) outside the bounds of this
             # projection, creating instances where coordinates are giving infinite values, causing issues here.
@@ -249,6 +259,8 @@ class DatasetGeopackage:
             return gdf[gdf.index == (gdf.index.min()-1)]
         except RuntimeWarning as e:
             print("Insersection warning in datasdet", self.config.dataset_name)
+            print("polygon", polygon_to_use)
+            print("ESPG:", gdf_crs_obj.to_epsg())
             return gdf[gdf.index == (gdf.index.min()-1)]
 
 
@@ -368,12 +380,14 @@ def create_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
-    import sys
-    sys.exit(0)
+    # import sys
+    # sys.exit(0)
 
-    # ET1 = ETOPO_Geopackage(1)
-    # # print(ET1.get_gdf().columns)
-    # # print(ET1.get_gdf())
+    ET1 = ETOPO_Geopackage(1)
+    # gdf = ET1.get_gdf(crm_only_if_1s=True)
+    # fname = os.path.splitext(ET1.filename)[0] + "_CRM_only.gpkg"
+    # gdf.to_file(fname, driver="GPKG")
+    # print(fname, "written.")
     # ET1.create_dataset_geopackage()
     # ET1.add_dlist_paths_to_gdf()
     # import sys
