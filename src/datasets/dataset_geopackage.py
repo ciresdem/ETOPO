@@ -48,7 +48,7 @@ class DatasetGeopackage:
         self.default_layer_name = "DEMs"
         self.regex_filter = self.config.datafiles_regex
 
-    def get_gdf_filename(self, resolution_s = None):
+    def get_gdf_filename(self, resolution_s = None,):
         if (self.filename.find("{0}") >= 0) and (resolution_s is not None):
             return self.filename.format(resolution_s)
         else:
@@ -113,7 +113,7 @@ class DatasetGeopackage:
                                                                         ordered=True,
                                                                         include_base_directory=True)
                 else:
-                    list_of_files = [os.path.join(dir_or_list_of_files, fn) for fn in os.listdir(dir_or_list_of_files) if re.search(self.regex_filter, fn) != None]
+                    list_of_files = [os.path.join(dir_or_list_of_files, fn) for fn in os.listdir(dir_or_list_of_files) if re.search(self.regex_filter, fn) is not None]
             elif os.path.exists(dir_or_list_of_files):
                 # We were given a file (not a directory). Just put this as the file.
                 list_of_files = [dir_or_list_of_files]
@@ -225,7 +225,7 @@ class DatasetGeopackage:
         If the polygon_crs does not match the geopackage crs, conver the polygon into
         the geopackage CRS before performing the intersection.
         """
-        gdf = DatasetGeopackage.get_gdf(self, resolution_s = resolution_s, verbose=verbose)
+        gdf = DatasetGeopackage.get_gdf(self, resolution_s=resolution_s, verbose=verbose)
 
         gdf_crs_obj  = pyproj.crs.CRS(gdf.crs)
         poly_crs_obj = pyproj.crs.CRS(polygon_crs)
@@ -315,7 +315,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
         self.default_layer_name = "DEMs"
         self.regex_filter = r"ETOPO_(\d){4}_v(\d)_(\d){1,2}s_(\w){7}\.tif\Z"
 
-        ## These member variables are unique to the ETOPO grids specifically.
+        # These member variables are unique to the ETOPO grids specifically.
 
         self.dlist_dir = self.config.etopo_datalist_directory
 
@@ -337,7 +337,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
         # Return the subset of the geodataframe that intersects the CRM outline polygon.
         return self.subset_by_polygon(crm_polygon, crm_gdf.crs, verbose=verbose)
 
-    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, crm_only_if_1s = True, verbose=True):
+    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, crm_only_if_1s=True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
         approrpriate source-datasets dlist for each ETOPO tile.
 

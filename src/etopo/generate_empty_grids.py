@@ -25,6 +25,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import utils.configfile
 import datasets.dataset_geopackage
+import datasets.BedMachine_Bed.source_dataset_BedMachine_Bed as BedMachine_Bed
 
 my_config = utils.configfile.config()
 # ETOPO_datatype = gdal.GDT_Float32
@@ -147,6 +148,11 @@ def create_empty_tiles(directory,
 
     return
 
+def get_ice_sheet_bed_15deg_bboxes():
+    """For the 15-degree dataset, get bounding boxes that have valid tiles that are in the BedMachine_Bed dataset."""
+    BM = BedMachine_Bed.source_dataset_BedMachine_Bed()
+
+
 def get_azerbaijan_1deg_bboxes():
     """Return the (xmin,ymin,xmax,ymax) bounding boxes for 1s tiles over Azerbaijan.
 
@@ -255,65 +261,7 @@ def get_gulf_1deg_bboxes():
 
     return bboxes
 
-# def create_tile_shapefile(shapefile_name,
-#                           tile_boundaries_list,
-#                           projection,
-#                           config_obj = my_config,
-#                           overwrite = True,
-#                           verbose=True):
-#     """Generate tile outline shapefile given the boundaries of each box.
-#     tile_boundaries is a 4-tuple with (xmin, xmax, ymin, ymax)."""
-
-#     driver = ogr.GetDriverByName("ESRI Shapefile")
-
-#     if overwrite and os.path.exists(shapefile_name):
-#         driver.DeleteDataSource(shapefile_name)
-
-#     ds = driver.CreateDataSource(shapefile_name)
-#     layer = ds.CreateLayer("Tiles", projection, ogr.wkbPolygon)
-
-#     id_field = ogr.FieldDefn("id", ogr.OFTInteger)
-#     layer.CreateField(id_field)
-#     pct_done_field = ogr.FieldDefn("pct_done", ogr.OFTReal)
-#     layer.CreateField(pct_done_field)
-#     pct_land_field = ogr.FieldDefn("pct_land", ogr.OFTReal)
-#     layer.CreateField(pct_land_field)
-#     # TODO: Add other fields here as needed.
-
-#     feature_defn = layer.GetLayerDefn()
-
-#     for i, tile_boundary_tuple in enumerate(tile_boundaries_list):
-#         feature = ogr.Feature(feature_defn)
-#         xmin, xmax, ymin, ymax = [float(x) for x in tile_boundary_tuple]
-
-#         ring = ogr.Geometry(ogr.wkbLinearRing)
-#         ring.AddPoint(xmin, ymin)
-#         ring.AddPoint(xmin, ymax)
-#         ring.AddPoint(xmax, ymax)
-#         ring.AddPoint(xmax, ymin)
-#         ring.AddPoint(xmin, ymin)
-
-#         poly = ogr.Geometry(ogr.wkbPolygon)
-#         poly.AddGeometry(ring)
-#         feature.SetGeometry(poly)
-
-#         feature.SetField("id", i+1)
-#         feature.SetField("pct_done", 0.0)
-#         feature.SetField("pct_land", -1.0)
-
-#         layer.CreateFeature(feature)
-
-#         feature = None
-
-#     ds = None
-
-#     if verbose:
-#         print(len(tile_boundaries_list), "polygons written to", shapefile_name)
-
-#     return
-
 def create_list_of_tile_tuples(resolution = 15,
-                               config_obj = my_config,
                                verbose=True):
     """Based on the Copernicus DEM tiles (but including missing areas over Azerbaijan & Armenia), create a list of 1° x 1° tiles to include.
 

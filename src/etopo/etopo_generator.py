@@ -365,9 +365,10 @@ class ETOPO_Generator:
         Provide etopo_tile_fname if we only want one file done. Otherwise, do them all
         (for that resolution).
         """
+        # TODO: Add bed logic here.
         # Retrieve the dataset_geopackage object for this ETOPO grid.
         etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
-        etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, bed=bed, verbose=verbose)
+        etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, verbose=verbose)
         config_obj = self.etopo_config
         etopo_crs = etopo_gdf.crs
 
@@ -379,7 +380,7 @@ class ETOPO_Generator:
             # If the resolution is 60, just use all the ETOPO 15s tiles to generate the 60s
             # global tile.
             etopo_15s_gpkg = dataset_geopackage.ETOPO_Geopackage(15)
-            etopo_15s_gdf = etopo_15s_gpkg.get_gdf(bed = bed, verbose=verbose)
+            etopo_15s_gdf = etopo_15s_gpkg.get_gdf(verbose=verbose)
 
             # We want to query the finished tiles of the dataset, not the empty tiles.
             dlist_filenames = [fn.replace("empty_tiles", "finished_tiles") for fn in etopo_15s_gdf['filename'].tolist()]
@@ -426,7 +427,7 @@ class ETOPO_Generator:
             assert (len(etopo_polygons) == len(etopo_fnames))
 
             # 2. Get all the ETOPO source dataset objects.
-            datasets_list = self.fetch_etopo_source_datasets(bed=bed, verbose=verbose, return_type=list)
+            datasets_list = self.fetch_etopo_source_datasets(verbose=verbose, bed=bed, return_type=list)
 
             # 3. For each tile in the gdf, create a datalist name for that tile in the datalist folder.
             N = len(etopo_fnames)
@@ -441,7 +442,6 @@ class ETOPO_Generator:
                     this_dlist_entries = dset_obj.generate_tile_datalist_entries(etopo_poly,
                                                                                  polygon_crs = etopo_crs,
                                                                                  resolution_s = resolution,
-                                                                                 bed = bed,
                                                                                  verbose = verbose)
 
                     if len(this_dlist_entries) > 0:
@@ -490,10 +490,10 @@ class ETOPO_Generator:
         """Geenerate all of the ETOPO tiles at a given resolution."""
         # Get the ETOPO_geopackage object, with the datalist filenames in it
         # (if they're not in there already, they may be)
+        # TODO: Add bed logic here, whether to include BedMachine_surface, or BedMachine_bed.
         etopo_gdf = dataset_geopackage.ETOPO_Geopackage(resolution).add_dlist_paths_to_gdf(\
                                         save_to_file_if_not_already_there = True,
                                         crm_only_if_1s = crm_only_if_1s,
-                                        bed = bed,
                                         verbose = verbose)
 
         # Sort the lists, just 'cuz.
@@ -510,7 +510,6 @@ class ETOPO_Generator:
         if verbose:
             print("Generating tile datalists:")
         self.generate_etopo_tile_datalists(resolution=resolution,
-                                           bed = bed,
                                            crm_only_if_1s = crm_only_if_1s,
                                            etopo_tile_fname=None,
                                            active_sources_only=True,
@@ -583,10 +582,10 @@ class ETOPO_Generator:
                         tmpdirs_waiting_to_be_deleted.append(tmpdir)
                         total_finished_procs += 1
 
-                for dproc,tmpdir in zip(procs_waiting_to_be_removed,tmpdirs_waiting_to_be_deleted):
+                for dproc, tmpdir in zip(procs_waiting_to_be_removed,tmpdirs_waiting_to_be_deleted):
                     active_procs.remove(dproc)
-                    for tf in [os.path.join(tmpdir,tf) for tf in os.listdir(tmpdir)]:
-                        os.remove(tf)
+                    for tfn in [os.path.join(tmpdir, tf) for tf in os.listdir(tmpdir)]:
+                        os.remove(tfn)
                     os.rmdir(tmpdir)
                     active_tempdirs.remove(tmpdir)
 
@@ -650,7 +649,7 @@ class ETOPO_Generator:
 
         return self.etopo_config.etopo_sources_datalist
 
-    def fetch_etopo_source_datasets(self, active_only: bool = True, verbose: bool = True, return_type: object = dict) -> object:
+    def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: object = dict) -> object:
         """Look through the /src/datasets/ directory, and get a list of the input datasets to use.
         This list will be saved to self.source_datasets, and will be instances of
         the datasets.source_dataset class, or sub-classes thereof.
@@ -682,6 +681,14 @@ class ETOPO_Generator:
         dataset_objects_dict = dict()
         # Loop through all the sub-directories, check requirements for an active dataset class.
         for dataset_name in subdirs_list:
+            # If we're looking for the bed (or surface) and we find the other set of BedMachine, skip it.
+            # Only if we're looking for active objects only.
+            if active_only is True:
+                if (bed is True) and (dataset_name == "BedMachine_Surface"):
+                    continue
+                elif (bed is False) and (dataset_name == "BedMachine_Bed"):
+                    continue
+
             subdir = os.path.join(datasets_dir, dataset_name)
             dataset_class_name = "source_dataset_{0}".format(dataset_name)
             module_fname = os.path.join(subdir, dataset_class_name + ".py")
@@ -691,8 +698,6 @@ class ETOPO_Generator:
                 # directory (which is imported above)
                 importpath = "datasets.{0}.{1}".format(dataset_name, dataset_class_name)
                 module = importlib.import_module(importpath)
-                # file, pathname, desc = imp.find_module(dataset_class_name, [subdir])
-                # module = imp.load_module(dataset_class_name, file, pathname, desc)
 
                 # Create an object from the file.
                 dataset_object = getattr(module, dataset_class_name)()
@@ -919,6 +924,34 @@ def generate_single_etopo_tile(dest_tile_fname,
     /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
     # ^ Except, use the source_tile_datalist created here for that entry.
 
+def TEMP_create_15s_global_tile():
+    srcdir = "/home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/15s/2022.08.25"
+    input_files = [os.path.join(srcdir, fn) for fn in os.listdir(srcdir) if re.search("ETOPO_2022_v1_15s([\w\.]+)\.tif\Z", fn) is not None]
+    print(len(input_files), "source tiles.")
+    dlist_fname = "/home/mmacferrin/Research/DATA/ETOPO/data/datalists/60s/TEMP_15_sec_tiles.datalist"
+    dlist_text = "\n".join(["{0} 200 1".format(fn) for fn in input_files])
+    with open(dlist_fname, 'w') as f:
+        f.write(dlist_text)
+        f.close()
+    print(dlist_fname, "written.")
+
+    dest_tile_fname = "/home/mmacferrin/Research/DATA/ETOPO/data/datalists/60s/TEMP_ETOPO_15s_global.tif"
+
+    waffles_args = ["waffles",
+                    "-M", "stacks:supercede=True:keep_weights=True",
+                    "-R", "-180/180/-90/90",
+                    "-N", "-99999",
+                    "-E", "15s",
+                    "-w", # Use the datalist weights.
+                    "-S", "near",
+                    "-P", "EPSG:4326",
+                    "-O", os.path.splitext(dest_tile_fname)[0], # Get rid of the .tif at the end. Waffles adds that automatically.
+                    dlist_fname]
+
+    subprocess.run(waffles_args)
+
+    assert os.path.exists(dlist_fname)
+
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Generate the tiles. All proprocessing must be done on source datasets first, including cleansing and/or vertical datum transformations.")
     parser.add_argument("-resolution", "-r", default=(15,1,60), nargs="*", help="Grid resolution. Can add up to 3, choices of: 1 15 60. Will be exectued in the order given. Default: 15 1 60.")
@@ -929,6 +962,10 @@ def define_and_parse_args():
     parser.add_argument("--quiet", "-q", action="store_true", help="Run in quiet mode.")
 
 if __name__ == "__main__":
+
+    # TEMP_create_15s_global_tile()
+    # foobar
+
     args = define_and_parse_args()
 
     EG = ETOPO_Generator()

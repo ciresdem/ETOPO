@@ -45,6 +45,8 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
     def get_array_from_gtiff(self, gtif):
         """Get the raw array from a geotiff. Make sure the dataset is closed before returning."""
         ds = gdal.Open(gtif, gdal.GA_ReadOnly)
+        if ds is None:
+            return None
         band = ds.GetRasterBand(1)
         array = band.ReadAsArray()
         band = None
@@ -61,7 +63,12 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         """
         # If it already exists, work is done. Just exit da fuck outta here.
         if os.path.exists(output_fname):
-            return
+            ds = gdal.Open(output_fname, gdal.GA_ReadOnly)
+            # Check whether the file was validly read. If it's a corrupted or incomplete file, just delete it.
+            if ds is None:
+                os.remove(output_fname)
+            else:
+                return
 
         assert os.path.exists(grid_datafile)
         ds = gdal.Open(grid_datafile, gdal.GA_ReadOnly)
@@ -88,7 +95,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                        ]
 
         # If a nodata value is provided, include it in the args, just behind the final datalist argument.
-        if ndv != None:
+        if ndv is not None:
             stacks_args = stacks_args[:-1] + ["-N", str(ndv)] + [stacks_args[-1]]
 
         if verbose:
@@ -100,16 +107,33 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                        stderr = None if verbose else subprocess.STDOUT,
                        encoding = "utf-8")
 
+        assert os.path.exists(output_fname)
+
         return
 
 
     def get_data_directory(self, resolution_s):
         if int(resolution_s) == 15:
-            return self.config.source_datafiles_directory_15s
+            return self.config._abspath(self.config.source_datafiles_directory_15s)
         elif int(resolution_s) == 1:
-            return self.config.source_datafiles_directory_1s
+            return self.config._abspath(self.config.source_datafiles_directory_1s)
         else:
-            return self.config.source_datafiles_directory
+            return self.config._abspath(self.config.source_datafiles_directory)
+
+    def is_tile_included_in_lake_exceptions(self, tilename, resolution_s):
+        if self.lake_exceptions_df is None:
+            # Read the little csv file.
+            etopo_config = utils.configfile.config()
+            csvname = etopo_config.lake_exceptions_csv.format(resolution_s)
+            df = pandas.read_csv(csvname, index_col = False)
+            self.lake_exceptions_df = df
+        else:
+            df = self.lake_exceptions_df
+
+        tilename_marker = re.search("[NS](\d{2})[EW](\d{3})", os.path.split(tilename)[1]).group()
+        sub_df = df[df.filename == tilename_marker]
+        # If this tiles isn't mentioned anywhere in the file, return True.
+        return len(sub_df) > 0
 
     def check_lake_exceptions(self, tilename, lake_array, resolution_s):
         """Check whether the lake in question has an exception listed. If nothing is listed here for this lake,
@@ -175,46 +199,102 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         running_fnames = []
         total_finished = 0
 
-        for i, row in glob_gdf.iterrows():
+        N = len(glob_gdf.index)
+
+        for i, row in enumerate(glob_gdf.iterrows()):
+            # iterrows() returns an "(index, row)" tuple. Don't care about the incides here, so ignore them.
+            _, row = row
             # The Globathy file name.
             gb_fname = row.filename
+            process_started = False
 
-            if verbose:
-                print("{0}/{1}".format(i + 1, len(glob_gdf)), os.path.split(gb_fname)[1])
+            # if verbose:
+            #     print("{0}/{1}".format(i + 1, len(glob_gdf)), os.path.split(gb_fname)[1])
 
             if not os.path.exists(gb_fname):
                 if verbose:
                     print(gb_fname, "does not exist.")
                 total_finished += 1
-                continue
+                if i < (N-1):
+                    continue
+                else:
+                    process_started = True
 
-            gebco_lakes_fname = self.config.global_lakes_fname_template.format("N" if (ymin >= 0) else "S",
-                                                                               int(abs(ymin)),
-                                                                               "E" if (row.xleft >= 0) else "W",
+            ymin = numpy.round(row.ytop + (row.ysize * row.yres))
+
+            gebco_lakes_fname = self.config.global_lakes_fname_template.format("N" if (numpy.round(ymin) >= 0) else "S",
+                                                                               int(abs(numpy.round(ymin))),
+                                                                               "E" if (numpy.round(row.xleft) >= 0) else "W",
                                                                                int(abs(numpy.round(row.xleft))))
             gebco_lakes_fpath = os.path.join(self.get_data_directory(resolution_s), gebco_lakes_fname)
             if os.path.exists(gebco_lakes_fpath):
-                if verbose:
-                    print("\tAlready exists. Moving on.")
-                total_finished += 1
-                continue
+                # Test to see if it's a valid file.
+                ds = gdal.Open(gebco_lakes_fpath, gdal.GA_ReadOnly)
+                if ds is None:
+                    os.remove(gebco_lakes_fpath)
+                else:
+                    # if verbose:
+                    #     print("\tAlready exists. Moving on.")
+                    total_finished += 1
+                    if i < (N-1):
+                        continue
+                    else:
+                        process_started = True
 
-            # First, loop to find any running procs that are done. If so, wrap them up.
-            
+            # If there still hasn't been room in the process queue for this proc, *or* we're on the very last
+            # process and some others are still running, keep looping and monitor them.
+            while (not process_started) or ((i==(N-1)) and len(running_procs) > 0):
+            # First, loop to find any running procs that are done. If so, we'll add another, then wrap them up.
+            # while len(running_procs) > 0:
+            #     found_a_dead_proc = False
+            #     for proc in running_procs:
+            #         if not proc.is_alive():
+            #             found_a_dead_proc = True
+            #             break
+            #     if found_a_dead_proc:
+            #         break
+            #     else:
+            #         time.sleep(0.01)
 
-            nlakes = create_one_gebco_lakes_tile(self,
-                                                 gb_fname,
-                                                 gebco_lakes_fpath,
-                                                 temp_dir,
-                                                 copernicus_datalist,
-                                                 gebco_datalist,
-                                                 output_csv = True,
-                                                 overwrite = overwrite,
-                                                 verbose = False
-                                                 )
+                # If there's room for a new process, start it up and add it to the queue.
+                if (not process_started) and (len(running_procs) < numprocs):
 
-            if verbose:
-                print(gebco_lakes_fpath, "written with", nlakes, "lakes.")
+                    p = multiprocessing.Process(target=create_one_gebco_lakes_tile,
+                                                args=(self,
+                                                      gb_fname,
+                                                      gebco_lakes_fpath,
+                                                      temp_dir,
+                                                      copernicus_datalist,
+                                                      gebco_datalist,
+                                                      resolution_s,
+                                                      ),
+                                                kwargs={"check_exceptions": True if (resolution_s == 15) else False,
+                                                        "output_csv" : True,
+                                                        "verbose" : False
+                                                        }
+                                                )
+                    p.start()
+                    # Mark that this process has been started.
+                    process_started = True
+                    running_procs.append(p)
+                    running_fnames.append(gebco_lakes_fpath)
+
+                procs_to_remove = []
+                fnames_to_remove = []
+                for proc, fname in zip(running_procs, running_fnames):
+                    if not proc.is_alive():
+                        proc.join()
+                        proc.close()
+
+                        procs_to_remove.append(proc)
+                        fnames_to_remove.append(fname)
+                        total_finished += 1
+                        if verbose:
+                            print("{0}/{1}".format(total_finished, N), fname, ("" if os.path.exists(fname) else "NOT ") + "written.")
+
+                for proc, fname in zip(procs_to_remove, fnames_to_remove):
+                    running_procs.remove(proc)
+                    running_fnames.remove(fname)
 
         # If we'd set the lake exceptions GDF, re-set it to none, in case we call this function again at a different resolution.
         self.lake_exceptions_gdf = None
@@ -226,7 +306,6 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
         return self.get_geodataframe(resolution_s=resolution_s, verbose=verbose)
 
 
-    def compute_single_lakes_grid(self, ):
     def get_empty_lake_stats_df(self):
         """Create a dataset with named colunms and 2 rows empty data.
 
@@ -296,8 +375,9 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
                                 temp_dir : str,
                                 copernicus_datalist : str,
                                 gebco_datalist : str,
-                                ouptut_csv : bool = True,
-                                overwrite : bool = False,
+                                resolution_s : int,
+                                check_exceptions: bool = True,
+                                output_csv : bool = True,
                                 verbose : bool = True) -> int:
     """For multiprocessing, here is a single method to create one GEBCO tile.
     Return the number of distinct lakes included from GEBCO in this tile."""
@@ -325,6 +405,12 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
     # print(nlabels, "lakes.")
     # print(lab_array)
 
+    # A boolean flag to see if we should bother checking any lakes in this tile against the exceptions.
+    # If not, skip it.
+    if check_exceptions is True:
+        do_we_check_exceptions = gc_object.is_tile_included_in_lake_exceptions(globathy_fname, resolution_s)
+    else:
+        do_we_check_exceptions = False
     # image_label_overlay = skimage.color.label2rgb(lab_array, bg_label=0)
 
     # fig, ax = plt.subplots(figsize=(10, 6))
@@ -337,7 +423,7 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
 
     # Copernicus files for getting the surface elevation of the lake surface
     copernicus_grid_fname = os.path.join(temp_dir,
-                                         os.path.split(gb_fname)[1].replace("lakes_globathy_", "copernicus_temp_"))
+                                         os.path.split(globathy_fname)[1].replace("lakes_globathy_", "copernicus_temp_"))
     # GEBCO "nearest neighbor" grid for getting the lake bed elevation without interpolation.
     gebco_grid_nearest_fname = os.path.join(temp_dir, os.path.split(globathy_fname)[1].replace("lakes_globathy_",
                                                                                          "gebco_nearest_temp_"))
@@ -350,40 +436,62 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
     gebco_lakes_grid = array.copy()
     gebco_lakes_grid[:, :] = ndv
 
-    ymin = int(numpy.round(row.ytop + (row.yres * row.ysize)))
+    gbfn = os.path.split(globathy_fname)[1]
 
     # Create copernicus temp file
     # Create GEBCO "nearest neighbor" temp file.
     # Create GEBCO "bilinear" temp file.
     if verbose:
         print("  Creating source grids... ", end="")
-    for j, (dlist, fname, algorithm) in enumerate(zip([copernicus_datalist, gebco_datalist, gebco_datalist],
-                                                      [copernicus_grid_fname, gebco_grid_nearest_fname,
-                                                       gebco_grid_bilinear_fname],
-                                                      ["near", "near", "bilinear"])):
 
+    got_all_arrays = False
+    while not got_all_arrays:
+        for j, (dlist, fname, algorithm) in enumerate(zip([copernicus_datalist, gebco_datalist, gebco_datalist],
+                                                          [copernicus_grid_fname, gebco_grid_nearest_fname,
+                                                           gebco_grid_bilinear_fname],
+                                                          ["near", "near", "bilinear"])):
+
+            if verbose:
+                print("Copernicus... " if j == 0 else ("GEBCO nearest... " if j == 1 else "GEBCO bilinear... "), end="")
+            # print("\tCreating", os.path.split(fname)[1])
+            gc_object.create_subdata_tempgrid(globathy_fname,
+                                              dlist,
+                                              fname,
+                                              ndv=0 if (j == 0) else ndv,
+                                              # Use zero for NDV of copernicus, the default NDV otherwise.
+                                              resample_alg=algorithm,
+                                              verbose=False)
         if verbose:
-            print("Copernicus... " if j == 0 else ("GEBCO nearest... " if j == 1 else "GEBCO bilinear... "), end="")
-        # print("\tCreating", os.path.split(fname)[1])
-        gc_object.create_subdata_tempgrid(gb_fname,
-                                          dlist,
-                                          fname,
-                                          ndv=0 if (j == 0) else ndv,
-                                          # Use zero for NDV of copernicus, the default NDV otherwise.
-                                          resample_alg=algorithm,
-                                          verbose=False)
-    if verbose:
-        print("Done.")
+            print("Done.")
 
-    copernicus_array = gc_object.get_array_from_gtiff(copernicus_grid_fname)
-    gebco_nearest_array = gc_object.get_array_from_gtiff(gebco_grid_nearest_fname)
-    gebco_bilinear_array = gc_object.get_array_from_gtiff(gebco_grid_bilinear_fname)
+        copernicus_array = gc_object.get_array_from_gtiff(copernicus_grid_fname)
+        gebco_nearest_array = gc_object.get_array_from_gtiff(gebco_grid_nearest_fname)
+        gebco_bilinear_array = gc_object.get_array_from_gtiff(gebco_grid_bilinear_fname)
+        # For some fucking reason, we seem to occasionally not be able to read some of these files. If so, delete them
+        # and keep looping until we get them. Hopefully this doesn't enter an infinite loop here.
+        if (copernicus_array is not None) and (gebco_nearest_array is not None) and (gebco_bilinear_array is not None):
+            got_all_arrays = True
+        else:
+            if copernicus_array is None:
+                os.remove(copernicus_grid_fname)
+            if gebco_nearest_array is None:
+                os.remove(gebco_grid_nearest_fname)
+            if gebco_bilinear_array is None:
+                os.remove(gebco_grid_bilinear_fname)
+
 
     used_any_gebco_elevs = False
     numlakes_included = 0
 
     # Get the dataframe of lakes stats
     lks_df = gc_object.get_empty_lake_stats_df()
+
+    # Get the tile edge bounds from the file name. Maybe not the best way to do it, but
+    # given our file naming conventions containing N**E***, it works in this case.
+    tile_ymin = (-1 if (re.search("[NS](?=\d{2}[EW]\d{3})", gbfn).group() == "S") else 1) * \
+                int(re.search("(?<=[NS])\d{2}(?=[EW](\d{3}))", gbfn).group())
+    tile_xmin = (-1 if (re.search("(?<=[NS](\d{2}))[EW](?=\d{3})", gbfn).group() == "W") else 1) * \
+                int(re.search("(?<=[NS](\d{2})[EW])\d{3}", gbfn).group())
 
     # Loop through all the lakes in the dataset, starting with lake # 1 (0 is background).
     for LN in range(1, nlabels):
@@ -448,7 +556,9 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
             # copernicus_surface_elev = scipy.stats.mode(copernicus_elevs).mode[0]
 
             # force_gebco will be True (to use GEBCO), False (to use Globathy), or None (just use the default algorithm).
-            force_gebco = self.check_lake_exceptions(gb_fname, lake_mask, resolution_s)
+            force_gebco = None
+            if do_we_check_exceptions:
+                force_gebco = gc_object.check_lake_exceptions(globathy_fname, lake_mask, resolution_s)
 
             gebco_data = gebco_bilinear_elevs
 
@@ -456,7 +566,7 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
             # If 80% or more of the lake bed elevations are below the lake surface, use the GEBCO
             # elevations, and just manually lower the few that are above the lake surface.
             # This (I think) seems to take care of skipping most the small lakes where GEBCO sucks.
-            if ((num_gebco_below / float(lake_size)) >= 0.80) or (force_gebco == True):
+            if (((num_gebco_below / float(lake_size)) >= 0.80) and (force_gebco != False)) or (force_gebco == True):
                 # Find the next shallowest pixel and set all GEBCO elevations that are *above* the lake surface to that.
                 next_shallowest_depth = numpy.max(gebco_bilinear_elevs[gebco_bilinear_elevs < copernicus_surface_elev])
                 gebco_bilinear_elevs[gebco_bilinear_elevs >= copernicus_surface_elev] = next_shallowest_depth
@@ -475,8 +585,9 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
         globathy_lake_data = array[lake_mask]
 
         # Add this metadata to the lake record.
-        lks_df.loc[lks_df.index.max() + 1] = [row.xleft,
-                                              ymin,
+        lks_df.loc[0 if (len(lks_df) == 0) else (lks_df.index.max() + 1)] = \
+                                             [tile_xmin,
+                                              tile_ymin,
                                               LN,
                                               lake_size,
                                               xstart,
@@ -489,8 +600,7 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
                                               numpy.std(gebco_data) if lake_size > 1 else 0,
                                               numpy.min(gebco_data),
                                               numpy.max(gebco_data),
-                                              numpy.mean(globathy_lake_data) if lake_size > 1 else globathy_lake_data[
-                                                  0],
+                                              numpy.mean(globathy_lake_data) if lake_size > 1 else globathy_lake_data[0],
                                               numpy.std(globathy_lake_data) if lake_size > 1 else 0,
                                               numpy.min(globathy_lake_data),
                                               numpy.max(globathy_lake_data),
@@ -498,11 +608,11 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
 
     if used_any_gebco_elevs:
         # Save out the data file.
-        gdal.GetDriverByName("GTiff").CreateCopy(gebco_lakes_fpath, gb_ds)
+        gdal.GetDriverByName("GTiff").CreateCopy(gebco_fname, gb_ds)
         if verbose:
-            print(os.path.split(gebco_lakes_fpath)[1], "created with {0} lakes, ".format(numlakes_included), end="")
+            print(os.path.split(gebco_fname)[1], "created with {0} lakes, ".format(numlakes_included), end="")
 
-        gc_ds = gdal.Open(gebco_lakes_fpath, gdal.GA_Update)
+        gc_ds = gdal.Open(gebco_fname, gdal.GA_Update)
         band = gc_ds.GetRasterBand(1)
         band.WriteArray(gebco_lakes_grid)
         band.SetNoDataValue(ndv)
@@ -517,8 +627,8 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
             print("and updated.")
 
     # Write lake stats out to a master CSV df.
-    if len(lks_df.index) > 0:
-        self.write_lakes_csv(lks_df, gebco_csv_fpath, verbose=verbose)
+    if output_csv and len(lks_df.index) > 0:
+        gc_object.write_lakes_csv(lks_df, gebco_csv_fpath, verbose=verbose)
 
     return numlakes_included
 
