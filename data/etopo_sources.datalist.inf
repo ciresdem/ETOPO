@@ -1,1 +1,0 @@
-{"name": "/home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist", "numpts": 475850592000, "hash": "0fd0fd8f209ae5d74ac30fad13f70fe3", "minmax": [-180.0013888888889, 180.0, -90.0, 90.0, -10956.0, 8737.7880859375], "wkt": "POLYGON ((-180.001388888889 -90 0,180 -90 0,180 90 0,-180.001388888889 90.0 0,-180.001388888889 -90 0))", "src_srs": null}
