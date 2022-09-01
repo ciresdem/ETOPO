@@ -1257,6 +1257,8 @@ if __name__ == "__main__":
             output_h5 = os.path.join(args.datadir, os.path.splitext(fname)[0] + "_results.h5")
         else:
             output_h5 = os.path.splitext(args.input_dem)[0] + "_results.h5"
+    else:
+        output_h5 = args.output_h5
 
     kwargs = {}
 
