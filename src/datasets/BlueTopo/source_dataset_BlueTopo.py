@@ -7,6 +7,7 @@ from osgeo import gdal
 import re
 import shutil
 import pyproj
+import subprocess
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -186,6 +187,52 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         return ["{0} {1} {2}".format(fname, DTYPE_CODE, get_tile_size_from_fname(fname, weight)) \
                 for fname in list_of_overlapping_files]
 
+    def reproject_tiles(self, suffix="_epsg4326", overwrite = False, verbose=True):
+        """Project all the tiles into WGS84/latlon coordinates.
+
+        The fucked-up NAD83 / UTM zone XXN is fucking with waffles. Converting them is the easiest answer now.
+        After we do this, we can change the config.ini to look for the new "_epsg4326" tiles. Also, we can disable and
+        delete the 5 BlueTopo_14N to _19N datasets, because they'll all be projected into the same coordinate system,
+        which will be a lot easier.
+        """
+        # 1 arc-second is ~30.8 m at the equator.
+        # The 0.3 tiles (level 3) are 16 m, 0.4 are 8 m, 0.5 are 4 m
+        res_lookup_dict = {0.3: 16 / (30.8 * 60 * 60),
+                           0.4: 8  / (30.8 * 60 * 60),
+                           0.5: 4  / (30.8 * 60 * 60)}
+        tilenames = self.retrieve_all_datafiles_list(verbose=verbose)
+        for i,fname in enumerate(tilenames):
+            dest_fname = os.path.splitext(fname)[0] + suffix + ".tif"
+            if os.path.exists(dest_fname):
+                if overwrite or gdal.Open(dest_fname, gdal.GA_ReadOnly) is None:
+                    os.remove(dest_fname)
+                else:
+                    print("{0}/{1} {2} already written.".format(i+1, len(tilenames), os.path.split(dest_fname)[1]))
+                    continue
+
+            resolution = res_lookup_dict[get_tile_size_from_fname(fname, 0)]
+            gdal_cmd = ["gdalwarp",
+                        "-t_srs", "EPSG:4326",
+                        "-dstnodata", "0.0",
+                        "-tr", str(resolution), str(resolution),
+                        "-r", "bilinear",
+                        "-of", "GTiff",
+                        "-co", "COMPRESS=DEFLATE",
+                        "-co", "PREDICTOR=2",
+                        "-co", "ZLEVEL=5",
+                        fname, dest_fname]
+            process = subprocess.run(gdal_cmd, capture_output = True, text=True)
+            if verbose:
+                print("{0}/{1} {2} ".format(i+1, len(tilenames), os.path.split(dest_fname)[1]), end="")
+            if process.returncode == 0:
+                if verbose:
+                    print("written.")
+            elif verbose:
+                    print("FAILED")
+                    print(" ".join(gdal_cmd), "\n")
+                    print(process.stdout)
+
+        return
 def get_tile_size_from_fname(fname, orig_weight):
     """looking at the filename, get the file size from it (3,4,5), and add it as a decimal to the weight.
 
@@ -194,11 +241,19 @@ def get_tile_size_from_fname(fname, orig_weight):
 
     This will put the bigger numbers (smaller tile sizes) at a greater weight than smaller numbers (larger tiles)."""
     # Look for the number just after "BlueTopo_US" and just before "LLNLL" wher L is a capital letter and N is a number.
-    tile_size = int(re.search("(?<=BlueTopo_US)\d(?=[A-Z]{2}\d[A-Z]{2})", os.path.split(fname)[1]).group())
+    try:
+        tile_size = int(re.search("(?<=BlueTopo_US)\d(?=[A-Z]{2}\w[A-Z]{2})", os.path.split(fname)[1]).group())
+    except AttributeError as e:
+        print("ERROR IN TILE:", fname)
+        raise e
     assert 1 <= tile_size <= 5
     new_weight = orig_weight + (tile_size / 10.0)
     return new_weight
 
 if "__main__" == __name__:
+    # print(get_tile_size_from_fname("BlueTopo_US4LA1EN_20211018_egm2008.tiff", 0))
     bt = source_dataset_BlueTopo()
-    bt.split_files_into_epsg_folders()
+    gdf = bt.get_geodataframe()
+    print(gdf.filename)
+    # bt.reproject_tiles()
+    # bt.split_files_into_epsg_folders()

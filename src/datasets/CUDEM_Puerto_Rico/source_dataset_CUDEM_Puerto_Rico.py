@@ -21,3 +21,10 @@ class source_dataset_CUDEM_Puerto_Rico(etopo_source_dataset.ETOPO_source_dataset
         """Initialize the CUDEM_Puerto_Rico source dataset object."""
 
         super(source_dataset_CUDEM_Puerto_Rico, self).__init__("CUDEM_Puerto_Rico", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_Puerto_Rico()
+    ds.convert_vdatum(numprocs=10)
+
+    ds = source_dataset_CUDEM_Puerto_Rico()
+    ds.reproject_tiles_from_nad83()

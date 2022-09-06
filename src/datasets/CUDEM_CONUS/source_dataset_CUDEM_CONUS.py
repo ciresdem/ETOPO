@@ -23,4 +23,5 @@ class source_dataset_CUDEM_CONUS(etopo_source_dataset.ETOPO_source_dataset):
         super(source_dataset_CUDEM_CONUS, self).__init__("CUDEM_CONUS", configfile)
 
 if __name__ == "__main__":
-    gdf = source_dataset_CUDEM_CONUS().get_geodataframe()
+    ds = source_dataset_CUDEM_CONUS()
+    ds.reproject_tiles_from_nad83(range_start=771, range_stop=800)

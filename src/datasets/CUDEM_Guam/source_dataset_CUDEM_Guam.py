@@ -21,3 +21,7 @@ class source_dataset_CUDEM_Guam(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the CUDEM_Guam source dataset object."""
 
         super(source_dataset_CUDEM_Guam, self).__init__("CUDEM_Guam", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_Guam()
+    ds.reproject_tiles_from_nad83()

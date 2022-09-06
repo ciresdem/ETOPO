@@ -24,6 +24,5 @@ class source_dataset_CUDEM_CONUS_Sandy(etopo_source_dataset.ETOPO_source_dataset
         super(source_dataset_CUDEM_CONUS_Sandy, self).__init__("CUDEM_CONUS_Sandy", configfile)
 
 if __name__ == "__main__":
-    cs = source_dataset_CUDEM_CONUS_Sandy()
-    gdf = cs.get_geodataframe()
-    print(len(gdf), "tiles.")
+    ds = source_dataset_CUDEM_CONUS_Sandy()
+    ds.reproject_tiles_from_nad83()

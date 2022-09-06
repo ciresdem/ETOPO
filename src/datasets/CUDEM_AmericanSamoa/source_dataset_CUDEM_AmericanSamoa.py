@@ -21,3 +21,7 @@ class source_dataset_CUDEM_AmericanSamoa(etopo_source_dataset.ETOPO_source_datas
         """Initialize the CUDEM_AmericanSamoa source dataset object."""
 
         super(source_dataset_CUDEM_AmericanSamoa, self).__init__("CUDEM_AmericanSamoa", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_AmericanSamoa()
+    ds.reproject_tiles_from_nad83()

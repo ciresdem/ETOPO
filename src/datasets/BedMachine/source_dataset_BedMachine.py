@@ -98,17 +98,24 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                 elev_ds = gdal.Open(gtif_name, gdal.GA_ReadOnly)
                 assert elev_ds is not None
 
-                if os.path.exists(gtif_masked_name) and not overwrite:
+                if os.path.exists(gtif_masked_name) and os.path.exists(gtif_geoid_masked_name) and (not overwrite):
                     continue
                 else:
                     # Create a copy of the source dataset, into the _wgs84_masked dataset. We'll modify the values below.
-                    if os.path.exists(gtif_masked_name):
-                        os.remove(gtif_masked_name)
                     driver = elev_ds.GetDriver()
-                    dst_ds = driver.CreateCopy(gtif_masked_name, elev_ds)
-                    dst_ds = None
-                    dst_ds_geoid = driver.CreateCopy(gtif_geoid_masked_name, elev_ds)
-                    dst_ds_geoid = None
+                    if os.path.exists(gtif_masked_name):
+                        if overwrite:
+                            os.remove(gtif_masked_name)
+                    if not os.path.exists(gtif_masked_name):
+                        dst_ds = driver.CreateCopy(gtif_masked_name, elev_ds)
+                        dst_ds = None
+
+                    if os.path.exists(gtif_geoid_masked_name):
+                        if overwrite:
+                            os.remove(gtif_geoid_masked_name)
+                    if not os.path.exists(gtif_geoid_masked_name):
+                        dst_ds_geoid = driver.CreateCopy(gtif_geoid_masked_name, elev_ds)
+                        dst_ds_geoid = None
 
                 elev_band = elev_ds.GetRasterBand(1)
                 elev_ndv = elev_band.GetNoDataValue()
@@ -287,17 +294,20 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
 
                         if gtif_name == gtif_wgs84_name:
                             # Then, we'll convert it to EGM2008 elevations.
-                            etopo.convert_vdatum.convert_vdatum(projected_name,
-                                                                converted_fname,
-                                                                input_vertical_datum="wgs84",
-                                                                output_vertical_datum="egm2008",
-                                                                cwd=os.path.dirname(converted_fname),
-                                                                verbose=False)
+                            qualifier_text = "already exists."
+                            if not os.path.exists(converted_fname) or overwrite:
+                                etopo.convert_vdatum.convert_vdatum(projected_name,
+                                                                    converted_fname,
+                                                                    input_vertical_datum="wgs84",
+                                                                    output_vertical_datum="egm2008",
+                                                                    cwd=os.path.dirname(converted_fname),
+                                                                    verbose=False)
+                                qualifier_text = "written."
                             if os.path.exists(converted_fname):
                                 # If this worked, but outta the loop, we don't need to use the geoid version.
                                 converted_files_list.append(converted_fname)
                                 if verbose:
-                                    print(os.path.split(converted_fname)[1], "written.")
+                                    print(os.path.split(converted_fname)[1], qualifier_text)
                                 break
                             else:
                                 print("ERROR: Could not create", os.path.split(converted_fname)[1])
@@ -305,18 +315,21 @@ class source_dataset_BedMachine(etopo_source_dataset.ETOPO_source_dataset):
                             # Instead, let's create it from the EIGEN-6C4 geoid, as a stand-in for now until we figure this out.
                             # The elevations will be very close to each other.
                             assert gtif_name == gtif_geoid_name
+                            qualifier_text = "already exists."
                             # If we've gone to the geoid version, just copy it over, no need to convert the vdatum.
-                            projected_ds = gdal.Open(projected_name, gdal.GA_ReadOnly)
-                            driver = projected_ds.GetDriver()
-                            converted_ds = driver.CreateCopy(converted_fname, projected_ds)
-                            # Write them to disk, the weird GDAL-way (by de-referencing .
-                            projected_ds = None
-                            converted_ds = None
+                            if not os.path.exists(converted_fname) or overwrite:
+                                projected_ds = gdal.Open(projected_name, gdal.GA_ReadOnly)
+                                driver = projected_ds.GetDriver()
+                                converted_ds = driver.CreateCopy(converted_fname, projected_ds)
+                                # Write them to disk, the weird GDAL-way (by de-referencing .
+                                projected_ds = None
+                                converted_ds = None
+                                qualifier_text = "written."
                             if os.path.exists(converted_fname):
                                 # If this worked, but outta the loop, we don't need to use the geoid version.
                                 converted_files_list.append(converted_fname)
                                 if verbose:
-                                    print(os.path.split(converted_fname)[1], "written.")
+                                    print(os.path.split(converted_fname)[1], qualifier_text)
                                 break
                             else:
                                 print("ERROR: Could not create", os.path.split(converted_fname)[1])

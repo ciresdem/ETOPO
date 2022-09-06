@@ -21,3 +21,10 @@ class source_dataset_CUDEM_USVI(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the CUDEM_USVI source dataset object."""
 
         super(source_dataset_CUDEM_USVI, self).__init__("CUDEM_USVI", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_USVI()
+    ds.convert_vdatum(numprocs=10)
+
+    ds = source_dataset_CUDEM_USVI()
+    ds.reproject_tiles_from_nad83()

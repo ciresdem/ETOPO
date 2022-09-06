@@ -21,3 +21,8 @@ class source_dataset_CUDEM_Northern_Mariana(etopo_source_dataset.ETOPO_source_da
         """Initialize the CUDEM_Northern_Mariana source dataset object."""
 
         super(source_dataset_CUDEM_Northern_Mariana, self).__init__("CUDEM_Northern_Mariana", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_Northern_Mariana()
+    # ds.convert_vdatum(numprocs=10)
+    ds.reproject_tiles_from_nad83()

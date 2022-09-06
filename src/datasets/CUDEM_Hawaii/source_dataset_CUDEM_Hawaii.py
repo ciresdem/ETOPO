@@ -21,3 +21,7 @@ class source_dataset_CUDEM_Hawaii(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the CUDEM_Hawaii source dataset object."""
 
         super(source_dataset_CUDEM_Hawaii, self).__init__("CUDEM_Hawaii", configfile)
+
+if __name__ == "__main__":
+    ds = source_dataset_CUDEM_Hawaii()
+    ds.reproject_tiles_from_nad83()

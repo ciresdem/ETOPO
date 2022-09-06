@@ -21,3 +21,6 @@ class source_dataset_BedMachine_Bed(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the BedMachine_Bed source dataset object."""
 
         super(source_dataset_BedMachine_Bed, self).__init__("BedMachine_Bed", configfile)
+
+if __name__ == "__main__":
+    gdf = source_dataset_BedMachine_Bed().get_geodataframe(resolution_s=15)
