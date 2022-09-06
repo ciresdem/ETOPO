@@ -20,6 +20,7 @@ import os
 import importlib
 from osgeo import gdal
 import multiprocessing
+import subprocess
 import time
 import argparse
 import shutil
@@ -222,7 +223,7 @@ class ETOPO_source_dataset:
         dset = None
         return
 
-    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True, weight=None):
+    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True):
         """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
         of all tile entries that would appear in a CUDEM datalist. If no source
         tiles overlap the polygon, return an empty list [].
@@ -242,8 +243,7 @@ class ETOPO_source_dataset:
         if polygon_crs is None:
             polygon_crs = self.get_crs(as_epsg=False)
 
-        if weight is None:
-            weight = self.get_dataset_ranking_score()
+        weight = self.get_dataset_ranking_score()
 
         # Do a command-line "waffles -h" call to see datalist options. The datalist
         # type for raster files is "200"
@@ -254,8 +254,7 @@ class ETOPO_source_dataset:
                                                                                    resolution_s = resolution_s,
                                                                                    verbose=verbose)
 
-        return ["{0} {1} {2}".format(fname, DTYPE_CODE, weight) \
-                for fname in list_of_overlapping_files]
+        return ["{0} {1} {2}".format(fname, DTYPE_CODE, weight) for fname in list_of_overlapping_files]
 
     def convert_vdatum(self, output_folder = None,
                              output_vdatum="egm2008",
@@ -572,6 +571,54 @@ class ETOPO_source_dataset:
         This is probably in a summary results.h5 file. If we're dealing with CUDEM_CONUS,
         it would be the composite of all the summary results.h5 files for each region."""
         # TODO: Finish
+
+    def reproject_tiles_from_nad83(self, suffix="_epsg4326", overwrite = False, range_start=None, range_stop=None, verbose=True):
+        """Project all the tiles into WGS84/latlon coordinates.
+
+        The fucked-up NAD83 / UTM zone XXN is fucking with waffles. Converting them is the easiest answer now.
+        After we do this, we can change the config.ini to look for the new "_epsg4326" tiles. Also, we can disable and
+        delete the 5 BlueTopo_14N to _19N datasets, because they'll all be projected into the same coordinate system,
+        which will be a lot easier.
+        """
+        tilenames = self.retrieve_all_datafiles_list(verbose=verbose)
+        for i,fname in enumerate(tilenames):
+            if ((range_start is not None) and (i < range_start)) or ((range_stop is not None) and (i >= range_stop)):
+                continue
+            dest_fname = os.path.splitext(fname)[0] + suffix + ".tif"
+            if os.path.exists(dest_fname):
+                if overwrite or gdal.Open(dest_fname, gdal.GA_ReadOnly) is None:
+                    os.remove(dest_fname)
+                else:
+                    print("{0}/{1} {2} already written.".format(i+1, len(tilenames), os.path.split(dest_fname)[1]))
+                    continue
+
+            # This ONLY FUCKING WORKS if it's another lat/lon dataset, such as NAD83 or similar.
+            # If it's a projected coordinate system the output will be garbage
+            _, xstep, _, _, _, ystep = gdal.Open(fname, gdal.GA_ReadOnly).GetGeoTransform()
+            assert (xstep > 0) and (ystep < 0)
+            gdal_cmd = ["gdalwarp",
+                        "-t_srs", "EPSG:4326",
+                        "-dstnodata", "0.0",
+                        "-tr", str(xstep), str(abs(ystep)),
+                        "-r", "bilinear",
+                        "-of", "GTiff",
+                        "-co", "COMPRESS=DEFLATE",
+                        "-co", "PREDICTOR=2",
+                        "-co", "ZLEVEL=5",
+                        fname, dest_fname]
+            process = subprocess.run(gdal_cmd, capture_output = True, text=True)
+            if verbose:
+                print("{0}/{1} {2} ".format(i+1, len(tilenames), os.path.split(dest_fname)[1]), end="")
+            if process.returncode == 0:
+                if verbose:
+                    print("written.")
+            elif verbose:
+                    print("FAILED")
+                    print(" ".join(gdal_cmd), "\n")
+                    print(process.stdout)
+
+        return
+
 
 def TEMP_move_CUDEM_egm2008_tiles(dset_names = ("CUDEM_AmericanSamoa",
                       "CUDEM_CONUS", "CUDEM_Guam", "CUDEM_Northern_Mariana",

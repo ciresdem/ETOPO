@@ -20,13 +20,15 @@ import pygeos
 import numpy
 import warnings
 
+###################################################################
 # Import the parent directory so I can import anything else I need.
 import import_parent_dir
 import_parent_dir.import_src_dir_via_pythonpath()
+###################################################################
 import utils.traverse_directory
 import utils.progress_bar
 import utils.configfile
-import warnings
+import etopo.generate_empty_grids as generate_empty_grids
 
 class DatasetGeopackage:
     """A class for handling geopackage collections of DEMs from various sources."""
@@ -48,7 +50,8 @@ class DatasetGeopackage:
         self.default_layer_name = "DEMs"
         self.regex_filter = self.config.datafiles_regex
 
-    def get_gdf_filename(self, resolution_s = None,):
+    def get_gdf_filename(self, resolution_s = None):
+        """Get the filename of the gdf to use, based on the resolution given."""
         if (self.filename.find("{0}") >= 0) and (resolution_s is not None):
             return self.filename.format(resolution_s)
         else:
@@ -319,25 +322,35 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         self.dlist_dir = self.config.etopo_datalist_directory
 
-    def get_gdf(self, crm_only_if_1s=False, verbose=True):
+    def get_gdf(self, crm_only_if_1s=False, resolution_s = None, bed=False, verbose=True):
         """Sub-class method of get_gdf, with the option to subset to only CRM tiles (US East Coast)
         if we're in 1-deg tile space."""
-        # If we're not at 1s resolution, or we're not flagged to only get the CRM tiles, then just move along.
-        if (self.resolution != 1) or (crm_only_if_1s == False):
-            return super().get_gdf(resolution_s = self.resolution, verbose=verbose)
-
         # Otherwise, only send back the geodataframe that includes the CRM tiles.
-        assert (self.resolution == 1) and (crm_only_if_1s is True)
-        crm_gdf = geopandas.read_file(self.config.crm_tiles_outline_shapefile)
-        # It should just be a one-feature shapefile. Sanity check here.
-        assert len(crm_gdf) == 1
+        if resolution_s is None:
+            resolution = self.resolution
+        else:
+            resolution = resolution_s
 
-        # Get the one polygon from the crm outline shapefile.
-        crm_polygon = crm_gdf.geometry.tolist()[0]
-        # Return the subset of the geodataframe that intersects the CRM outline polygon.
-        return self.subset_by_polygon(crm_polygon, crm_gdf.crs, verbose=verbose)
+        if (resolution == 1) and (crm_only_if_1s is True):
+            crm_gdf = geopandas.read_file(self.config.crm_tiles_outline_shapefile)
+            # It should just be a one-feature shapefile. Sanity check here.
+            assert len(crm_gdf) == 1
 
-    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=True, crm_only_if_1s=True, verbose=True):
+            # Get the one polygon from the crm outline shapefile.
+            crm_polygon = crm_gdf.geometry.tolist()[0]
+            # Return the subset of the geodataframe that intersects the CRM outline polygon.
+            return self.subset_by_polygon(crm_polygon, crm_gdf.crs, resolution_s=resolution, verbose=verbose)
+        else:
+            # If we only want the bed, get only ones that intersect the polygon(s) of the BedMachine_Bed dataset
+            # Get the 15-degree bounding-boxes just for the bed, from the generate_empty_grids.get_ice_sheet_bed_15deg_bboxes()
+            if bed is True and resolution == 15:
+                bed_polygon = generate_empty_grids.get_ice_sheet_bed_polygon()
+                gdf = self.subset_by_polygon(bed_polygon, pyproj.crs.CRS.from_epsg(4326), resolution_s=resolution, verbose=verbose).copy()
+                return gdf
+            else:
+                return super().get_gdf(resolution_s = resolution, verbose=verbose)
+
+    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=False, resolution_s = 15, bed=False, crm_only_if_1s=True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
         approrpriate source-datasets dlist for each ETOPO tile.
 
@@ -345,7 +358,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         If "save_to_file_if_not_already_there", save this datalsit to the file
         if it doesn't already exist in the geodataframe."""
-        gdf = self.get_gdf(crm_only_if_1s = crm_only_if_1s, verbose=verbose)
+        gdf = self.get_gdf(crm_only_if_1s = crm_only_if_1s, resolution_s=resolution_s, bed=bed, verbose=verbose)
 
         # If the "dlist" column already exists, just return it.
         if 'dlist' in gdf.columns:
@@ -354,7 +367,9 @@ class ETOPO_Geopackage(DatasetGeopackage):
         # Little lambda function for converting the grid filename to a dlist filename.
         dlist_func = lambda fn: os.path.join(self.dlist_dir,
                                              str(self.resolution) + "s",
-                                             os.path.splitext(os.path.split(fn)[1])[0] + ".datalist")
+                                             os.path.splitext(os.path.split(fn)[1])[0] + \
+                                             "_bed" if bed else "" + \
+                                             ".datalist")
 
         # Apply the function to every cell of the 'filename' column.
         # Put it in a new "dilst" column.

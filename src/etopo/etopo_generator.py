@@ -345,11 +345,11 @@ class ETOPO_Generator:
 
         return
 
-    def generate_etopo_tile_datalists(self, resolution=1,
+    def generate_etopo_tile_datalists(self, gdf = None,
+                                            resolution=1,
                                             etopo_tile_fname = None,
                                             bed = False,
                                             crm_only_if_1s = True,
-                                            active_sources_only = True,
                                             verbose=True):
         """For each ETOPO tile (or just the one given), produce a waffles datalist of
         all the source tiles that overlap it (and thus would be included with it),
@@ -365,46 +365,92 @@ class ETOPO_Generator:
         Provide etopo_tile_fname if we only want one file done. Otherwise, do them all
         (for that resolution).
         """
-        # TODO: Add bed logic here.
         # Retrieve the dataset_geopackage object for this ETOPO grid.
-        etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
-        etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, verbose=verbose)
+        if gdf is None:
+            etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
+            etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, bed=bed, verbose=verbose)
+        else:
+            etopo_gdf = gdf
         config_obj = self.etopo_config
         etopo_crs = etopo_gdf.crs
 
-        # 0. Get the ETOPO datalist folder, in the "1s" or "15s" directory
+        # 0. Get the ETOPO datalist folder, in the "1s" or "15s" or "60s" directory
         datalist_folder = os.path.join(config_obj._abspath(config_obj.etopo_datalist_directory),
                                        str(resolution) + "s")
+
+        resolution = int(resolution)
 
         if resolution == 60:
             # If the resolution is 60, just use all the ETOPO 15s tiles to generate the 60s
             # global tile.
             etopo_15s_gpkg = dataset_geopackage.ETOPO_Geopackage(15)
-            etopo_15s_gdf = etopo_15s_gpkg.get_gdf(verbose=verbose)
+            # Don't just get the bed, look for all the tiles, we'll sort out which ones we should get just the bed.
+            etopo_15s_gdf = etopo_15s_gpkg.get_gdf(bed=False, verbose=verbose)
 
             # We want to query the finished tiles of the dataset, not the empty tiles.
-            dlist_filenames = [fn.replace("empty_tiles", "finished_tiles") for fn in etopo_15s_gdf['filename'].tolist()]
+            dlist_filenames = [fn.replace("/empty_tiles/", "/finished_tiles/") for fn in etopo_15s_gdf['filename'].tolist()]
 
-            # This breaks if we've been date-tagging the files.
+            tilenum_regex_str = r"[NS](\d{2})[EW](\d{3})"
+
             try:
+                # This breaks if we've been date-tagging the files.
                 assert numpy.all([os.path.exists(fn) for fn in dlist_filenames])
             except AssertionError as e:
                 # If files were date-tagged, then fist get the list of all the files that *are* in the finished_tiles_directory
                 finished_tiles_dir = os.path.dirname(dlist_filenames[0])
-                finished_tiles_in_dir = [fn for fn in os.listdir(finished_tiles_dir) if (re.search(r"ETOPO_2022_[\w\.]+\.tif\Z", fn) is not None)]
+                # Find the tiles that do *not* have "_bed" in them.
+                finished_tiles_in_dir = [os.path.join(finished_tiles_dir, fn) for fn in os.listdir(finished_tiles_dir) if \
+                                         ((re.search(r"ETOPO_2022_([\w\.]+)\.tif\Z", fn) is not None) \
+                                          and (fn.find("_bed") == -1) \
+                                          and (fn.find("_w.tif") == -1))]
                 # Then search for the tile that matches the base of the tile name we're looking for.
-                matching_tiles_found_in_dir = []
-                for i, fname in enumerate(dlist_filenames):
-                    tile_match = [fn for fn in finished_tiles_in_dir if (re.search(os.path.splitext(os.path.split(fname)[1])[0], fn) is not None)]
-                    assert len(tile_match) == 1
-                    matching_tiles_found_in_dir.append(os.path.join(finished_tiles_dir, tile_match[0]))
-                assert len(matching_tiles_found_in_dir) == len(dlist_filenames)
-                dlist_filenames = matching_tiles_found_in_dir
+                finished_tiles_lookup_dict = dict([(re.search(tilenum_regex_str, fn).group(), fn) for fn in finished_tiles_in_dir])
+
+                # Replace the list of tiles with ones that have the same tilenum string even if the name's aren't a 100% match.
+                # This handles date-tagging errors.
+                dlist_filenames = [finished_tiles_lookup_dict[re.search(tilenum_regex_str, fn).group()] for fn in dlist_filenames]
+
+            # Now if we're doing bed, find any files for which there is a "bed" version of this file.
+            if bed:
+                tiles_with_bed = []
+                # Look either in this folder, or in a "bed subdir. Could be in either place.
+                # Get a list of all tiles that have "_bed" in the name.
+                for dirname in (finished_tiles_dir, os.path.join(finished_tiles_dir, "bed")):
+                    if not os.path.exists(dirname):
+                        continue
+                    tiles_with_bed.extend([os.path.join(dirname,fn) for fn in os.listdir(dirname) if \
+                                           (re.search(r"ETOPO_2022([\w\.]*)_bed([\w\.]*)\.tif\Z", fn) is not None) \
+                                           and (fn.find("_bed") >= 0) \
+                                           and (fn.find("_w.tif") == -1)])
+
+                dlist_filenames_temp = []
+                # Then loop through the tilenames we're looking for, and see if you can find a bed version.
+                for fname in dlist_filenames:
+                    fname_dir, fname_base = os.path.split(fname)
+                    tilenum = re.search(tilenum_regex_str, fname_base).group()
+                    bed_tiles_w_this_tilenum = [fn for fn in tiles_with_bed if os.path.split(fn)[1].find(tilenum) >= 0]
+                    # If not matching bed tiles exist, use the regular tile
+                    if len(bed_tiles_w_this_tilenum) == 0:
+                        dlist_filenames_temp.append(fname)
+                    # If a matching bed tile does exist, use that instead.
+                    else:
+                        if len(bed_tiles_w_this_tilenum) > 1:
+                            print(bed_tiles_w_this_tilenum)
+                            raise ValueError("Too many... just looking for one match here.")
+                        assert len(bed_tiles_w_this_tilenum) == 1
+                        dlist_filenames_temp.append(bed_tiles_w_this_tilenum[0])
+
+                assert len(dlist_filenames) == len(dlist_filenames_temp)
+                dlist_filenames = dlist_filenames_temp
 
             datalist_lines = ["{0} 200 1".format(fn) for fn in dlist_filenames]
             datalist_text = "\n".join(datalist_lines)
 
             etopo_60s_fname = etopo_gdf['filename'].tolist()[0]
+            # Add the "_bed" onto the name if we're generating the bed dataset.
+            if bed is True:
+                base, ext = os.path.splitext(etopo_60s_fname)
+                etopo_60s_fname = base + "_bed" + ext
             fname_base = os.path.splitext(os.path.split(etopo_60s_fname)[1])[0]
             etopo_60s_datalist_fname = os.path.join(datalist_folder, fname_base + ".datalist")
 
@@ -433,7 +479,9 @@ class ETOPO_Generator:
             N = len(etopo_fnames)
             for i,(etopo_fname, etopo_poly) in enumerate(zip(etopo_fnames, etopo_polygons)):
                 fname_base = os.path.splitext(os.path.split(etopo_fname)[1])[0]
-                etopo_tile_datalist_fname = os.path.join(datalist_folder, fname_base + ".datalist")
+                etopo_tile_datalist_fname = os.path.join(datalist_folder, fname_base + \
+                                                         ("_bed" if (bed is True) else "") + \
+                                                         ".datalist")
 
                 # 5. Get all the datalist entries from that dataset object. Use the function for that.
                 datalist_lines = []
@@ -490,10 +538,10 @@ class ETOPO_Generator:
         """Geenerate all of the ETOPO tiles at a given resolution."""
         # Get the ETOPO_geopackage object, with the datalist filenames in it
         # (if they're not in there already, they may be)
-        # TODO: Add bed logic here, whether to include BedMachine_surface, or BedMachine_bed.
         etopo_gdf = dataset_geopackage.ETOPO_Geopackage(resolution).add_dlist_paths_to_gdf(\
                                         save_to_file_if_not_already_there = True,
                                         crm_only_if_1s = crm_only_if_1s,
+                                        bed = bed,
                                         verbose = verbose)
 
         # Sort the lists, just 'cuz.
@@ -509,10 +557,11 @@ class ETOPO_Generator:
         # Look through all the dlists, (re-)generate if necessary.
         if verbose:
             print("Generating tile datalists:")
-        self.generate_etopo_tile_datalists(resolution=resolution,
+        self.generate_etopo_tile_datalists(gdf=etopo_gdf,
+                                           resolution=resolution,
                                            crm_only_if_1s = crm_only_if_1s,
                                            etopo_tile_fname=None,
-                                           active_sources_only=True,
+                                           bed = bed,
                                            verbose=verbose)
 
         if verbose:
@@ -537,6 +586,16 @@ class ETOPO_Generator:
                 break
 
             dest_tile = tile.replace("empty_tiles", "finished_tiles")
+
+            if bed:
+                # If we're using the bed, and the bed dlist exists at this tilename, use it.
+                base, ext = os.path.splitext(dlist)
+                bed_dlist = base + "_bed" + ext
+                if os.path.exists(bed_dlist):
+                    dlist = bed_dlist
+                    tile_base, tile_ext = os.path.splitext(dest_tile)
+                    dest_tile = tile_base + "_bed" + tile_ext
+
             # If we're debugging, add the datestamp to the end of the filename.
             if add_datestamp_to_files:
                 dest_tile = self.add_datestamp_to_filename(dest_tile)
@@ -557,7 +616,7 @@ class ETOPO_Generator:
                                                      self.etopo_config.etopo_cudem_cache_directory,
                                                      temp_dirname),
                                                kwargs = {'verbose': False,
-                                                         'algorithm': 'bilinear' if resolution==1 else 'average'})
+                                                         'algorithm': 'bilinear'})
 
 
             waiting_procs[i] = proc
@@ -622,34 +681,34 @@ class ETOPO_Generator:
 
         return
 
-    def generate_etopo_source_master_dlist(self,
-                                           active_only=True,
-                                           verbose=True):
-        """Create a master datalist that lists all the datasets from which ETOPO is derived.
-        It will be a datalist of datalists from each of the etopo_source_dataset datalists."""
-        datasets_dict = self.fetch_etopo_source_datasets(active_only = active_only,
-                                                         return_type=dict,
-                                                         verbose=verbose)
+    # def generate_etopo_source_master_dlist(self,
+    #                                        active_only=True,
+    #                                        verbose=True):
+    #     """Create a master datalist that lists all the datasets from which ETOPO is derived.
+    #     It will be a datalist of datalists from each of the etopo_source_dataset datalists."""
+    #     datasets_dict = self.fetch_etopo_source_datasets(active_only = active_only,
+    #                                                      return_type=dict,
+    #                                                      verbose=verbose)
+    #
+    #     dlist_lines = []
+    #     DATALIST_DTYPE = -1 # The Waffles code for a datalist used recursively.
+    #     for (dset_name, dset_obj) in datasets_dict.items():
+    #         dset_dlist_fname = dset_obj.get_datalist_fname()
+    #         dset_ranking_number = dset_obj.get_dataset_ranking_score()
+    #         text_line = "{0} {1} {2}".format(dset_dlist_fname, DATALIST_DTYPE, dset_ranking_number)
+    #         dlist_lines.append(text_line)
+    #
+    #     dlist_text = "\n".join(dlist_lines)
+    #
+    #     with open(self.etopo_config.etopo_sources_datalist, 'w') as f:
+    #         f.write(dlist_text)
+    #         f.close()
+    #         if verbose:
+    #             print(self.etopo_config.etopo_sources_datalist, "written.")
+    #
+    #     return self.etopo_config.etopo_sources_datalist
 
-        dlist_lines = []
-        DATALIST_DTYPE = -1 # The Waffles code for a datalist used recursively.
-        for (dset_name, dset_obj) in datasets_dict.items():
-            dset_dlist_fname = dset_obj.get_datalist_fname()
-            dset_ranking_number = dset_obj.get_dataset_ranking_score()
-            text_line = "{0} {1} {2}".format(dset_dlist_fname, DATALIST_DTYPE, dset_ranking_number)
-            dlist_lines.append(text_line)
-
-        dlist_text = "\n".join(dlist_lines)
-
-        with open(self.etopo_config.etopo_sources_datalist, 'w') as f:
-            f.write(dlist_text)
-            f.close()
-            if verbose:
-                print(self.etopo_config.etopo_sources_datalist, "written.")
-
-        return self.etopo_config.etopo_sources_datalist
-
-    def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: object = dict) -> object:
+    def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: object = dict):
         """Look through the /src/datasets/ directory, and get a list of the input datasets to use.
         This list will be saved to self.source_datasets, and will be instances of
         the datasets.source_dataset class, or sub-classes thereof.
@@ -788,75 +847,76 @@ class ETOPO_Generator:
 
         return
 
-    def copy_finished_tiles_to_onedrive(self, resolution=None,
-                                              use_symlinks = True,
-                                              tile_regex = "\.tif\Z",
-                                              also_synchronize = False,
-                                              verbose=True):
-        """I share the finished tiles with the team through my OneDrive directory.
-        Copy the whole finished_tiles directory tree over there.
-
-        If files already exist in OneDrive, overwrite them."""
-        src_dir  = os.path.abspath(self.etopo_config.etopo_finished_tiles_directory)
-        dest_dir = os.path.abspath(self.etopo_config.etopo_onedrive_directory)
-
-        if resolution != None:
-            src_dir = os.path.join(src_dir, str(resolution) + "s")
-            dest_dir = os.path.join(dest_dir, str(resolution) + "s")
-
-        if use_symlinks:
-            # Just create symlinks so that we don't actually have to copy over all the data.
-            # This returns relative paths to the files, which is perfect.
-            list_of_matching_files = utils.traverse_directory.list_files(src_dir,
-                                                                         regex_match=tile_regex,
-                                                                         include_base_directory = False)
-
-            # print(len(list_of_matching_files), list_of_matching_files[-3:])
-            if verbose:
-                print("Creating", len(list_of_matching_files), "links from", src_dir, "to", dest_dir, "...", end="")
-            for fname in list_of_matching_files:
-                src_f = os.path.join(src_dir, fname)
-                dst_f = os.path.join(dest_dir, fname)
-                # Remove the original file if it already exists.
-                if os.path.exists(dst_f):
-                    os.remove(dst_f)
-                # Create a link to the source file.
-                pathlib.Path(dst_f).symlink_to(src_f)
-            if verbose:
-                print("Done.")
-
-        else:
-            if verbose:
-                print("Copying", src_dir, "-->", dest_dir)
-
-            shutil.copytree(src_dir, dest_dir, dirs_exist_ok=True)
-
-        if also_synchronize:
-            self.upload_to_onedrive(resolution=resolution)
-
-        return
-
-    def upload_to_onedrive(self, resolution=None):
-        """Take the files generated and put into our onedrive directory, and synchronize them up to the web.
-
-        This may take a while.
-        Should call after calling "copy_finished_tiles_to_onedrive()".
-        """
-
-        # If we also want to synchronize everything to OneDrive online, initiate the command here.
-        onedrive_args = ["onedrive", "--synchronize", "--upload-only", "--single_directory"]
-        if resolution is None:
-            dirname = "ETOPO_Release"
-        elif int(resolution) == 1:
-            dirname = "ETOPO_Release/1s"
-        elif int(resolution) == 15:
-            dirname = "ETOPO_Release/15s"
-        else:
-            raise ValueError("Unknown resolution in ETOPO_Generator::upload_to_onedrive():", resolution)
-
-        subprocess.run(onedrive_args + [dirname])
-
-        return
+    # WE STOPPED USING OneDrive to upload the files, so these functions became deprecated.
+    # def copy_finished_tiles_to_onedrive(self, resolution=None,
+    #                                           use_symlinks = True,
+    #                                           tile_regex = "\.tif\Z",
+    #                                           also_synchronize = False,
+    #                                           verbose=True):
+    #     """I share the finished tiles with the team through my OneDrive directory.
+    #     Copy the whole finished_tiles directory tree over there.
+    # 
+    #     If files already exist in OneDrive, overwrite them."""
+    #     src_dir  = os.path.abspath(self.etopo_config.etopo_finished_tiles_directory)
+    #     dest_dir = os.path.abspath(self.etopo_config.etopo_onedrive_directory)
+    # 
+    #     if resolution != None:
+    #         src_dir = os.path.join(src_dir, str(resolution) + "s")
+    #         dest_dir = os.path.join(dest_dir, str(resolution) + "s")
+    # 
+    #     if use_symlinks:
+    #         # Just create symlinks so that we don't actually have to copy over all the data.
+    #         # This returns relative paths to the files, which is perfect.
+    #         list_of_matching_files = utils.traverse_directory.list_files(src_dir,
+    #                                                                      regex_match=tile_regex,
+    #                                                                      include_base_directory = False)
+    # 
+    #         # print(len(list_of_matching_files), list_of_matching_files[-3:])
+    #         if verbose:
+    #             print("Creating", len(list_of_matching_files), "links from", src_dir, "to", dest_dir, "...", end="")
+    #         for fname in list_of_matching_files:
+    #             src_f = os.path.join(src_dir, fname)
+    #             dst_f = os.path.join(dest_dir, fname)
+    #             # Remove the original file if it already exists.
+    #             if os.path.exists(dst_f):
+    #                 os.remove(dst_f)
+    #             # Create a link to the source file.
+    #             pathlib.Path(dst_f).symlink_to(src_f)
+    #         if verbose:
+    #             print("Done.")
+    # 
+    #     else:
+    #         if verbose:
+    #             print("Copying", src_dir, "-->", dest_dir)
+    # 
+    #         shutil.copytree(src_dir, dest_dir, dirs_exist_ok=True)
+    # 
+    #     if also_synchronize:
+    #         self.upload_to_onedrive(resolution=resolution)
+    # 
+    #     return
+    # 
+    # def upload_to_onedrive(self, resolution=None):
+    #     """Take the files generated and put into our onedrive directory, and synchronize them up to the web.
+    # 
+    #     This may take a while.
+    #     Should call after calling "copy_finished_tiles_to_onedrive()".
+    #     """
+    # 
+    #     # If we also want to synchronize everything to OneDrive online, initiate the command here.
+    #     onedrive_args = ["onedrive", "--synchronize", "--upload-only", "--single_directory"]
+    #     if resolution is None:
+    #         dirname = "ETOPO_Release"
+    #     elif int(resolution) == 1:
+    #         dirname = "ETOPO_Release/1s"
+    #     elif int(resolution) == 15:
+    #         dirname = "ETOPO_Release/15s"
+    #     else:
+    #         raise ValueError("Unknown resolution in ETOPO_Generator::upload_to_onedrive():", resolution)
+    # 
+    #     subprocess.run(onedrive_args + [dirname])
+    # 
+    #     return
 
 
 def generate_single_etopo_tile(dest_tile_fname,
@@ -890,7 +950,7 @@ def generate_single_etopo_tile(dest_tile_fname,
                     "-E", "{0}/{1}".format(abs(tile_xres), abs(tile_yres)),
                     "-w", # Use the datalist weights.
                     "-f", # Transform input data if/where needed.
-                    # "-a", # Archive the datalist (why again?)
+                    # "-a", # Archive the datalist (why again?... nevermind, do not do this, just comment it out.)
                     "-k", # Keep (do not delete) cached files.
                     "-P", "EPSG:4326",
                     "-S", algorithm,
@@ -902,40 +962,58 @@ def generate_single_etopo_tile(dest_tile_fname,
         print(" ".join(waffles_args))
 
     # Run it. Make the "cwd" a temp dir to avoid conflicts.
+    # proc = subprocess.run(waffles_args)
     proc = subprocess.run(waffles_args, cwd=temp_dir_for_cwd, capture_output=subprocess.PIPE, text=True)
-    # proc = subprocess.run(waffles_args, cwd=os.path.dirname(dest_tile_fname), capture_output=subprocess.PIPE, text=True)
     if verbose:
         print(dest_tile_fname, "written.")
 
     return proc.returncode, proc.stdout
 
-    # Sample (complete) waffles command.
-    """waffles -M stacks:supercede=True:keep_weights=True
-    -R -67.0000000/-66.0000000/18.0000000/19.0000000
-    -E 0.000277777777778
-    -N -99999
-    -w
-    -k
-    -f # If using on non-WGS84 datasets
-    -P EPSG:4326
-    -S bilinear
-    -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
-    -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
-    /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
+    # Sample (complete) waffles command; this is what we're putting together. Leave it here for reference.
+    # """waffles -M stacks:supercede=True:keep_weights=True
+    # -R -67.0000000/-66.0000000/18.0000000/19.0000000
+    # -E 0.000277777777778
+    # -N -99999
+    # -w
+    # -k
+    # -f # If using on non-WGS84 datasets
+    # -P EPSG:4326
+    # -S bilinear
+    # -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
+    # -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
+    # /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
     # ^ Except, use the source_tile_datalist created here for that entry.
 
-def TEMP_create_15s_global_tile():
-    srcdir = "/home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/15s/2022.08.25"
-    input_files = [os.path.join(srcdir, fn) for fn in os.listdir(srcdir) if re.search("ETOPO_2022_v1_15s([\w\.]+)\.tif\Z", fn) is not None]
+def TEMP_create_15s_global_tile(bed = False):
+    srcdir = "/home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/15s/"
+    input_files = [os.path.join(srcdir, fn) for fn in os.listdir(srcdir) if \
+                   (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") == -1)]
+
     print(len(input_files), "source tiles.")
     dlist_fname = "/home/mmacferrin/Research/DATA/ETOPO/data/datalists/60s/TEMP_15_sec_tiles.datalist"
+    if bed:
+        dlist_fname = os.path.splitext(dlist_fname)[0] + "_bed.datalist"
+
+        bed_files = [os.path.join(srcdir, fn) for fn in os.listdir(srcdir) \
+                   if (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)] \
+                    + \
+                    [os.path.join(srcdir, "bed", fn) for fn in os.listdir(os.path.join(srcdir, "bed")) \
+                     if (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)]
+
+        # Make a dict with the NYYWXXX identifiers as the key, and the filename as the value.
+        # Then we can copy in the bed tiles, read out the values, and it should work.
+        tilenames_dict = dict([(re.search(r"[NS](\d{2})[EW](\d{3})(?=([\w\.]*)\.tif\Z)", os.path.split(fn)[1]).group(), fn) for fn in input_files])
+        for bfile in bed_files:
+            tilenames_dict[re.search(r"[NS](\d{2})[EW](\d{3})(?=([\w\.]*)\.tif\Z)", os.path.split(bfile)[1]).group()] = bfile
+        input_files = sorted(tilenames_dict.values())
+
     dlist_text = "\n".join(["{0} 200 1".format(fn) for fn in input_files])
     with open(dlist_fname, 'w') as f:
         f.write(dlist_text)
         f.close()
     print(dlist_fname, "written.")
 
-    dest_tile_fname = "/home/mmacferrin/Research/DATA/ETOPO/data/datalists/60s/TEMP_ETOPO_15s_global.tif"
+    dest_tile_fname = "/home/mmacferrin/Research/DATA/ETOPO/data/datalists/60s/ETOPO_15s_global" + ("_bed" if bed else "") + ".tif"
 
     waffles_args = ["waffles",
                     "-M", "stacks:supercede=True:keep_weights=True",
@@ -956,27 +1034,50 @@ def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Generate the tiles. All proprocessing must be done on source datasets first, including cleansing and/or vertical datum transformations.")
     parser.add_argument("-resolution", "-r", default=(15,1,60), nargs="*", help="Grid resolution. Can add up to 3, choices of: 1 15 60. Will be exectued in the order given. Default: 15 1 60.")
     parser.add_argument("-numprocs", "-np", type=int, default=utils.parallel_funcs.physical_cpu_count(), help="Number of processes to run at once. Default: max number of physical cores available to the machine.")
-    parser.add_argument("--datestamp" "-d", action="store_true", help="Add a _YYYY.MM.DD datestamp to the end of the tiles. Useful for debugging.")
+    parser.add_argument("--datestamp", "-d", action="store_true", help="Add a _YYYY.MM.DD datestamp to the end of the tiles. Useful for debugging.")
     parser.add_argument("--bed", "-b", action="store_true", help="Compute tiles only for bed topographies. Compute just the tiles that overlap the ice sheet beds.")
+    parser.add_argument("--datalists_only", "-dl", action="store_true", help="Only generate the datalists, not the tiles.")
+    parser.add_argument("--TEMP", action="store_true", help="Generate the 'TEMP' 15-sec global tile, for testing purposes.")
+    parser.add_argument("--ini_to_csv", action="store_true", help="Crank out the latest datasets CSV, from the current config files.")
+    parser.add_argument("--csv_to_ini", action="store_true", help="Read any changes made in the CSV, back into the respective .INI files. All old .ini's will be saved to a _old.ini file. Any previous _old.ini's will be overwritten though, so be careful and make sure that changes are what we want.")
     parser.add_argument("--overwrite", "-o", action="store_true", help="Overwrite all existing files.")
     parser.add_argument("--quiet", "-q", action="store_true", help="Run in quiet mode.")
+    return parser.parse_args()
 
 if __name__ == "__main__":
 
-    # TEMP_create_15s_global_tile()
-    # foobar
-
     args = define_and_parse_args()
 
-    EG = ETOPO_Generator()
-    for res in args.resolution:
-        EG.generate_all_etopo_tiles(resolution=res,
-                                    add_datestamp_to_files = args.datestamp,
-                                    crm_only_if_1s = True,
-                                    overwrite= args.overwrite,
-                                    bed=args.bed,
-                                    numprocs=args.numprocs,
-                                    verbose=not args.quiet)
+    if args.TEMP:
+        TEMP_create_15s_global_tile(bed = args.bed)
+
+    elif args.ini_to_csv:
+        EG = ETOPO_Generator()
+        EG.export_ranks_and_ids_csv(verbose=not args.quiet)
+
+    elif args.csv_to_ini:
+        EG = ETOPO_Generator()
+        EG.write_ranks_and_ids_from_csv(verbose=not args.quiet)
+
+    else:
+        EG = ETOPO_Generator()
+
+        for res in args.resolution:
+            if args.datalists_only:
+                EG.generate_etopo_tile_datalists(resolution=res,
+                                                 crm_only_if_1s=True,
+                                                 bed = args.bed,
+                                                 verbose = not args.quiet)
+            else:
+                EG.generate_all_etopo_tiles(resolution=res,
+                                            add_datestamp_to_files = args.datestamp,
+                                            crm_only_if_1s = True,
+                                            overwrite= args.overwrite,
+                                            bed=args.bed,
+                                            numprocs=args.numprocs,
+                                            verbose=not args.quiet)
+    # EG.write_ranks_and_ids_from_csv()
+    # EG.export_ranks_and_ids_csv(verbose=True)
     # EG.output_empty_csv_comment_files()
     # EG.clear_tiles()
     # EG.clear_tiles(dirname=EG.etopo_config.etopo_onedrive_directory)
