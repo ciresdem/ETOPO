@@ -46,6 +46,7 @@ class DatasetGeopackage:
         # Save the directory with files in it.
         self.base_dir = self.config._abspath(self.config.source_datafiles_directory)
 
+        self.current_gdf_filename = None
         self.gdf = None
         self.default_layer_name = "DEMs"
         self.regex_filter = self.config.datafiles_regex
@@ -61,11 +62,12 @@ class DatasetGeopackage:
 
         filename = self.get_gdf_filename(resolution_s = resolution_s)
 
-        if not self.gdf is None:
+        if (self.gdf is not None) and (self.current_gdf_filename == filename):
             return self.gdf
 
         elif os.path.exists(filename):
             self.gdf = geopandas.read_file(filename, layer=self.default_layer_name)
+            self.current_gdf_filename = filename
             if verbose:
                 print(filename, "read.")
         else:
@@ -73,6 +75,7 @@ class DatasetGeopackage:
                 print(filename, "does not exist. Creating...")
             self.gdf = self.create_dataset_geopackage(resolution_s = resolution_s,
                                                       verbose=verbose)
+            self.current_gdf_filename = filename
             if verbose:
                 print("Done.")
 

@@ -161,9 +161,9 @@ class source_dataset_global_lakes_globathy(etopo_source_dataset.ETOPO_source_dat
                 if min_id is not None:
                     lakes_flags = lakes_flags + ":min_id={0:d}".format(min_id)
                 if min_area is not None:
-                    lakes_flags = lakes_flags + "min_area={0}".format(min_area)
+                    lakes_flags = lakes_flags + ":min_area={0}".format(min_area)
                 if max_area is not None:
-                    lakes_flags = lakes_flags + "max_area={0}".format(max_area)
+                    lakes_flags = lakes_flags + ":max_area={0}".format(max_area)
 
                 args = ["waffles",
                         "-M", "lakes" + lakes_flags,

@@ -22,5 +22,6 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
 
         super(source_dataset_CUDEM, self).__init__("CUDEM", configfile)
 
+# If the Geopackage database doesn't exist (i.e. it's been deleted after some new files were created or added), this will create it.
 if __name__ == "__main__":
     gdf = source_dataset_CUDEM().get_geodataframe()

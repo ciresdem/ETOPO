@@ -72,7 +72,7 @@ class source_dataset_GEBCO(etopo_source_dataset.ETOPO_source_dataset):
             bad_values_mask = bad_values_mask | this_band_tid_mask
 
         # Create a copy of the array. Set all bad tid values to NDV
-        out_array = tid_array.copy()
+        out_array = tile_array.copy()
         out_array[bad_values_mask] = tile_ndv
 
         if os.path.exists(out_fname):

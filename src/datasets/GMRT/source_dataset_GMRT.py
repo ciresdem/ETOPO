@@ -5,6 +5,8 @@
 import os
 import numpy
 import subprocess
+import re
+from osgeo import gdal
 
 #####################
 # Don't actually need the CUDEM package here, but it's an indicator whether CUDEM is installed on this machine.
@@ -36,7 +38,7 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 
         super(source_dataset_GMRT, self).__init__("GMRT", configfile)
 
-    def fetch_tiles(self, resolution_s=15, crm_only_if_1s=True, verbose=True):
+    def create_tiles(self, resolution_s=15, crm_only_if_1s=True, also_compute_stats=True, overwrite=False, verbose=True):
         """Using the CUDEM 'fetches' module, create all the tiles needed for this dataset."""
         etopo_gpkg = dataset_geopackage.ETOPO_Geopackage(resolution = resolution_s)
         etopo_gdf = etopo_gpkg.get_gdf(crm_only_if_1s=crm_only_if_1s,
@@ -51,15 +53,27 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             ybottom = numpy.round(ytop + (row.ysize*row.yres))
 
             gmrt_tile_fname = os.path.join(self.config._abspath(self.config.source_datafiles_directory),
+                                           "{0}s".format(resolution_s),
                                            self.config.datafiles_name_template.format(resolution_s,
                                                                                       "N" if ybottom >= 0 else "S",
                                                                                       abs(int(numpy.round(ybottom))),
                                                                                       "E" if xleft >= 0 else "W",
                                                                                       abs(int(numpy.round(xleft)))))
 
+            tile_already_exists = False
+            if os.path.exists(gmrt_tile_fname):
+                if overwrite:
+                    os.remove(gmrt_tile_fname)
+                else:
+                    tile_already_exists = True
+                # else:
+                    # print("{0}/{1} {2} skipped (already written).".format(i+1, len(etopo_gdf), os.path.split(gmrt_tile_fname)[1]))
+                    # continue
+
             fetches_command = ["waffles", "-M", "stacks",
                                "-w",
-                               "-R", "{0}/{1}/{2}/{3}".format(xleft,xright,ybottom,ytop),
+                               # Note: we include a /-/0 elevation cutoff (only include values below 0) to exclude land from this dataset. We're only interested in ocean here.
+                               "-R", "{0}/{1}/{2}/{3}/-/0".format(xleft,xright,ybottom,ytop),
                                "-E", "{0}s".format(resolution_s),
                                "--t_srs", "EPSG:4326",
                                "-D", etopo_gpkg.config.etopo_cudem_cache_directory,
@@ -67,23 +81,94 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                "-O", os.path.splitext(gmrt_tile_fname)[0],
                                "-f",
                                "-F", "GTiff",
-                               "gmrt:layer=topo-mask"]
+                               "gmrt:layer=topo-mask:fmt=netcdf"]
 
             # print(" ".join(fetches_command))
+            # foobar
 
-            p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            if not os.path.exists(gmrt_tile_fname):
+                p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             # p = subprocess.run(fetches_command)
-            if (not ((p.returncode == 0) or os.path.exists(gmrt_tile_fname))) and verbose:
+
+            xml_file = gmrt_tile_fname + ".aux.xml"
+            xml_already_exists = False
+            if os.path.exists(xml_file):
+                if overwrite:
+                    os.remove(xml_file)
+                else:
+                    xml_already_exists = True
+
+            if also_compute_stats and os.path.exists(gmrt_tile_fname):
+                gdal_cmd = ["gdalinfo", "-stats", gmrt_tile_fname]
+                subprocess.run(gdal_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+            if (not (os.path.exists(gmrt_tile_fname) or (p.returncode == 0))) and verbose:
                 print("ERROR: '{0}' sent return code {1}:".format(" ".join(fetches_command), p.returncode))
                 print(p.stdout)
 
             if verbose:
-                print("{0}/{1} {2} {3}written.".format(i+1, len(etopo_gdf), os.path.split(gmrt_tile_fname)[1], "" if os.path.exists(gmrt_tile_fname) else "NOT "))
-
+                print("{0}/{1} {2} {3}{4}".format(i+1, len(etopo_gdf),
+                                                   os.path.split(gmrt_tile_fname)[1],
+                                                   "" if os.path.exists(gmrt_tile_fname) else "NOT ",
+                                                   "already exists" if tile_already_exists else "written"), end="")
+                if also_compute_stats:
+                    print(", {0} {1}{2}.".format(os.path.split(xml_file)[1],
+                                                  "" if os.path.exists(xml_file) else "NOT ",
+                                                  "already exists" if xml_already_exists else "written"))
+                else:
+                    print(".")
         return
 
 
+    def delete_empty_tiles(self, resolution_s=15, verbose=True):
+        """The above generation made a tile for every point on Earth. Many contain no data. Eliminate the ones with no data."""
+        gmrt_dir = os.path.join(self.config._abspath(self.config.source_datafiles_directory),
+                                "{0}s".format(resolution_s))
+        tile_regex = self.config.datafiles_regex
+
+        tilenames = sorted([os.path.join(gmrt_dir, fn) for fn in os.listdir(gmrt_dir) if re.search(tile_regex, fn) != None])
+        # print(str(resolution_s) + "s", len(tilenames), "tiles.")
+
+        num_removed = 0
+        num_kept = 0
+        for i,tile in enumerate(tilenames):
+            print("{0}/{1} {2}".format(i+1, len(tilenames), os.path.split(tile)[1]), end="")
+            ds = gdal.Open(tile, gdal.GA_ReadOnly)
+            band = ds.GetRasterBand(1)
+            array = band.ReadAsArray()
+            ndv = band.GetNoDataValue()
+            if numpy.all(array == ndv):
+                band = None
+                ds = None
+                os.remove(tile)
+                num_removed += 1
+                if verbose:
+                    print(" removed.")
+            else:
+                num_kept += 1
+                band = None
+                ds = None
+                if verbose:
+                    print(" kept w {0:0.2f}% good data.".format(100.0 * numpy.count_nonzero(array != ndv) / array.size))
+
+        if verbose:
+            print("{0} tiles kept, {1} tiles removed.".format(num_kept, num_removed))
+        return
+
 if __name__ == "__main__":
+    # Create the tiles.
+    # gmrt.create_tiles(resolution_s=15)
+    # gmrt.create_tiles(resolution_s=1)
+    # Get rid of any empty tiles.
+    # gmrt.delete_empty_tiles(resolution_s=15)
+    # gmrt.delete_empty_tiles(resolution_s=1)
     gmrt = source_dataset_GMRT()
-    gmrt.fetch_tiles(resolution_s=15)
-    gmrt.fetch_tiles(resolution_s=1)
+
+    gdf15 = gmrt.get_geodataframe(resolution_s = 15)
+
+    gmrt1 = source_dataset_GMRT()
+
+    gdf1 = gmrt1.get_geodataframe(resolution_s = 1)
+
+    print (gdf15)
+    print(gdf1)

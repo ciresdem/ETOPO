@@ -223,7 +223,10 @@ class ETOPO_source_dataset:
         dset = None
         return
 
-    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True):
+    def generate_tile_datalist_entries(self, polygon,
+                                             polygon_crs=None,
+                                             resolution_s = None,
+                                             verbose=True):
         """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
         of all tile entries that would appear in a CUDEM datalist. If no source
         tiles overlap the polygon, return an empty list [].

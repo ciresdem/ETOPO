@@ -350,6 +350,7 @@ class ETOPO_Generator:
                                             etopo_tile_fname = None,
                                             bed = False,
                                             crm_only_if_1s = True,
+                                            omit_copernicus_if_bed_south = True,
                                             verbose=True):
         """For each ETOPO tile (or just the one given), produce a waffles datalist of
         all the source tiles that overlap it (and thus would be included with it),
@@ -487,6 +488,14 @@ class ETOPO_Generator:
                 datalist_lines = []
 
                 for dset_obj in datasets_list:
+                    # For the bed datasets only, omit copernicus data in the southern tiles (ones that have Snn in them),
+                    # so that we don't have the ice-shelve bathtub ring due to ice-edge mismatches between
+                    # Copernicus and BedMachine.
+
+                    if bed and omit_copernicus_if_bed_south and dset_obj.dataset_name == "CopernicusDEM":
+                        if re.search("S(\d{2})", os.path.split(etopo_fname)[1]) != None:
+                            continue
+
                     this_dlist_entries = dset_obj.generate_tile_datalist_entries(etopo_poly,
                                                                                  polygon_crs = etopo_crs,
                                                                                  resolution_s = resolution,
@@ -577,6 +586,7 @@ class ETOPO_Generator:
         temp_dirnames = [None] * N
         current_max_running_procs = numprocs # "max_running_procs" can change depending how many tiles are left.
 
+        dest_tiles_list = []
 
         # First, generate a whole list of child processes waiting to be started.
         for i,(tile, poly, dlist, xres, yres) in enumerate(zip(etopo_tiles, etopo_polys, etopo_dlists, etopo_xres, etopo_yres)):
@@ -621,6 +631,7 @@ class ETOPO_Generator:
 
             waiting_procs[i] = proc
             temp_dirnames[i] = temp_dirname
+            dest_tiles_list.append(dest_tile)
 
         # Tally up how many were already written to disk.
         waiting_procs = [proc for proc in waiting_procs if proc != None]
@@ -743,9 +754,11 @@ class ETOPO_Generator:
             # If we're looking for the bed (or surface) and we find the other set of BedMachine, skip it.
             # Only if we're looking for active objects only.
             if active_only is True:
-                if (bed is True) and (dataset_name == "BedMachine_Surface"):
+                # If we're getting just bed datasets, omit surface datasets for BedMachine & GEBCO
+                if (bed is True) and (dataset_name in ("BedMachine_Surface", "GEBCO")):
                     continue
-                elif (bed is False) and (dataset_name == "BedMachine_Bed"):
+                # If we're getting surface datasets, omit bed datasets for BedMachine & GEBCO
+                elif (bed is False) and (dataset_name in ("BedMachine_Bed", "GEBCO_sub_ice")):
                     continue
 
             subdir = os.path.join(datasets_dir, dataset_name)
