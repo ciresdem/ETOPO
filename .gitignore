@@ -153,3 +153,8 @@ Thumbs.db
 /.idea/*
 misc.xml
 TEMP_15_sec_tiles.datalist*
+/data/datalists/60s/TEMP_15_sec_tiles_bed.datalist
+/src/datasets/MAR_gravity/gmt.conf
+/src/datasets/MAR_gravity/gmt.history
+/src/datasets/MAR_gravity/mar_grav.inf
+/src/datasets/MAR_gravity/mar_grav_tmp.xyz
