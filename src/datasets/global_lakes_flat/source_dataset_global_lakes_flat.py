@@ -322,9 +322,10 @@ def generate_one_tile(args, fname, tempdir=None, verbose=True):
 if __name__ == "__main__":
     lakes = source_dataset_global_lakes_flat()
     for res in (15,1):
-        lakes.create_global_lakes_flat_tiles(resolution_s = res,
-                                             depth_source = lakes.config.flat_lake_depth,
-                                             numprocs=15,
-                                             overwrite=True,
-                                             verbose=True)
+        lakes.get_geodataframe(res)
+        # lakes.create_global_lakes_flat_tiles(resolution_s = res,
+        #                                      depth_source = lakes.config.flat_lake_depth,
+        #                                      numprocs=15,
+        #                                      overwrite=True,
+        #                                      verbose=True)
 

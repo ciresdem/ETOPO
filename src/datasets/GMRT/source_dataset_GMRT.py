@@ -7,6 +7,7 @@ import numpy
 import subprocess
 import re
 from osgeo import gdal
+import pandas
 
 #####################
 # Don't actually need the CUDEM package here, but it's an indicator whether CUDEM is installed on this machine.
@@ -60,6 +61,11 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                                                                       "E" if xleft >= 0 else "W",
                                                                                       abs(int(numpy.round(xleft)))))
 
+            # TEMP: for debugging only.
+            # TODO: Remove later
+            if not ((xleft == 0 and ytop == 90) or (xleft == 0 and bottom == -90)):
+                continue
+
             tile_already_exists = False
             if os.path.exists(gmrt_tile_fname):
                 if overwrite:
@@ -83,12 +89,13 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                "-F", "GTiff",
                                "gmrt:layer=topo-mask:fmt=netcdf"]
 
-            # print(" ".join(fetches_command))
             # foobar
 
             if not os.path.exists(gmrt_tile_fname):
-                p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            # p = subprocess.run(fetches_command)
+                # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+                print(" ".join(fetches_command))
+                p = subprocess.run(fetches_command)
 
             xml_file = gmrt_tile_fname + ".aux.xml"
             xml_already_exists = False
@@ -155,20 +162,110 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             print("{0} tiles kept, {1} tiles removed.".format(num_kept, num_removed))
         return
 
+    def clean_bad_gmrt_values(self,
+                              resolution_s = 15,
+                              remove_gte0 = True,
+                              delete_empty_tiles = True,
+                              update_gpkg = True,
+                              verbose=True):
+        """Some GMRT areas have bad-data values, especially in the global 15s data. Remove them.
+
+        Also, some areas, despite using the topo-layer mask, they include land values. If remove_gte0,
+        remove all elevations values >= 0.
+
+        If delete_empty_tiles, after we've cleaned the data, delete any tiles that are now empty (all no-data).
+        """
+        gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
+
+        bad_tiles_csvname = self.config.gmrt_bad_values_csv.format(resolution_s)
+
+        bad_tiles_df = None
+        if os.path.exists(bad_tiles_csvname):
+            bad_tiles_df = pandas.read_csv(bad_tiles_csvname, index_col=False)
+            bad_tiles_id_list = bad_tiles_df.TileID.tolist()
+            if verbose:
+                print(os.path.split(bad_tiles_csvname)[1], "read with", len(bad_tiles_df), "entries.")
+        elif verbose:
+            print(os.path.split(bad_tiles_csvname)[1], "does not exist.")
+
+        any_files_deleted = False
+        for i,row in enumerate(gdf.iterrows()):
+            _, row = row
+            if not os.path.exists(row.filename):
+                if verbose:
+                    print("{0}/{1} {2} does not exist.".format(i+1, len(gdf), os.path.split(row.filename)[1]))
+                continue
+            ds = gdal.Open(row.filename, gdal.GA_Update)
+            band = ds.GetRasterBand(1)
+            array = band.ReadAsArray()
+            ndv = band.GetNoDataValue()
+            badvalues_mask = numpy.zeros(array.shape, dtype=bool)
+            if bad_tiles_df is not None:
+                tile_id = re.search("[NS](\d{2})[EW](\d{3})", os.path.split(row.filename)[1]).group()
+                if tile_id in bad_tiles_id_list:
+                    for badvalue in bad_tiles_df[bad_tiles_df.TileID == tile_id].badvalue:
+                        badvalues_mask = badvalues_mask | (array == badvalue)
+
+            if remove_gte0:
+                badvalues_mask = badvalues_mask | (array >= 0.0)
+
+            # If we've flagged any bad values, put NDV in and save it back to the grid.
+            if numpy.any(badvalues_mask):
+                array[badvalues_mask] = ndv
+
+                # Now, check to see if the array is all NDVs or not.
+                if delete_empty_tiles and numpy.all(array == ndv):
+                    band = None
+                    ds = None
+                    os.remove(row.filename)
+                    any_files_deleted = True
+                    if verbose:
+                        print("{0}/{1} {2} deleted with no more valid data.".format(i+1,
+                                                                                    len(gdf),
+                                                                                    os.path.split(row.filename)[1]))
+                    continue
+
+                band.WriteArray(array)
+                band.GetStatistics(0,1)
+                band = None
+                ds = None
+                if verbose:
+                    print("{0}/{1} {2} re-written with {3:0.1f}% bad data filtered out.".format(
+                           i+1,
+                           len(gdf),
+                           os.path.split(row.filename)[1],
+                           100*numpy.count_nonzero(badvalues_mask)/array.size))
+
+            else:
+                if verbose:
+                    print("{0}/{1} {2} unchanged.".format(i+1, len(gdf), os.path.split(row.filename)[1]))
+
+        if any_files_deleted and update_gpkg:
+            gdf = None
+            gpkg_object = self.get_geopkg_object(verbose = verbose)
+            gpkg_fname = gpkg_object.get_gdf_filename(resolution_s = resolution_s)
+            os.remove(gpkg_fname)
+            gpkg_object.gdf = None
+            # The dataset_geopackage object will rebuild the gdf using the new files.
+            gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
+
+
 if __name__ == "__main__":
     # Create the tiles.
+    gmrt = source_dataset_GMRT()
     # gmrt.create_tiles(resolution_s=15)
     # gmrt.create_tiles(resolution_s=1)
     # Get rid of any empty tiles.
     # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)
-    gmrt = source_dataset_GMRT()
 
-    gdf15 = gmrt.get_geodataframe(resolution_s = 15)
+    for res in (15,1):
+        gmrt.clean_bad_gmrt_values(resolution_s = res, verbose = True)
 
-    gmrt1 = source_dataset_GMRT()
 
-    gdf1 = gmrt1.get_geodataframe(resolution_s = 1)
-
-    print (gdf15)
-    print(gdf1)
+    # gdf15 = gmrt.get_geodataframe(resolution_s = 15)
+    # gmrt1 = source_dataset_GMRT()
+    # gdf1 = gmrt1.get_geodataframe(resolution_s = 1)
+    #
+    # print (gdf15)
+    # print(gdf1)

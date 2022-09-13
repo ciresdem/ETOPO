@@ -159,5 +159,8 @@ def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_
                             include_photon_validations = True,
                             output_vdatum = output_vdatum)
 
+def plot_regions(basedir =
+                 result_regex=r"ncei(\w+)_results\.h5")
+
 if __name__ == "__main__":
     validate_all()

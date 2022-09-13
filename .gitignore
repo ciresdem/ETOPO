@@ -158,3 +158,7 @@ TEMP_15_sec_tiles.datalist*
 /src/datasets/MAR_gravity/gmt.history
 /src/datasets/MAR_gravity/mar_grav.inf
 /src/datasets/MAR_gravity/mar_grav_tmp.xyz
+/data/.~lock.ETOPO_dataset_ranks_and_ids.csv\#
+/data/crm/cudem_tiles_shp.zip
+/data/datalists/60s/TEMP_15_sec_tiles_empty.datalist
+/data/datalists/60s/TEMP_15_sec_tiles_weights.datalist

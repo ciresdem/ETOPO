@@ -230,7 +230,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
             if os.path.exists(gebco_lakes_fpath):
                 # Test to see if it's a valid file.
                 ds = gdal.Open(gebco_lakes_fpath, gdal.GA_ReadOnly)
-                if ds is None:
+                if ds is None or overwrite:
                     os.remove(gebco_lakes_fpath)
                 else:
                     # if verbose:
@@ -634,7 +634,7 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
 
 
 def define_and_parse_args():
-    parser = argparse.ArgumentParser(description="Generate all the GEBCO lakes tiles.")
+    parser = argparse.ArgumentParser(description="Generate all the GEBCO lakes tiles. The global_lakes_globathy layer should be generated first.")
     parser.add_argument("-resolution", "-r", default=None, help="Resolution (in s) of tiles to produce. 1 or 15. Default both.")
     parser.add_argument("-numprocs", "-np", type=int, default=utils.parallel_funcs.physical_cpu_count(),
                         help="Number of processes to run simultaneously. Defaults to the number of physical cores on the machine. (Note: NOT YET IMPLEMENTED.)")

@@ -270,7 +270,7 @@ class ETOPO_source_dataset:
 
         If they are already set to the listed vdatum (or equivalent), leave them.
         If they are converted, write all files to the "output_folder" directory.
-            If None, look for a "datafiles_directory_converted" folder.
+            If None, look for a "datafiles_directory_converted" entry in the config file..
             If that is not available, create a "converted" subdir in the directory of each source file, and put it there.
 
         If update_gpkg, update the filenames of each file in the geopackage. Save that back to disk.

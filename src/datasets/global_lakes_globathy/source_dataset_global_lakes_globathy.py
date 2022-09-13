@@ -187,7 +187,7 @@ class source_dataset_global_lakes_globathy(etopo_source_dataset.ETOPO_source_dat
 
                 # For debugging purposes, print out the commands I'm issuing.
                 # TODO: Comment this out later.
-                print("\n" + " ".join(args))
+                # print("\n" + " ".join(args))
                 # return
 
                 # Get the name of the temporary dir to work within. The subprocess will create it.

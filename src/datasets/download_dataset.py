@@ -143,7 +143,7 @@ class DatasetDownloader_BaseClass:
             command = "wget " + ("" if (wget_extra_args is None) else (wget_extra_args + " ")) + url
 
             num_dirs_to_cut = 0
-            if wget_extra_args.find("--cut-dirs=") >= 0:
+            if wget_extra_args is not None and wget_extra_args.find("--cut-dirs=") >= 0:
                 num_dirs_to_cut = int(re.search("(?<=--cut-dirs\=)\d+", wget_extra_args).group())
 
             url_dirs = urllib.parse.urlparse(url).path.strip("/").split("/")
