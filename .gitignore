@@ -162,3 +162,5 @@ TEMP_15_sec_tiles.datalist*
 /data/crm/cudem_tiles_shp.zip
 /data/datalists/60s/TEMP_15_sec_tiles_empty.datalist
 /data/datalists/60s/TEMP_15_sec_tiles_weights.datalist
+tileindex_NCEI_*
+tides:s*.inf
