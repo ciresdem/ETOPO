@@ -585,6 +585,9 @@ class ETOPO_source_dataset:
         """
         tilenames = self.retrieve_all_datafiles_list(verbose=verbose)
         for i,fname in enumerate(tilenames):
+            # If the filename are already the _epsg4326.tif, then the original filename removes that.
+            if fname.find("_epsg4326.tif") > -1:
+                fname = fname.replace("_epsg4326.tif", ".tif")
             if ((range_start is not None) and (i < range_start)) or ((range_stop is not None) and (i >= range_stop)):
                 continue
             dest_fname = os.path.splitext(fname)[0] + suffix + ".tif"
@@ -605,9 +608,9 @@ class ETOPO_source_dataset:
                         "-tr", str(xstep), str(abs(ystep)),
                         "-r", "bilinear",
                         "-of", "GTiff",
-                        "-co", "COMPRESS=DEFLATE",
-                        "-co", "PREDICTOR=2",
-                        "-co", "ZLEVEL=5",
+                        "-co", "COMPRESS=LZW",
+                        "-co", "PREDICTOR=3",
+                        # "-co", "ZLEVEL=5",
                         fname, dest_fname]
             process = subprocess.run(gdal_cmd, capture_output = True, text=True)
             if verbose:
