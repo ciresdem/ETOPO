@@ -9,6 +9,7 @@ import sys
 from osgeo import gdal
 import pyproj
 import multiprocessing
+import argparse
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -94,7 +95,19 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
             print(" written.")
             sys.stdout.flush()
 
-    def convert_to_convert_to_wgs84_and_egm2008_single_tile(self, fname, i, N, overwrite=False):
+    @staticmethod
+    def convert_to_wgs84_and_egm2008_single_tile(fname, i, N, test_stop = None, overwrite=False):
+        """Convert a single tile to wgs84 horizontal, and egm2008 vertical datums.
+
+        test_stop is for debugging purposes. Set to "PROJECTED", "CONVERTED", or "TIDAL" to report the output of those
+        respective commands (rather than running them silently) and then immediately stop the program.
+        """
+        if test_stop == "":
+            test_stop = None
+        elif test_stop is not None:
+            # Put the flag in upper-case, and strip away any whitespace.
+            test_stop = test_stop.strip().upper()
+
         print("{0}/{1} {2}".format(i + 1, N, os.path.split(fname)[1]))
 
         # First, just list out all the epsg values to see here.
@@ -176,6 +189,11 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
                 # print(" ".join(gdal_cmd))
                 print("\t", "Creating", os.path.split(fname_projected)[1])
                 try:
+                    if test_stop == "PROJECTED":
+                        print(" ".join(gdal_cmd))
+                        subprocess.run(gdal_cmd)
+                        sys.exit(0)
+
                     p = subprocess.run(gdal_cmd, text=True, capture_output=True)
                 except (KeyboardInterrupt, Exception) as e:
                     if os.path.exists(fname_projected):
@@ -197,6 +215,7 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
         # Just put "_msl" or "_isl" at *end* of the file (rather than _egm2008) and make a symbolic link to it.
         if vdatum_str in ("msl", "isl"):
             fname_converted = os.path.splitext(fname_projected)[0] + "_" + vdatum_str + ".tif"
+            fname_converted = fname_converted.replace("/projected/", "/converted/")
             if not os.path.exists(fname_converted):
                 os.symlink(fname_projected, fname_converted)
                 print("\t", "Symlink", os.path.split(fname_converted)[1], "created.")
@@ -227,7 +246,8 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
             did_error_occur = False
 
             # temp_folder = os.path.join(etopo_config.etopo_cudem_cache_directory, "temp" + str(i + 100))
-            temp_folder = os.path.join(etopo_config.etopo_cudem_cache_directory, "temp" + str(i + 1))
+            # If we're just testing, change to a different default test folder name to not conflict with another running process.
+            temp_folder = os.path.join(etopo_config.etopo_cudem_cache_directory, "temp" + str((i + 1) if test_stop is None else (i+1001)))
             if not os.path.exists(temp_folder):
                 os.mkdir(temp_folder)
 
@@ -246,6 +266,11 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
                 print("\t", "Creating", os.path.split(fname_converted)[1])
 
                 try:
+                    if test_stop == "CONVERTED":
+                        print(" ".join(convert_cmd))
+                        subprocess.run(convert_cmd, cwd=temp_folder)
+                        sys.exit(0)
+
                     # print(" ".join(convert_cmd))
                     # p = subprocess.run(convert_cmd, cwd=temp_folder)
                     # import sys
@@ -317,8 +342,11 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
                                "tides:s_datum={0}:t_datum=msl".format(vdatum_str)]
 
                 try:
-                    # print(" ".join(waffles_cmd))
-                    # p = subprocess.run(waffles_cmd)
+                    if test_stop == "TIDAL":
+                        print(" ".join(waffles_cmd))
+                        p = subprocess.run(waffles_cmd, cwd=temp_folder)
+                        sys.exit(0)
+
                     p = subprocess.run(waffles_cmd, text=True, capture_output=True, cwd=temp_folder)
                 except KeyboardInterrupt as e:
                     if os.path.exists(temp_tidal_file):
@@ -388,18 +416,18 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
 
         # return
 
-    def convert_to_wgs84_and_egm2008(self, overwrite = False):
+    def convert_to_wgs84_and_egm2008(self, test_stop = None, overwrite = False):
         """Make sure all the tiles are in WGS84 lat-lon coords, as well as EGM2008 vertical datum."""
-        fnames = sorted(list(set([os.path.join(self.config.source_datafiles_directory, fn) for fn in os.listdir(self.config.source_datafiles_directory) if ((re.search(self.config.datafiles_regex, fn) is not None) and (fn.find("_egm2008.tif") == -1) and (fn.find("_epsg4326") == -1))])))
+        fnames = sorted(list(set([os.path.join(self.config.source_datafiles_directory, fn) for fn in os.listdir(self.config.source_datafiles_directory) if (re.search(self.config.datafiles_regex, fn) is not None)])))
         # Go ahead and include everything in the "estuarine" folder too. Take care of both datasets at once.
         source_dir_estuarine = self.config.source_datafiles_directory.replace("/thredds/", "/estuarine/")
-        fnames = fnames + sorted(list(set([os.path.join(source_dir_estuarine, fn) for fn in os.listdir(source_dir_estuarine) if ((re.search(self.config.datafiles_regex, fn) is not None) and (fn.find("_egm2008.tif") == -1) and (fn.find("_epsg4326") == -1))])))
+        fnames = fnames + sorted(list(set([os.path.join(source_dir_estuarine, fn) for fn in os.listdir(source_dir_estuarine) if (re.search(self.config.datafiles_regex, fn) is not None)])))
 
         failed_files= []
 
         for i, fname in enumerate(fnames):
 
-            fout, success = self.convert_to_convert_to_wgs84_and_egm2008_single_tile(fname, i, len(fnames), overwrite=overwrite)
+            fout, success = self.convert_to_wgs84_and_egm2008_single_tile(fname, i, len(fnames), test_stop=test_stop, overwrite=overwrite)
             if not success:
                 failed_files.append(fout)
 
@@ -408,10 +436,18 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
             for fn in failed_files:
                 print(" ", fn)
 
+def define_and_parse_args():
+    parser = argparse.ArgumentParser(description="Code to convert both horizontal projections and vertical tidal datums into friendly formats, as well as fix other bugs in the NOAA_regional and NOAA_estuarine  datasets.")
+    parser.add_argument("-stop", "-s", default=None, help="For debugging purposes, write out stdout for operations on one of the 3 key steps and then exit the program after that step on the first processed file. Steps are 'PROJECTED', 'CONVERTED', or 'TIDAL'.")
+    parser.add_argument("--overwrite", "-o", default=False, action="store_true", help="Overwrite existing tiles.")
+    return parser.parse_args()
+
 if __name__ == "__main__":
+    args = define_and_parse_args()
+
     noaa = source_dataset_NOAA_regional()
     # noaa.print_unique_vdatum_ids()
     # noaa.move_estuarine_tiles()
     # noaa.convert_to_gtiff()
-    noaa.convert_to_wgs84_and_egm2008(overwrite=False)
+    noaa.convert_to_wgs84_and_egm2008(test_stop=args.stop, overwrite=args.overwrite)
     # noaa.get_geodataframe()
