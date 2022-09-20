@@ -23,6 +23,7 @@ import datasets.dataset_geopackage
 import utils.progress_bar
 import utils.parallel_funcs
 import utils.configfile
+import etopo.generate_empty_grids
 
 etopo_config = utils.configfile.config()
 
@@ -147,10 +148,8 @@ class source_dataset_global_lakes_flat(etopo_source_dataset.ETOPO_source_dataset
                         running_fnames.remove(fname)
                         # Get rid of the tempdir, including anything in there.
                         if os.path.exists(tempdir):
-                            tfns = os.listdir(tempdir)
-                            for tf in tfns:
-                                os.remove(tf)
-                            os.rmdir(tempdir)
+                            rm_cmd = ["rm", "-rf", tempdir]
+                            subprocess.run(rm_cmd, capture_output=True)
 
                     time.sleep(0.01)
 
@@ -183,6 +182,9 @@ class source_dataset_global_lakes_flat(etopo_source_dataset.ETOPO_source_dataset
                         "-O", os.path.splitext(fpath_out)[0]
                         ]
 
+                # print(" ".join(args))
+                # foobar
+
                 # Execute the command.
                 # if verbose:
                 #     print("{0}/{1}".format(i+1, len(etopo_gdf)),
@@ -200,7 +202,7 @@ class source_dataset_global_lakes_flat(etopo_source_dataset.ETOPO_source_dataset
 
                 # try:
                     # Run the lakes module command.
-                p = multiprocessing.Process(target = generate_one_tile,
+                p = multiprocessing.Process(target = self.generate_one_tile,
                                             args = (args,fpath_out),
                                             kwargs = {"tempdir": tempdir_name,
                                                       "verbose": verbose}
@@ -273,10 +275,8 @@ class source_dataset_global_lakes_flat(etopo_source_dataset.ETOPO_source_dataset
                     running_fnames.remove(fname)
                     # Also clean up & remove the temporary directory.
                     if os.path.exists(tempdir):
-                        tfns = [os.path.join(tempdir, tf) for tf in os.listdir(tempdir)]
-                        for tf in tfns:
-                            os.remove(tf)
-                        os.rmdir(tempdir)
+                        rm_cmd = ["rm", "-rf", tempdir]
+                        subprocess.run(rm_cmd, capture_output=True)
                     running_tdirs.remove(tempdir)
 
                 time.sleep(0.01)
@@ -296,36 +296,60 @@ class source_dataset_global_lakes_flat(etopo_source_dataset.ETOPO_source_dataset
             gdf_fname = self.get_geopkg_object(verbose=verbose).get_gdf_filename(resolution_s=resolution_s)
             if os.path.exists(gdf_fname):
                 os.remove(gdf_fname)
-        return self.get_geodataframe(resolution_s=resolution_s, verbose=verbose)
 
         # For some reason above, the code doesn't always eliminate tempdirs that have been created.
         # At the end, try to clean up any missed ones.
         for tempdir in tempdirs_total:
             if os.path.exists(tempdir):
-                os.rmdir(tempdir)
+                rm_cmd = ["rm", "-rf", tempdir]
+                subprocess.run(rm_cmd, capture_output=True)
 
-def generate_one_tile(args, fname, tempdir=None, verbose=True):
-    """Subprocess for multiprocessing.Process above in main function. Run the waffles command."""
-    # Change the child proceess to work within the tempdir given to it. Create it if necessary.
-    if tempdir:
-        if not os.path.exists(tempdir):
-            os.mkdir(tempdir)
-        os.chdir(tempdir)
+        return self.get_geodataframe(resolution_s=resolution_s, verbose=verbose)
 
-    p = subprocess.run(args, capture_output=True)
-    if p.returncode != 0 and verbose:
-        print("process '{0}' completed with Error code {1}.".format(" ".join(args), p.returncode),
-              ("{0} exists." if os.path.exists(fname) else "{0} not written.").format(fname))
-    return
+    @staticmethod
+    def generate_one_tile(args, fname, tempdir=None, verbose=True):
+        """Subprocess for multiprocessing.Process above in main function. Run the waffles command."""
+        # Change the child proceess to work within the tempdir given to it. Create it if necessary.
+        if tempdir:
+            if not os.path.exists(tempdir):
+                os.mkdir(tempdir)
+            os.chdir(tempdir)
+
+        p = subprocess.run(args, capture_output=True)
+        if p.returncode != 0 and verbose:
+            print("process '{0}' completed with Error code {1}.".format(" ".join(args), p.returncode),
+                  ("{0} exists." if os.path.exists(fname) else "{0} not written.").format(fname))
+        return
+
+    def fix_azerbaijan_hole(self):
+        """After the tiles have been created, fix the lakes that are in Azerbaijan and Armenia. Since there is no
+        Copernicus data there, they are given surfaces of "zero" (and slightly below) rather than correct lake depths.
+        Get the lake depths from the GEBCO layer."""
+        # TODO: FINISH. ALSO, NEED TO DO THIS FOR 1 GLOBATHY LAKE IN PARTICULAR. THAT ONE SHOULDN'T BE HARD.
+        tile_tags_15s = ("N30E030", "N30E045")
+        gdf_15s = self.get_geodataframe(resolution_s=15)
+        tilenames_all = gdf_15s.filename.tolist()
+        tilenames = [tile for tile in tilenames_all if tile.find(tile_tags_15s[0]) > -1 or tile.find(tile_tags_15s[1]) > -1]
+        polygons = gdf_15s[(gdf_15s.filename == tilenames[0]) | (gdf_15s.filename == tilenames[1])].geometry.tolist()
+        print(tilenames)
+        print(polygons)
+
+        azerbaijan_1s_gdf = etopo.generate_empty_grids.output_azerbaijan_1deg_gpkg()
+
+        for lake_tile, lake_poly in zip(tilenames, polygons):
+            print(lake_tile, lake_poly)
+            tiles_intersecting_1s = azerbaijan_1s_gdf[azerbaijan_1s_gdf.intersects(lake_poly) & ~azerbaijan_1s_gdf.touches(lake_poly)]
+            print(tiles_intersecting_1s)
+
 
 
 if __name__ == "__main__":
     lakes = source_dataset_global_lakes_flat()
+    # lakes.fix_azerbaijan_hole()
     for res in (15,1):
-        lakes.get_geodataframe(res)
-        # lakes.create_global_lakes_flat_tiles(resolution_s = res,
-        #                                      depth_source = lakes.config.flat_lake_depth,
-        #                                      numprocs=15,
-        #                                      overwrite=True,
-        #                                      verbose=True)
-
+    #     lakes.get_geodataframe(res)
+        lakes.create_global_lakes_flat_tiles(resolution_s = res,
+                                             depth_source = lakes.config.flat_lake_depth,
+                                             numprocs=15,
+                                             overwrite=True,
+                                             verbose=True)

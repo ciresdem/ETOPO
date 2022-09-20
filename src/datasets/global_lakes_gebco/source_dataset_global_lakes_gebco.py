@@ -160,8 +160,11 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
             return None
 
         for i,df_row in sub_df.iterrows():
-            # Check if the [row.row,row.col] value of the lake_array is True.
-            if lake_array[df_row.row, df_row.col]:
+
+            # if df_row.filename == "N30E105":
+            #     print("\t", "N30E105", df_row.row, df_row.col, lake_array[df_row.row, df_row.col])
+            # Check if the [row.row,row.col] value of the lake_array is True. That means this lake has been flagged.
+            if (df_row.row == -1 and df_row.col == -1) or lake_array[df_row.row, df_row.col]:
                 # Then check the value of row.Globathy, that'll tell us whether we need to use GEBCO or not.
                 if df_row.Globathy:
                     # Note: The return value is whether or not we're forcing it to use GEBCO. The dataframe
@@ -171,6 +174,10 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                 else:
                     assert df_row.Globathy == False
                     return True
+
+            elif df_row.globathy_flags == "ALL_OTHER_GLOBATHY":
+                # This is a flag we've used to designate one or a few lakes to use GEBCO, but all the others in the tile as Globathy.
+                return False
 
         return None
 
@@ -268,7 +275,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                                                       gebco_datalist,
                                                       resolution_s,
                                                       ),
-                                                kwargs={"check_exceptions": True if (resolution_s == 15) else False,
+                                                kwargs={"check_exceptions": True,
                                                         "output_csv" : True,
                                                         "verbose" : False
                                                         }
@@ -290,7 +297,7 @@ class source_dataset_global_lakes_gebco(etopo_source_dataset.ETOPO_source_datase
                         fnames_to_remove.append(fname)
                         total_finished += 1
                         if verbose:
-                            print("{0}/{1}".format(total_finished, N), fname, ("" if os.path.exists(fname) else "NOT ") + "written.")
+                            print("{0}/{1}".format(total_finished, N), fname, ("written." if os.path.exists(fname) else ""))
 
                 for proc, fname in zip(procs_to_remove, fnames_to_remove):
                     running_procs.remove(proc)
@@ -493,62 +500,68 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
     tile_xmin = (-1 if (re.search("(?<=[NS](\d{2}))[EW](?=\d{3})", gbfn).group() == "W") else 1) * \
                 int(re.search("(?<=[NS](\d{2})[EW])\d{3}", gbfn).group())
 
+    # if re.search(r"[NS]\d{2}[EW]\d{3}", gbfn).group() == "N30E105":
+    #     print(nlabels, "lakes in tile", os.path.basename(gbfn))
+
     # Loop through all the lakes in the dataset, starting with lake # 1 (0 is background).
-    for LN in range(1, nlabels):
+    for LN in range(1, nlabels+1):
         # Get the copernicus lake heights -- figure out the copernicus elevaion of the lake.
         lake_mask = (lab_array == LN)
         lake_size = numpy.count_nonzero(lake_mask)
         copernicus_elevs = copernicus_array[lake_mask]
-        gebco_nearest_elevs = gebco_nearest_array[lake_mask]
+        # gebco_nearest_elevs = gebco_nearest_array[lake_mask]
         gebco_bilinear_elevs = gebco_bilinear_array[lake_mask]
 
-        if lake_size == 1:
-            # If it's a tiny lake, 1-2 grid cells, just use the fucking gebco data *if* it's below the lake surface threshold.
-            if gebco_bilinear_elevs[0] < copernicus_elevs[0]:
-                gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
-                used_gebco_elevs = True
-                used_any_gebco_elevs = True
-                numlakes_included += 1
-                gebco_data = gebco_bilinear_elevs
-            elif gebco_nearest_elevs[0] < copernicus_elevs[0]:
-                gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
-                used_gebco_elevs = True
-                used_any_gebco_elevs = True
-                numlakes_included += 1
-                gebco_data = gebco_nearest_elevs
-            # Otherwise, just don't skip that lake and don't use the GEBCO elevations (use globathy)
-            else:
-                used_gebco_elevs = False
-                gebco_data = gebco_bilinear_elevs
+        # if re.search(r"[NS]\d{2}[EW]\d{3}", gbfn).group() == "N30E105":
+        #     print("\t", LN, numpy.count_nonzero(lake_mask))
 
-            copernicus_surface_elev = copernicus_elevs[0]
+        if lake_size < 5:
+            # # If it's a tiny lake, 1-2 grid cells, just use the fucking gebco data *if* it's below the lake surface threshold.
+            # if gebco_bilinear_elevs[0] < copernicus_elevs[0]:
+            #     gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
+            #     used_gebco_elevs = True
+            #     used_any_gebco_elevs = True
+            #     numlakes_included += 1
+            #     gebco_data = gebco_bilinear_elevs
+            # elif gebco_nearest_elevs[0] < copernicus_elevs[0]:
+            #     gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
+            #     used_gebco_elevs = True
+            #     used_any_gebco_elevs = True
+            #     numlakes_included += 1
+            #     gebco_data = gebco_nearest_elevs
+            # # Otherwise, just don't skip that lake and don't use the GEBCO elevations (use globathy)
+            # else:
+            used_gebco_elevs = False
+            gebco_data = gebco_bilinear_elevs
+
+            copernicus_surface_elev = numpy.mean(copernicus_elevs)
             copernicus_mode_fraction = 1.
 
-        elif lake_size == 2:
-            if numpy.all(gebco_bilinear_elevs < copernicus_elevs):
-                gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
-                used_gebco_elevs = True
-                used_any_gebco_elevs = True
-                numlakes_included += 1
-                gebco_data = gebco_bilinear_elevs
-
-            elif numpy.all(gebco_nearest_elevs < copernicus_elevs):
-                gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
-                used_gebco_elevs = True
-                used_any_gebco_elevs = True
-                numlakes_included += 1
-                gebco_data = gebco_nearest_elevs
-            else:
-                used_gebco_elevs = False
-                gebco_data = gebco_bilinear_elevs
-
-            copernicus_surface_elev, copernicus_mode_count = scipy.stats.mode(copernicus_elevs)
-            copernicus_surface_elev = copernicus_surface_elev[0]
-            copernicus_mode_count = copernicus_mode_count[0]
-            copernicus_mode_fraction = copernicus_mode_count / lake_size
+        # elif lake_size == 2:
+        #     if numpy.all(gebco_bilinear_elevs < copernicus_elevs):
+        #         gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
+        #         used_gebco_elevs = True
+        #         used_any_gebco_elevs = True
+        #         numlakes_included += 1
+        #         gebco_data = gebco_bilinear_elevs
+        #
+        #     elif numpy.all(gebco_nearest_elevs < copernicus_elevs):
+        #         gebco_lakes_grid[lake_mask] = gebco_nearest_elevs
+        #         used_gebco_elevs = True
+        #         used_any_gebco_elevs = True
+        #         numlakes_included += 1
+        #         gebco_data = gebco_nearest_elevs
+        #     else:
+        #         used_gebco_elevs = False
+        #         gebco_data = gebco_bilinear_elevs
+        #
+        #     copernicus_surface_elev, copernicus_mode_count = scipy.stats.mode(copernicus_elevs)
+        #     copernicus_surface_elev = copernicus_surface_elev[0]
+        #     copernicus_mode_count = copernicus_mode_count[0]
+        #     copernicus_mode_fraction = copernicus_mode_count / lake_size
 
         else:
-            assert lake_size >= 3
+            assert lake_size >= 5
             copernicus_surface_elev, copernicus_mode_count = scipy.stats.mode(copernicus_elevs)
             copernicus_surface_elev = copernicus_surface_elev[0]
             copernicus_mode_count = copernicus_mode_count[0]
@@ -568,7 +581,10 @@ def create_one_gebco_lakes_tile(gc_object : source_dataset_global_lakes_gebco,
             # This (I think) seems to take care of skipping most the small lakes where GEBCO sucks.
             if (((num_gebco_below / float(lake_size)) >= 0.80) and (force_gebco != False)) or (force_gebco == True):
                 # Find the next shallowest pixel and set all GEBCO elevations that are *above* the lake surface to that.
-                next_shallowest_depth = numpy.max(gebco_bilinear_elevs[gebco_bilinear_elevs < copernicus_surface_elev])
+                try:
+                    next_shallowest_depth = numpy.max(gebco_bilinear_elevs[gebco_bilinear_elevs < copernicus_surface_elev])
+                except ValueError:
+                    next_shallowest_depth = copernicus_surface_elev - 1.0
                 gebco_bilinear_elevs[gebco_bilinear_elevs >= copernicus_surface_elev] = next_shallowest_depth
                 gebco_lakes_grid[lake_mask] = gebco_bilinear_elevs
                 used_gebco_elevs = True

@@ -10,6 +10,7 @@ from osgeo import gdal
 import pyproj
 import multiprocessing
 import argparse
+import pandas
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -78,7 +79,7 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
                     continue
             gdal_cmd = ["gdal_translate",
                         "-co", "COMPRESS=LZW",
-                        "-co", "PREDICTOR=3",
+                        "-co", "PREDICTOR=2",
                         fname,
                         fout]
             # print(" ".join(gdal_cmd))
@@ -374,7 +375,7 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
                                  "--format", "GTiff",
                                  "--co", "COMPRESS=LZW",
                                  "--co", "TILED=YES",
-                                 "--co", "PREDICTOR=3",
+                                 "--co", "PREDICTOR=2",
                                  "--outfile", fname_converted]
 
                 try:
@@ -416,7 +417,7 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
 
         # return
 
-    def convert_to_wgs84_and_egm2008(self, test_stop = None, overwrite = False):
+    def convert_to_wgs84_and_egm2008(self, test_stop = None, overwrite = False, strings_to_omit=None):
         """Make sure all the tiles are in WGS84 lat-lon coords, as well as EGM2008 vertical datum."""
         fnames = sorted(list(set([os.path.join(self.config.source_datafiles_directory, fn) for fn in os.listdir(self.config.source_datafiles_directory) if (re.search(self.config.datafiles_regex, fn) is not None)])))
         # Go ahead and include everything in the "estuarine" folder too. Take care of both datasets at once.
@@ -436,18 +437,119 @@ class source_dataset_NOAA_regional(etopo_source_dataset.ETOPO_source_dataset):
             for fn in failed_files:
                 print(" ", fn)
 
+    def generate_tile_datalist_entries(self, polygon, polygon_crs=None, resolution_s = None, verbose=True, weight=None):
+        """Given a polygon (ipmortant, in WGS84/EPSG:4326 coords), return a list
+        of all tile entries that would appear in a CUDEM datalist. If no source
+        tiles overlap the polygon, return an empty list [].
+
+        This is an overloaded function of etopo_source_dataset::generate_tile_datalist_entries.
+        This one assigns a slightly different weight depending upon whether it's a BlueTopo_US5, _US4, or _US3 tile.
+        Since the higher numbers (i.e. US5) are higher resolution, we want those to be slightly differnt, so rather than
+        7, it'll be 7.3, 7.4, and 7.5, respectively.
+        I will need to post-process to make sure the 7.x is changed back to 7 in the end.
+
+        Each datalist entry is a 3-value string, as such:
+        [path/filename] [format] [weight]
+        In this case, format will always be 200 for raster. Weight will the weights
+        returned by self.get_dataset_ranking_score().
+
+        If polygon_crs can be a pyproj.crs.CRS object, or an ESPG number.
+        If poygon_crs is None, we will use the CRS
+        from the source dataset geopackage.
+
+        If weight is None, use the weight returned by self.get_dataset_ranking_score.
+        Else use the weight provided in "weight" for all entries.
+        """
+        if polygon_crs is None:
+            polygon_crs = self.get_crs(as_epsg=False)
+
+        if weight is None:
+            weight = self.get_dataset_ranking_score()
+
+        # Do a command-line "waffles -h" call to see datalist options. The datalist
+        # type for raster files is "200"
+        DTYPE_CODE = 200
+
+        list_of_overlapping_files = self.retrieve_list_of_datafiles_within_polygon(polygon,
+                                                                                   polygon_crs,
+                                                                                   resolution_s = resolution_s,
+                                                                                   verbose=verbose)
+
+        return ["{0} {1} {2}".format(fname, DTYPE_CODE, self.get_tile_weight_from_fname(fname, weight)) \
+                for fname in list_of_overlapping_files]
+
+    @staticmethod
+    def get_tile_weight_from_fname(fname, orig_weight):
+        """looking at the filename, get the year of releawse from it (e.g. "_2006_"), and add it as a decimal to the weight.
+
+        A filename of "adak_1_mhw_2009_msl.tif" with an original weight of 3 will return 3.2009.
+
+        This will ensure that more recent regional tiles are weighted above older ones."""
+        # Look for the number just after "BlueTopo_US" and just before "LLNLL" wher L is a capital letter and N is a number.
+        try:
+            # Look for the 4 digits alone, with underscores on either side.
+            # That's the year. We want to put that in the ranking to rank them by year with latest files on top.
+            tile_year = int(re.search(r"(?<=_)\d{4}(?=_)", os.path.basename(fname)).group())
+        except AttributeError as e:
+            print("ERROR FINDING YEAR IN FILENAME:", fname, "(using 1990).")
+            tile_year = 1990
+        assert 1990 <= tile_year <= 2022
+        new_weight = orig_weight + (tile_year / 10000.0)
+        return new_weight
+
+    def output_mixmax_csv(self):
+        """Go through all the tiles in there, and pull out the min/max value from them. Stick in a CSV"""
+        dirname = self.config.source_datafiles_directory.replace("/projected","/converted")
+        csvname = os.path.abspath(os.path.join(dirname, "..","..","..", "NOAA_regional_minmax.csv"))
+
+        fnames = sorted(list(set([os.path.join(dirname, fn) for fn in os.listdir(dirname) if (re.search(self.config.datafiles_regex, fn) is not None)])))
+        # Go ahead and include everything in the "estuarine" folder too. Take care of both datasets at once.
+        source_dir_estuarine = self.config.source_datafiles_directory.replace("/thredds/", "/estuarine/").replace("/projected","/converted")
+        fnames = fnames + sorted(list(set([os.path.join(source_dir_estuarine, fn) for fn in os.listdir(source_dir_estuarine) if (re.search(self.config.datafiles_regex, fn) is not None)])))
+
+        mins  = [None] * len(fnames)
+        maxes = [None] * len(fnames)
+        means = [None] * len(fnames)
+        stds  = [None] * len(fnames)
+
+        for i, fname in enumerate(fnames):
+            print("{0}/{1} {2}".format(i+1, len(fnames), os.path.basename(fname)))
+            dset = gdal.Open(fname, gdal.GA_ReadOnly)
+            mins[i], maxes[i], means[i], stds[i] = dset.GetRasterBand(1).GetStatistics(0,1)
+
+        df = pandas.DataFrame(data={'filename': [os.path.basename(fname) for fname in fnames],
+                                    'min': mins,
+                                    'max': maxes,
+                                    'mean': means,
+                                    'std': stds})
+        df.to_csv(csvname, index=False)
+        print(csvname, "written with", len(df), "entries.")
+
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Code to convert both horizontal projections and vertical tidal datums into friendly formats, as well as fix other bugs in the NOAA_regional and NOAA_estuarine  datasets.")
     parser.add_argument("-stop", "-s", default=None, help="For debugging purposes, write out stdout for operations on one of the 3 key steps and then exit the program after that step on the first processed file. Steps are 'PROJECTED', 'CONVERTED', or 'TIDAL'.")
     parser.add_argument("--overwrite", "-o", default=False, action="store_true", help="Overwrite existing tiles.")
+    parser.add_argument("--minmax", "-m", default=False, action="store_true", help="Compute the min/max/mean/std of each tile and save to a .csv.")
+    parser.add_argument("--gpkg", default=False, action="store_true", help="Rebuild the geopackage.")
     return parser.parse_args()
 
 if __name__ == "__main__":
     args = define_and_parse_args()
 
     noaa = source_dataset_NOAA_regional()
+
+    if args.minmax:
+        noaa.output_mixmax_csv()
+    elif args.gpkg:
+        gpkg_fname = noaa.config._abspath(noaa.config.geopackage_filename)
+        if os.path.exists(gpkg_fname):
+            os.remove(gpkg_fname)
+
+        noaa.get_geodataframe()
+    else:
+        noaa.convert_to_wgs84_and_egm2008(test_stop=args.stop, overwrite=args.overwrite)
+
+    # noaa.get_geodataframe()
     # noaa.print_unique_vdatum_ids()
     # noaa.move_estuarine_tiles()
     # noaa.convert_to_gtiff()
-    noaa.convert_to_wgs84_and_egm2008(test_stop=args.stop, overwrite=args.overwrite)
-    # noaa.get_geodataframe()

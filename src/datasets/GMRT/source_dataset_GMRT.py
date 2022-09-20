@@ -63,8 +63,8 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 
             # TEMP: for debugging only.
             # TODO: Remove later
-            if not ((xleft == 0 and ytop == 90) or (xleft == 0 and bottom == -90)):
-                continue
+            # if not ((xleft == 0 and ytop == 90) or (xleft == 0 and ybottom == -90)):
+            #     continue
 
             tile_already_exists = False
             if os.path.exists(gmrt_tile_fname):
@@ -75,6 +75,11 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                 # else:
                     # print("{0}/{1} {2} skipped (already written).".format(i+1, len(etopo_gdf), os.path.split(gmrt_tile_fname)[1]))
                     # continue
+
+            if ybottom == -90:
+                ybottom = -89.999
+            if ytop == 90:
+                ytop = 89.999
 
             fetches_command = ["waffles", "-M", "stacks",
                                "-w",
@@ -88,8 +93,6 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                "-f",
                                "-F", "GTiff",
                                "gmrt:layer=topo-mask:fmt=netcdf"]
-
-            # foobar
 
             if not os.path.exists(gmrt_tile_fname):
                 # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -253,14 +256,15 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 if __name__ == "__main__":
     # Create the tiles.
     gmrt = source_dataset_GMRT()
-    # gmrt.create_tiles(resolution_s=15)
     # gmrt.create_tiles(resolution_s=1)
     # Get rid of any empty tiles.
     # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)
 
-    for res in (15,1):
+    for res in (15,):
+        gmrt.create_tiles(resolution_s=res, overwrite=False)
         gmrt.clean_bad_gmrt_values(resolution_s = res, verbose = True)
+    gmrt.delete_empty_tiles(resolution_s=res)
 
 
     # gdf15 = gmrt.get_geodataframe(resolution_s = 15)

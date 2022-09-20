@@ -1,39 +1,29 @@
 dset_name,name_long,ranking_score,id_number,vdatum_name,vdatum_epsg,is_active
 AW3D30,ALOS World 3D 30m,0,0,EGM96,5773,False
-ArcticDEM,Arctic DEM,0,0,WGS84(Original)(Original),4979,False
-BOEM,BOEM,5,5,EGM2008,3855,True
+ArcticDEM,Arctic DEM,0,0,WGS84,4979,False
+BOEM,BOEM,7,7,EGM2008,3855,True
 BedMachine,BedMachine,0,0,WGS84,4979,False
-BedMachine_Bed,BedMachine Bed,13,13,egm2008,3855,True
+BedMachine_Bed,BedMachine Bed,11,11,egm2008,3855,True
 BedMachine_Surface,BedMachine Surface,0,0,egm2008,3855,False
-BlueTopo,BlueTopo,4,4,EGM2008,3855,True
-BlueTopo_14N,BlueTopo Zone 14N,0,0,NAVD88,5703,False
-BlueTopo_15N,BlueTopo Zone 15N,0,0,NAVD88,5703,False
-BlueTopo_16N,BlueTopo Zone 16N,0,0,NAVD88,5703,False
-BlueTopo_18N,BlueTopo Zone 18N,0,0,NAVD88,5703,False
-BlueTopo_19N,BlueTopo Zone 19N,0,0,NAVD88,5703,False
-CUDEM,CUDEM,9,9,EGM2008,3855,True
-CUDEM_AmericanSamoa,CUDEM American Samoa,0,0,ASVD02,6643,False
+BlueTopo,BlueTopo,6,6,EGM2008,3855,True
+CUDEM,CUDEM,12,12,EGM2008,3855,True
 CUDEM_CONUS,CUDEM Continental US,0,0,NAVD88,5703,False
-CUDEM_CONUS_Sandy,CUDEM CONUS Northeast Sandy,0,0,NAVD88,5703,False
-CUDEM_Guam,CUDEM Guam,0,0,GUVD04,6644,False
-CUDEM_Hawaii,CUDEM Hawaii,0,0,MSL,5714,False
-CUDEM_Northern_Mariana,CUDEM Northern Mariana Islands,0,0,GUVD04,6644,False
-CUDEM_Puerto_Rico,CUDEM Puerto Rico,0,0,PRVD02,6641,False
-CUDEM_USVI,CUDEM US Virgin Islands,0,0,PRVD02,6641,False
 CoastalDEM,CoastalDEM,0,0,,0,False
-CopernicusDEM,Copernicus DEM,7,7,EGM2008,3855,True
+CopernicusDEM,Copernicus DEM,8,8,EGM2008,3855,True
 EMODnet,EMODnet,0,0,MSL,5714,False
 ETOPO1,ETOPO1,0,0,msl,5714,False
-FABDEM,FABDEM,8,8,EGM2008,3855,True
+FABDEM,FABDEM,9,9,EGM2008,3855,True
 GEBCO,GEBCO,1,1,MSL,5714,True
 GEBCO_sub_ice,GEBCO Sub Ice,2,2,MSL,5714,True
 GLOBathy,GLOBathy,0,0,,0,False
-GMRT,Globatl Multi-Resolutin Topography Data Synthesis (GMRT),3,3,EGM2008,3855,True
+GMRT,Globatl Multi-Resolutin Topography Data Synthesis (GMRT),5,5,EGM2008,3855,True
 MAR_gravity,Marine Gravity,0,0,EGM2008,3855,False
 NASADEM,NASA DEM,0,0,EGM96,5773,False
+NOAA_estuarine,NOAA Regional archived (non-tiled) DEMs,3,3,egm2008,3855,True
+NOAA_regional,NOAA Regional archived (non-tiled) DEMs,4,4,egm2008,3855,True
 REMA,REMA,0,0,WGS84,4979,False
-ShallowBathyEverywhere,Shallow Bathy Everywhere,6,6,egm2008,3855,True
-TanDEMX,TanDEMX,0,0,WGS_84(G1150)(G1150)(G1150)(G1150),7660,False
-global_lakes_flat,Global Lakes Flat-bed (1m depth),10,10,EGM2008,3855,True
-global_lakes_gebco,Global Lakes GEBCO-derived,12,12,EGM2008,3855,True
-global_lakes_globathy,Global Lakes GLOBathy-derived,11,11,EGM2008,3855,True
+ShallowBathyEverywhere,Shallow Bathy Everywhere,5,5,egm2008,3855,True
+TanDEMX,TanDEMX,0,0,WGS_84,7660,False
+global_lakes_flat,Global Lakes Flat-bed (1m depth),0,0,EGM2008,3855,False
+global_lakes_gebco,Global Lakes GEBCO-derived,10,10,EGM2008,3855,True
+global_lakes_globathy,Global Lakes GLOBathy-derived,0,0,EGM2008,3855,False

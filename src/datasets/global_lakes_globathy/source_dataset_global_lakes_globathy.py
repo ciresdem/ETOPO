@@ -142,10 +142,8 @@ class source_dataset_global_lakes_globathy(etopo_source_dataset.ETOPO_source_dat
                         running_fnames.remove(fname)
                         # Get rid of the tempdir, including anything in there.
                         if os.path.exists(tempdir):
-                            tfns = os.listdir(tempdir)
-                            for tf in tfns:
-                                os.remove(tf)
-                            os.rmdir(tempdir)
+                            rm_cmd = ["rm", "-rf", tempdir]
+                            subprocess.run(rm_cmd, capture_output=True)
 
                     time.sleep(0.01)
 
@@ -165,30 +163,18 @@ class source_dataset_global_lakes_globathy(etopo_source_dataset.ETOPO_source_dat
                 if max_area is not None:
                     lakes_flags = lakes_flags + ":max_area={0}".format(max_area)
 
-                args = ["waffles",
-                        "-M", "lakes" + lakes_flags,
-                        "-R", "{0}/{1}/{2}/{3}".format(int(row.xleft),
-                                                       xright,
-                                                       ybottom,
-                                                       int(row.ytop)),
-                        "-E", "{0}s".format(resolution_s), # This makes the assumption that the xres and yres are the same. This should be true.
-                        "-P", "epsg:4326",
-                        "-D", etopo_config.etopo_cudem_cache_directory,
-                        "-k",
-                        "-O", os.path.splitext(fpath_out)[0]
-                        ]
-
-                # Execute the command.
-                # if verbose:
-                #     print("{0}/{1}".format(i+1, len(gdf)),
-                #           fname_out + "...", end="" , flush=True)
-                # print("")
-                # continue
-
-                # For debugging purposes, print out the commands I'm issuing.
-                # TODO: Comment this out later.
-                # print("\n" + " ".join(args))
-                # return
+                tile_args = ["waffles",
+                             "-M", "lakes" + lakes_flags,
+                             "-R", "{0}/{1}/{2}/{3}".format(int(row.xleft),
+                                                            xright,
+                                                            ybottom,
+                                                            int(row.ytop)),
+                             "-E", "{0}s".format(resolution_s),  # This makes the assumption that the xres and yres are the same. This should be true.
+                             "-P", "epsg:4326",
+                             "-D", etopo_config.etopo_cudem_cache_directory,
+                             "-k",
+                             "-O", os.path.splitext(fpath_out)[0],
+                             ]
 
                 # Get the name of the temporary dir to work within. The subprocess will create it.
                 tempdir_name = os.path.join(os.path.dirname(fpath_out), "temp" + str(i))
@@ -196,7 +182,7 @@ class source_dataset_global_lakes_globathy(etopo_source_dataset.ETOPO_source_dat
                 # try:
                     # Run the lakes module command.
                 p = multiprocessing.Process(target = generate_one_tile,
-                                            args = (args,fpath_out),
+                                            args = (tile_args, fpath_out),
                                             kwargs = {"tempdir": tempdir_name,
                                                       "verbose": verbose}
                                             )
