@@ -70,14 +70,14 @@ class ETOPO_Generator:
 
     def create_empty_grids(self, resolution_s=None, verbose=True):
         """Create empty grid-cells for the ETOPO data product.
-        resolution_s can be 1, 15, or a list/tuple with both values (1,15).
+        resolution_s can be 1, 15, 30, 60 or a list/tuple with multiple values (1,15).
         """
         if resolution_s is None:
-            resolution_s = (1,15,60)
+            resolution_s = (1,15,30,60)
         elif type(resolution_s) in (list,tuple):
-            assert numpy.all([(type(r) == int) and (r in (1,15,60)) for r in resolution_s])
+            assert numpy.all([(type(r) == int) and (r in (1,15,30,60)) for r in resolution_s])
         elif type(resolution_s) == int:
-            assert resolution_s in (1,15,60)
+            assert resolution_s in (1,15,30,60)
             # If it's a single integer, put it in an iterable tuple to iterate over.
             resolution_s = (resolution_s,)
         else:
@@ -96,7 +96,7 @@ class ETOPO_Generator:
             etopo.generate_empty_grids.create_empty_tiles(resdir,
                                                     fname_template_tif=ETOPO_Generator.fname_template_tif,
                                                     fname_template_netcdf=None, # TODO: Fill this in once the Netcdf outputs are finalized.
-                                                    tile_width_deg=(360 if (res==60) else res),
+                                                    tile_width_deg=(360 if (res in (30,60)) else res),
                                                     resolution_s=res,
                                                     also_write_geopackage=True,
                                                     ndv = ETOPO_Generator.etopo_config.etopo_ndv,
@@ -352,6 +352,7 @@ class ETOPO_Generator:
                                             resolution=1,
                                             etopo_tile_fname = None,
                                             bed = False,
+                                            subdir = None,
                                             crm_only_if_1s = True,
                                             omit_copernicus_if_bed_south = True,
                                             verbose=True):
@@ -384,8 +385,8 @@ class ETOPO_Generator:
 
         resolution = int(resolution)
 
-        if resolution == 60:
-            # If the resolution is 60, just use all the ETOPO 15s tiles to generate the 60s
+        if resolution in (30,60):
+            # If the resolution is 30 or 60, just use all the ETOPO 15s tiles to generate the 60s
             # global tile.
             etopo_15s_gpkg = dataset_geopackage.ETOPO_Geopackage(15)
             # Don't just get the bed, look for all the tiles, we'll sort out which ones we should get just the bed.
@@ -393,6 +394,9 @@ class ETOPO_Generator:
 
             # We want to query the finished tiles of the dataset, not the empty tiles.
             dlist_filenames = [fn.replace("/empty_tiles/", "/finished_tiles/") for fn in etopo_15s_gdf['filename'].tolist()]
+
+            if subdir:
+                dlist_filenames = [os.path.join(os.path.dirname(fn), subdir, os.path.basename(fn)) for fn in dlist_filenames]
 
             tilenum_regex_str = r"[NS](\d{2})[EW](\d{3})"
 
@@ -418,7 +422,7 @@ class ETOPO_Generator:
             # Now if we're doing bed, find any files for which there is a "bed" version of this file.
             if bed:
                 tiles_with_bed = []
-                # Look either in this folder, or in a "bed subdir. Could be in either place.
+                # Look either in this folder, or in a "bed" subdir. Could be in either place.
                 # Get a list of all tiles that have "_bed" in the name.
                 for dirname in (finished_tiles_dir, os.path.join(finished_tiles_dir, "bed")):
                     if not os.path.exists(dirname):
@@ -573,6 +577,7 @@ class ETOPO_Generator:
             print("Generating tile datalists:")
         self.generate_etopo_tile_datalists(gdf=etopo_gdf,
                                            resolution=resolution,
+                                           subdir=subdir,
                                            crm_only_if_1s = crm_only_if_1s,
                                            etopo_tile_fname=None,
                                            bed = bed,
@@ -600,7 +605,9 @@ class ETOPO_Generator:
             if i >= N:
                 break
 
-            dest_tile = tile.replace("empty_tiles", "finished_tiles")
+            dest_tile = tile.replace("/empty_tiles/", "/finished_tiles/")
+            if subdir:
+                dest_tile = os.path.join(os.path.dirname(dest_tile), subdir, os.path.basename(dest_tile))
 
             if bed:
                 # If we're using the bed, and the bed dlist exists at this tilename, use it.
@@ -621,7 +628,7 @@ class ETOPO_Generator:
                 temp_dirname = None
             else:
                 temp_dirname = os.path.join(self.etopo_config.project_base_directory, "scratch_data", "temp" + str(i))
-                proc = multiprocessing.Process(target=generate_single_etopo_tile,
+                proc = multiprocessing.Process(target=self.generate_single_etopo_tile,
                                                args=(dest_tile,
                                                      poly,
                                                      dlist,
@@ -676,7 +683,8 @@ class ETOPO_Generator:
                         break
                     proc_to_start = waiting_procs.pop(0)
                     tmpdir = temp_dirnames.pop(0)
-                    os.mkdir(tmpdir)
+                    if not os.path.exists(tmpdir):
+                        os.mkdir(tmpdir)
                     proc_to_start.start()
                     active_procs.append(proc_to_start)
                     active_tempdirs.append(tmpdir)
@@ -724,9 +732,28 @@ class ETOPO_Generator:
     #
     #     return self.etopo_config.etopo_sources_datalist
 
-    def put_all_new_tiles_into_subdir(self, subdir_name, resolution_s = [1,15,60], bed=None, verbose=True):
-        """Put all the new tiles specified into a sub-directory, usually a datestamped filename but can specify."""
-        # TODO: Finish this at some point
+    def move_all_new_tiles_into_subdir(self, subdir_name, resolution_s = 15, bed=None, include_weights = True, verbose=True):
+        """Put all the new tiles specified into a sub-directory, usually a datestamped folder name but can specify."""
+        source_dir = os.path.join(self.etopo_config._abspath(self.etopo_config.etopo_finished_tiles_directory), "{0}s".format(resolution_s))
+        etopo_regex = r"[NS](\d{2})[EW](\d{3})([\w\.]*)\.tif\Z"
+        fnames = [os.path.join(source_dir, fn) for fn in os.listdir(source_dir)
+                  if re.search(etopo_regex, fn) != None and
+                     ((bed and (re.search("_bed", fn) != None))
+                      or ((not bed) and (re.search("_bed", fn) == None)))]
+
+        weights_subdir = os.path.join(source_dir, "weights")
+        if include_weights and os.path.exists(weights_subdir) and os.path.isdir(weights_subdir):
+            dest_dir = os.path.join(source_dir, subdir_name, "weights")
+            shutil.move(weights_subdir, dest_dir)
+            if verbose:
+                print("Moved", weights_subdir, "to", dest_dir)
+
+        dest_dir = os.path.join(source_dir, subdir_name)
+        for i,fname in enumerate(fnames):
+            dest_fname = os.path.join(dest_dir, os.path.basename(fname))
+            shutil.move(fname, dest_fname)
+            if verbose:
+                print("{0}/{1}".format(i+1, len(fnames)), fname)
 
     def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: object = dict):
         """Look through the /src/datasets/ directory, and get a list of the input datasets to use.
@@ -837,7 +864,7 @@ class ETOPO_Generator:
         """After generating a set of tiles, generate an empty CSV folder with all the tiles listed, to allow comments."""
         # If we don't specify an output file, put it in the finished_tiles directory.
         if resolution is None:
-            resolution = (1,15,60)
+            resolution = (1,15,30,60)
         elif type(resolution) in (int, float):
             resolution = (int(resolution),)
 
@@ -869,70 +896,71 @@ class ETOPO_Generator:
 
         return
 
-def generate_single_etopo_tile(dest_tile_fname,
-                               dest_tile_polygon,
-                               datalist_fname,
-                               tile_xres,
-                               tile_yres,
-                               etopo_ndv,
-                               etopo_cache_dir,
-                               temp_dir_for_cwd,
-                               algorithm = "bilinear",
-                               verbose = True):
-    """Use waffles to generate an ETOPO tiles from a datalist.
+    @staticmethod
+    def generate_single_etopo_tile(dest_tile_fname,
+                                   dest_tile_polygon,
+                                   datalist_fname,
+                                   tile_xres,
+                                   tile_yres,
+                                   etopo_ndv,
+                                   etopo_cache_dir,
+                                   temp_dir_for_cwd,
+                                   algorithm = "bilinear",
+                                   verbose = True):
+        """Use waffles to generate an ETOPO tiles from a datalist.
 
-    Defined as a standalone process to more easily enable multi-processing."""
+        Defined as a standalone process to more easily enable multi-processing."""
 
-    # Get the bounds of the polygon (which we already know is a vertically-aligned square,
-    # so I don't need to do anything special here.)
-    dest_tile_bounds = shapely.geometry.MultiPoint(dest_tile_polygon.exterior.coords).bounds
+        # Get the bounds of the polygon (which we already know is a vertically-aligned square,
+        # so I don't need to do anything special here.)
+        dest_tile_bounds = shapely.geometry.MultiPoint(dest_tile_polygon.exterior.coords).bounds
 
-    # NOTE: The datalist must be present (already generated) for this.
-    # For effiency sake we don't pass the etopo generator object to this method to create it.
-    # Just assume it's already there. It's up to the calling function to create it.
-    if not os.path.exists(datalist_fname):
-        raise FileNotFoundError(datalist_fname + " not found.")
+        # NOTE: The datalist must be present (already generated) for this.
+        # For effiency sake we don't pass the etopo generator object to this method to create it.
+        # Just assume it's already there. It's up to the calling function to create it.
+        if not os.path.exists(datalist_fname):
+            raise FileNotFoundError(datalist_fname + " not found.")
 
-    waffles_args = ["waffles",
-                    "-M", "stacks:supercede=True:keep_weights=True",
-                    "-R", "{0}/{1}/{2}/{3}".format(dest_tile_bounds[0], dest_tile_bounds[2], dest_tile_bounds[1], dest_tile_bounds[3]),
-                    "-N", str(etopo_ndv),
-                    "-E", "{0}/{1}".format(abs(tile_xres), abs(tile_yres)),
-                    "-w", # Use the datalist weights.
-                    "-f", # Transform input data if/where needed.
-                    # "-a", # Archive the datalist (why again?... nevermind, do not do this, just comment it out.)
-                    "-k", # Keep (do not delete) cached files.
-                    "-P", "EPSG:4326",
-                    "-S", algorithm,
-                    "-D", etopo_cache_dir,
-                    "-O", os.path.splitext(dest_tile_fname)[0], # Get rid of the .tif at the end. Waffles adds that automatically.
-                    datalist_fname]
+        waffles_args = ["waffles",
+                        "-M", "stacks:supercede=True:keep_weights=True",
+                        "-R", "{0}/{1}/{2}/{3}".format(dest_tile_bounds[0], dest_tile_bounds[2], dest_tile_bounds[1], dest_tile_bounds[3]),
+                        "-N", str(etopo_ndv),
+                        "-E", "{0}/{1}".format(abs(tile_xres), abs(tile_yres)),
+                        "-w", # Use the datalist weights.
+                        "-f", # Transform input data if/where needed.
+                        # "-a", # Archive the datalist (why again?... nevermind, do not do this, just comment it out.)
+                        "-k", # Keep (do not delete) cached files.
+                        "-P", "EPSG:4326+3855",
+                        "-S", algorithm,
+                        "-D", etopo_cache_dir,
+                        "-O", os.path.splitext(dest_tile_fname)[0], # Get rid of the .tif at the end. Waffles adds that automatically.
+                        datalist_fname]
 
-    if verbose:
-        print(" ".join(waffles_args))
+        if verbose:
+            print(" ".join(waffles_args))
 
-    # Run it. Make the "cwd" a temp dir to avoid conflicts.
-    # proc = subprocess.run(waffles_args)
-    proc = subprocess.run(waffles_args, cwd=temp_dir_for_cwd, capture_output=subprocess.PIPE, text=True)
-    if verbose:
-        print(dest_tile_fname, "written.")
+        # Run it. Make the "cwd" a temp dir to avoid conflicts.
+        # proc = subprocess.run(waffles_args)
+        proc = subprocess.run(waffles_args, cwd=temp_dir_for_cwd, capture_output=subprocess.PIPE, text=True)
+        if verbose:
+            print(dest_tile_fname, "written.")
 
-    return proc.returncode, proc.stdout
+        return proc.returncode, proc.stdout
 
-    # Sample (complete) waffles command; this is what we're putting together. Leave it here for reference.
-    # """waffles -M stacks:supercede=True:keep_weights=True
-    # -R -67.0000000/-66.0000000/18.0000000/19.0000000
-    # -E 0.000277777777778
-    # -N -99999
-    # -w
-    # -k
-    # -f # If using on non-WGS84 datasets
-    # -P EPSG:4326
-    # -S bilinear
-    # -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
-    # -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
-    # /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
-    # ^ Except, use the source_tile_datalist created here for that entry.
+        # Sample (complete) waffles command; this is what we're putting together. Leave it here for reference.
+        # """waffles -M stacks:supercede=True:keep_weights=True
+        # -R -67.0000000/-66.0000000/18.0000000/19.0000000
+        # -E 0.000277777777778
+        # -N -99999
+        # -w
+        # -k
+        # -f # If using on non-WGS84 datasets
+        # -P EPSG:4326
+        # -S bilinear
+        # -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
+        # -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
+        # /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
+        # ^ Except, use the source_tile_datalist created here for that entry.
 
 def remove_all_inf_files(verbose=True):
     """Remove all .inf files from the results directories created by waffles."""
@@ -1197,6 +1225,8 @@ def define_and_parse_args():
     parser.add_argument("--ini_to_csv", action="store_true", help="Crank out the latest datasets CSV, from the current config files.")
     parser.add_argument("--csv_to_ini", action="store_true", help="Read any changes made in the CSV, back into the respective .INI files. All old .ini's will be saved to a _old.ini file. Any previous _old.ini's will be overwritten though, so be careful and make sure that changes are what we want.")
     parser.add_argument("--remove_inf", action="store_true", help="Remove all .inf files from finished_tiles directory.")
+    parser.add_argument("--move_to_subdir", action="store_true", help="Just move the created tiles into a sub-directory. '-subdir' must be specified.")
+
     parser.add_argument("--weights_to_sids", "-w2s", action="store_true", help="Convert floating-point 'weights' files to byte 'sid' files.")
     parser.add_argument("--overwrite", "-o", action="store_true", help="Overwrite all existing files.")
     parser.add_argument("--quiet", "-q", action="store_true", help="Run in quiet mode.")
@@ -1228,6 +1258,16 @@ if __name__ == "__main__":
                         bed=args.bed,
                         overwrite=args.overwrite,
                         verbose=not args.quiet)
+
+    elif args.move_to_subdir:
+        assert ((args.subdir != "") and (args.subdir is not None))
+        EG = ETOPO_Generator()
+        for res in args.resolution:
+            EG.move_all_new_tiles_into_subdir(args.subdir,
+                                              resolution_s=res,
+                                              bed=args.bed,
+                                              include_weights=True,
+                                              verbose=not args.quiet)
 
     else:
         EG = ETOPO_Generator()

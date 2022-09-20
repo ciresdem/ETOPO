@@ -300,7 +300,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
     interface to handle specifically the ETOPO source files."""
     def __init__(self, resolution):
         resolution = int(resolution)
-        assert resolution in (1,15,60)
+        assert resolution in (1,15,30,60)
 
         ## These member variables are the same as the ones initiated in DatasetGeopackage.__init__()
 
@@ -312,6 +312,8 @@ class ETOPO_Geopackage(DatasetGeopackage):
             self.filename = self.config.etopo_tile_geopackage_1s
         elif resolution == 15:
             self.filename = self.config.etopo_tile_geopackage_15s
+        elif resolution == 30:
+            self.filename = self.config.etopo_tile_geopackage_30s
         else:
             self.filename = self.config.etopo_tile_geopackage_60s
 
@@ -353,7 +355,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
             else:
                 return super().get_gdf(resolution_s = resolution, verbose=verbose)
 
-    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=False, resolution_s = 15, bed=False, crm_only_if_1s=True, verbose=True):
+    def add_dlist_paths_to_gdf(self, save_to_file_if_not_already_there=False, bed=False, crm_only_if_1s=True, verbose=True):
         """Add a 'dlist' column to the geodataframe that lists the location of the
         approrpriate source-datasets dlist for each ETOPO tile.
 
@@ -361,7 +363,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
 
         If "save_to_file_if_not_already_there", save this datalsit to the file
         if it doesn't already exist in the geodataframe."""
-        gdf = self.get_gdf(crm_only_if_1s = crm_only_if_1s, resolution_s=resolution_s, bed=bed, verbose=verbose)
+        gdf = self.get_gdf(crm_only_if_1s = crm_only_if_1s, resolution_s=self.resolution, bed=bed, verbose=verbose)
 
         # If the "dlist" column already exists, just return it.
         if 'dlist' in gdf.columns:
@@ -371,7 +373,7 @@ class ETOPO_Geopackage(DatasetGeopackage):
         dlist_func = lambda fn: os.path.join(self.dlist_dir,
                                              str(self.resolution) + "s",
                                              os.path.splitext(os.path.split(fn)[1])[0] + \
-                                             "_bed" if bed else "" + \
+                                             ("_bed" if bed else "") + \
                                              ".datalist")
 
         # Apply the function to every cell of the 'filename' column.
