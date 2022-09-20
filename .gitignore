@@ -132,6 +132,8 @@ dmypy.json
 # ETOPO DATA FILES and other things to ignore in my directory specific to ETOPO
 data/*.tif
 data/*.gpkg
+data/*.nc
+data/*.inf
 .nsidc_credentials
 scratch_data/*
 ETOPO_2022_v1_*
@@ -164,3 +166,4 @@ TEMP_15_sec_tiles.datalist*
 /data/datalists/60s/TEMP_15_sec_tiles_weights.datalist
 tileindex_NCEI_*
 tides:s*.inf
+*.nc
