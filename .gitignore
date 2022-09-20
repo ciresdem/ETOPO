@@ -167,3 +167,4 @@ TEMP_15_sec_tiles.datalist*
 tileindex_NCEI_*
 tides:s*.inf
 *.nc
+*.gpkg
