@@ -1,0 +1,15 @@
+akutan_8_mhhw_2009_msl.tif
+british_columbia_3_msl_2013_msl.tif
+mariana_trench_6_msl_2012_msl.tif
+niue_3_isl_2016_isl.tif
+nikolski_1_mhhw_2014_msl.tif
+port_ensenada_3_mhw_2006_egm2008.tif
+society_islands_3_isl_2016_isl.tif
+southeast_alaska_8_mhhw_2010_egm2008.tif
+wake_island_3_mhw_2009_msl.tif
+eastern_canada_3_isl_2015_isl.tif
+hawaii_6_mllw_2005_msl.tif
+myrtle_beach_1_mhw_2006_egm2008.tif
+midway_island_3_mhw_2012.nc
+perryville_ivanof_bay_13_mhhw_2014.nc
+shemya_1_mhw_2009.nc

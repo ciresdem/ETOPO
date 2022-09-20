@@ -1,0 +1,5 @@
+chiniak_815_mhhw_2015.nc
+hanalei_13_mhw_2011.nc
+karluk_ak_815_mhhw_2019.nc
+keauhou_13_mhw_2011.nc
+lahaina_13_mhw_2007.nc
