@@ -26,6 +26,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 ###############################################################
 
 import utils.configfile
+import datasets.dataset_geopackage
 
 my_config = utils.configfile.config()
 # ETOPO_datatype = gdal.GDT_Float32
@@ -91,7 +92,7 @@ def create_empty_tiles(directory,
     tuple_list = create_list_of_tile_tuples(resolution=resolution_s)
     # fname_metadata_template = config_obj.etopo_metadata_template
 
-    if resolution_s == 60:
+    if resolution_s in (30, 60):
         # For the 60s (1-arc-minute) array, we're covering 360*lon by 180*lat
         empty_array = numpy.zeros((int(file_dim_size / 2), file_dim_size), dtype=dtypes_dict_numpy[dtype]) + ndv
     else:
@@ -110,7 +111,7 @@ def create_empty_tiles(directory,
     for i, tiletuple in enumerate(tuple_list):
         ymin = tiletuple[0]
         xmin = tiletuple[1]
-        ymax = ymin + (tile_width_deg if (resolution_s != 60) else tile_width_deg / 2)
+        ymax = ymin + (tile_width_deg if (resolution_s not in (30,60)) else tile_width_deg / 2)
         # foobar
 
         # if shapefile_only:
@@ -131,7 +132,7 @@ def create_empty_tiles(directory,
             continue
 
         file_dim_x = file_dim_size
-        file_dim_y = int(file_dim_size / 2) if (resolution_s == 60) else file_dim_size
+        file_dim_y = int(file_dim_size / 2) if (resolution_s in (30,60)) else file_dim_size
 
         ds = driver.Create(fname, file_dim_x, file_dim_y, 1, dtypes_dict_gdal[dtype], options=compression_options)
         ds.SetGeoTransform(geotransform)
@@ -148,7 +149,7 @@ def create_empty_tiles(directory,
             print(str(i + 1) + "/" + str(len(tuple_list)), fname, "written.")
 
     if also_write_geopackage:
-        datasets.dataset_geopackage.ETOPO_Geopackage(1).create_dataset_geopackage()
+        datasets.dataset_geopackage.ETOPO_Geopackage(resolution_s).create_dataset_geopackage()
 
     return
 
@@ -186,6 +187,24 @@ def get_ice_sheet_bed_polygon(verbose: bool = True) -> object:
     polygons = [shapely.geometry.Polygon(((xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin))) for (xmin,ymin,xmax,ymax) in bboxes]
     return shapely.ops.unary_union(polygons)
 
+
+def output_azerbaijan_1deg_gpkg(gpkg_fname = os.path.join(os.path.dirname(__file__), "../../data/lakes/azerbiajan_hole_tiles.gpkg")):
+    if os.path.exists(gpkg_fname):
+        print(gpkg_fname, "read.")
+        return geopandas.read_file(gpkg_fname)
+    bboxes = get_azerbaijan_1deg_bboxes()
+    polygons = [shapely.geometry.Polygon([[xmin, ymin], [xmin, ymax], [xmax, ymax], [xmax, ymin], [xmin, ymin]]) \
+             for xmin, ymin, xmax, ymax in bboxes]
+    nametags = ["{0}{1:02d}{2}{3:03d}".format("N" if ymin >= 0 else "S",
+                                              ymin,
+                                              "E" if xmin >= 0 else "W",
+                                              xmin)
+                for xmin, ymin, xmax, ymax in bboxes]
+    gdf = geopandas.GeoDataFrame(data={"name": nametags,
+                                 "geometry": polygons}, geometry="geometry", crs=pyproj.crs.CRS.from_epsg(4326))
+    gdf.to_file(gpkg_fname, layer="tiles", driver="GPKG")
+    print(gpkg_fname, "written with", len(gdf), "entries.")
+    return gdf
 
 def get_azerbaijan_1deg_bboxes() -> list:
     """Return the (xmin,ymin,xmax,ymax) bounding boxes for 1s tiles over Azerbaijan.
@@ -303,7 +322,7 @@ def create_list_of_tile_tuples(resolution=15,
 
     Each item will be a 2-tuple containing the (southernmost_latitude, westernmost_logitude).
     Add 1 to each number to get the (norternmost_latitude, easternmost_longitude) bbox coordinates."""
-    assert resolution in (1, 15, 60)
+    assert resolution in (1, 15, 30, 60)
 
     if resolution == 1:
         # Import the Copernicus source dataset, and get the datafiles directory from it.
@@ -347,7 +366,6 @@ def create_list_of_tile_tuples(resolution=15,
         if verbose:
             print("{0:,} 1° DEM tiles over land (including Azerbaijan and Armenia).".format(len(dem_tuples)))
 
-
     elif resolution == 15:
         dem_lons = numpy.arange(-180, 180, 15, dtype=int)
         dem_lats = numpy.arange(-90, 90, 15, dtype=int)
@@ -356,7 +374,7 @@ def create_list_of_tile_tuples(resolution=15,
         lats_list = lats_list.flatten()
         dem_tuples = list(zip(lats_list, lons_list))
 
-    elif resolution == 60:
+    elif resolution in (30,60):
         # For 60s resolution, we're literlaly just amking one big-assed tile of the whole world. Bottom corner is -180 lon, -90 lat
         dem_tuples = [(-90, -180), ]
 
@@ -367,10 +385,15 @@ def create_list_of_tile_tuples(resolution=15,
 
 
 def create_1s_all_tiles_gpkg(
-        gpkg_fname=os.path.join(my_config._abspath(my_config.etopo_empty_tiles_directory), "1s_global.gpkg")):
+        gpkg_fname=os.path.join(my_config._abspath(my_config.etopo_empty_tiles_directory), "1s_global.gpkg"),
+        overwrite=False):
     """Create 1s tiles for the entire world. Just the outlines, in a geopackage of EPSG 4326 (lat/lon).
 
     This is useful for looking at where tiles are, and where they may be missing."""
+    if exists(gpkg_fname) and not overwrite:
+        print(gpkg_fname, "exists.")
+        return gpkg_fname
+
     xmins_list = numpy.arange(-180, 180, 1)
     ymins_list = numpy.arange(-90, 90, 1)
     xmins, ymins = numpy.meshgrid(xmins_list, ymins_list)
@@ -390,18 +413,22 @@ def create_1s_all_tiles_gpkg(
                                  crs=pyproj.crs.CRS.from_epsg(4326))
     gdf.to_file(gpkg_fname, layer="tiles", driver="GPKG")
     print(gpkg_fname, "written with", len(gdf), "tile squares.")
+    return gpkg_fname
 
 
 if __name__ == "__main__":
-    bboxes = get_ice_sheet_bed_15deg_bboxes()
-    print(bboxes)
-    print(len(bboxes), "bounding boxes.")
-    print("Polygon:")
-    print(get_ice_sheet_bed_polygon().wkt)
+    # output_azerbaijan_1deg_gpkg()
+
+    # bboxes = get_ice_sheet_bed_15deg_bboxes()
+    # print(bboxes)
+    # print(len(bboxes), "bounding boxes.")
+    # print("Polygon:")
+    # print(get_ice_sheet_bed_polygon().wkt)
 
     # # create_1s_all_tiles_gpkg()
-    # create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "1s"),
-    #                    tile_width_deg=1,
-    #                    resolution_s=1,
-    #                    ndv=my_config.etopo_ndv,
-    #                    also_write_geopackage=True)
+    # Create the 30s global grid.
+    create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "30s"),
+                       tile_width_deg=360,
+                       resolution_s=30,
+                       ndv=my_config.etopo_ndv,
+                       also_write_geopackage=True)
