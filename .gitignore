@@ -168,3 +168,6 @@ tileindex_NCEI_*
 tides:s*.inf
 *.nc
 *.gpkg
+*_tmp_*
+*trans_grid.tif
+gmrt:layer=*.inf
