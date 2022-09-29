@@ -30,6 +30,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import datasets.etopo_source_dataset as etopo_source_dataset
 import datasets.dataset_geopackage as dataset_geopackage
+import utils.traverse_directory
 
 class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
@@ -47,7 +48,15 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                        verbose=verbose).copy()
 
         # Loop through all the ETOPO files and create an identical tile in this dataset.
-        for i, row in etopo_gdf.iterrows():
+        for i, row in enumerate(etopo_gdf.iterrows()):
+            _, row = row
+
+            # Right now, just do these three tiles before meeting w/ Chris & Matt. Otherwise, skip.
+            # TODO: Comment this out later.
+            # tile = row.filename
+            # if not ((tile.find("N15W090") > -1) or (tile.find("N30W090") > -1) or (tile.find("N45W180") > -1)):
+            #     continue
+
             xleft = row.xleft
             xright = numpy.round(xleft + (row.xsize*row.xres))
             ytop = row.ytop
@@ -60,6 +69,30 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                                                                       abs(int(numpy.round(ybottom))),
                                                                                       "E" if xleft >= 0 else "W",
                                                                                       abs(int(numpy.round(xleft)))))
+
+            # THESE ARE TILES WHERE GMRT LEGIT HAS NO DATA. Don't bother with these.
+            tile = os.path.basename(gmrt_tile_fname)
+            if  (tile.find("N00E015") > -1) or \
+                (tile.find("S15E015") > -1) or \
+                (tile.find("N30E090") > -1) or \
+                (tile.find("N45E105") > -1) or \
+                (tile.find("N45W120") > -1) or \
+                (tile.find("S90W135") > -1) or \
+                (tile.find("S90W090") > -1) or \
+                (tile.find("S90W015") > -1) or \
+                (tile.find("S90E000") > -1) or \
+                (tile.find("S90E015") > -1) or \
+                (tile.find("S90E030") > -1) or \
+                (tile.find("S90E045") > -1) or \
+                (tile.find("S90E060") > -1) or \
+                (tile.find("S90E075") > -1) or \
+                (tile.find("S90E090") > -1) or \
+                (tile.find("S90E105") > -1) or \
+                (tile.find("S90E120") > -1) or \
+                (tile.find("S90E135") > -1):
+                if verbose:
+                    print("{0}/{1} {2} contains no GMRT data and has been excluded.".format(i+1, len(etopo_gdf), os.path.basename(tile)))
+                continue
 
             # TEMP: for debugging only.
             # TODO: Remove later
@@ -77,11 +110,11 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                     # continue
 
             if ybottom == -90:
-                ybottom = -89.999
+                ybottom = -90 + (resolution_s / 3600)
             if ytop == 90:
-                ytop = 89.999
+                ytop = 90 - (resolution_s / 3600)
 
-            fetches_command = ["waffles", "-M", "stacks",
+            stacks_command = ["waffles", "-M", "stacks",
                                "-w",
                                # Note: we include a /-/0 elevation cutoff (only include values below 0) to exclude land from this dataset. We're only interested in ocean here.
                                "-R", "{0}/{1}/{2}/{3}/-/0".format(xleft,xright,ybottom,ytop),
@@ -92,13 +125,14 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                "-O", os.path.splitext(gmrt_tile_fname)[0],
                                "-f",
                                "-F", "GTiff",
-                               "gmrt:layer=topo-mask:fmt=netcdf"]
+                               "gmrt:layer=topo-mask:fmt=netcdf:res=max"]
 
             if not os.path.exists(gmrt_tile_fname):
                 # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
-                print(" ".join(fetches_command))
-                p = subprocess.run(fetches_command)
+                print("\n" + " ".join(stacks_command))
+                # FOOBAR
+                p = subprocess.run(stacks_command)
 
             xml_file = gmrt_tile_fname + ".aux.xml"
             xml_already_exists = False
@@ -204,10 +238,22 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             ndv = band.GetNoDataValue()
             badvalues_mask = numpy.zeros(array.shape, dtype=bool)
             if bad_tiles_df is not None:
-                tile_id = re.search("[NS](\d{2})[EW](\d{3})", os.path.split(row.filename)[1]).group()
+                tile_id = re.search(r"[NS](\d{2})[EW](\d{3})", os.path.split(row.filename)[1]).group()
                 if tile_id in bad_tiles_id_list:
-                    for badvalue in bad_tiles_df[bad_tiles_df.TileID == tile_id].badvalue:
-                        badvalues_mask = badvalues_mask | (array == badvalue)
+                    bad_tiles_df_subset = bad_tiles_df[bad_tiles_df.TileID == tile_id]
+
+                    for (_,badvalues_row) in bad_tiles_df_subset.iterrows():
+                        # If we've used the "badvalue" column, mask out anything of that value.
+                        if not numpy.isnan(badvalues_row.badvalue):
+                            badvalues_mask = badvalues_mask | (array == badvalues_row.badvalue)
+                        # If we've instead used the "bad_row_min" and other similar columns to box-mask, mask out those.
+                        else:
+                            assert not (numpy.isnan(badvalues_row.bad_row_min) \
+                                        or numpy.isnan(badvalues_row.bad_row_max) \
+                                        or numpy.isnan(badvalues_row.bad_col_min) \
+                                        or numpy.isnan(badvalues_row.bad_col_max))
+                            badvalues_mask[int(badvalues_row.bad_row_min):int(badvalues_row.bad_row_max),
+                                           int(badvalues_row.bad_col_min):int(badvalues_row.bad_col_max)] = True
 
             if remove_gte0:
                 badvalues_mask = badvalues_mask | (array >= 0.0)
@@ -252,6 +298,14 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             # The dataset_geopackage object will rebuild the gdf using the new files.
             gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
 
+    def remove_xml_files(self, and_inf = True):
+        """Remove all XML files from the data directory. If and_inf, remove the .inf files as well."""
+        xml_files = utils.traverse_directory.list_files(self.config.source_datafiles_directory,
+                                                        regex_match=r"\.((xml)|(inf))\Z" if and_inf else r"\.xml\Z",
+                                                        include_base_directory = True)
+        for xml in xml_files:
+            os.remove(xml)
+        print(len(xml_files), "files removed.")
 
 if __name__ == "__main__":
     # Create the tiles.
@@ -261,13 +315,18 @@ if __name__ == "__main__":
     # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)
 
+    # for res in (15,1):
     for res in (15,):
-        gmrt.create_tiles(resolution_s=res, overwrite=False)
+        # gmrt.create_tiles(resolution_s=res, overwrite=False)
         gmrt.clean_bad_gmrt_values(resolution_s = res, verbose = True)
-    gmrt.delete_empty_tiles(resolution_s=res)
+        # gmrt.delete_empty_tiles(resolution_s=res)
+    # gmrt.delete_empty_tiles(resolution_s=res)
 
-
+    # os.remove(gmrt.get_geopkg_object().get_gdf_filename(resolution_s=15))
+    # print(os.path.basename(gmrt.get_geopkg_object().get_gdf_filename(resolution_s=15)), "removed.")
     # gdf15 = gmrt.get_geodataframe(resolution_s = 15)
+
+    gmrt.remove_xml_files(and_inf=True)
     # gmrt1 = source_dataset_GMRT()
     # gdf1 = gmrt1.get_geodataframe(resolution_s = 1)
     #
