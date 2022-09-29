@@ -162,7 +162,7 @@ class DatasetGeopackage:
                 # Get the CRS of each file, make sure they match the others (all files should have same CRS)
                 # Some of the CUDEM tiles have different EPSG's even though they're both in NAD83 horizontal datums.
                 # Make a special-case exception for those.
-                if not (dset_crs == crs or (allow_epsg_matches_only and ((dem_epsg == dset_epsg) or ((dem_epsg in (4269,5498,None)) and (dset_epsg in (4269,5498,None)))))):
+                if not (dset_crs == crs or (allow_epsg_matches_only and ((dem_epsg == dset_epsg) or ((dem_epsg in (4326,4269,5498,None,9705)) and (dset_epsg in (4326,4269,5498,None,9705)))))):
                     if verbose:
                         print("ERROR: Dataset files do not all have the same horizontal projection!\n" + \
                               "File {0}:\n".format(fname) + \
