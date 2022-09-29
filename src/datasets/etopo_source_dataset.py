@@ -50,8 +50,8 @@ def get_source_dataset_object(dataset_name, verbose=True):
             print("Module {0} not found.".format(module_name))
         return None
 
+    class_name = "source_dataset_{0}".format(dname)
     try:
-        class_name = "source_dataset_{0}".format(dname)
         class_obj = getattr(module, class_name)()
     except AttributeError:
         if verbose:
@@ -97,12 +97,12 @@ class ETOPO_source_dataset:
             self.geopkg = dataset_geopackage.DatasetGeopackage(self.config)
         return self.geopkg
 
-    def get_geodataframe(self, resolution_s = None, verbose=True):
+    def get_geodataframe(self, resolution_s=None, verbose=True):
         """Retrieve the geodataframe of the tile outlines. The geometries are polygons.
         If the dataframe does not exist where it says, it will be created.
         """
         geopkg = self.get_geopkg_object(verbose=verbose)
-        return geopkg.get_gdf(resolution_s = resolution_s, verbose=verbose)
+        return geopkg.get_gdf(resolution_s=resolution_s, verbose=verbose)
 
     def get_crs(self, as_epsg=True):
         """Get the CRS or EPSG of the coordinate reference system associated with this dataset."""
@@ -112,7 +112,7 @@ class ETOPO_source_dataset:
         else:
             return gdf.crs
 
-    def create_waffles_datalist(self, resolution_s = None, verbose=True):
+    def create_waffles_datalist(self, resolution_s=None, verbose=True):
         """Create a datalist file for the dataset, useful for cudem "waffles" processing.
         It will use the same name as the geopackage
         object, just substituting '.gpkg' for '.datalist'.
@@ -120,9 +120,9 @@ class ETOPO_source_dataset:
         NOTE: This function is still usable, but is deprecated. We no longer create a full dataset datalist, but
         rather datalists for each tile to increase processing speeds.
         """
-        datalist_fname = self.get_datalist_fname(resolution_s = resolution_s)
+        datalist_fname = self.get_datalist_fname(resolution_s=resolution_s)
 
-        gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
+        gdf = self.get_geodataframe(resolution_s=resolution_s, verbose=verbose)
         filenames = gdf['filename'].tolist()
         DLIST_DTYPE = 200 # Datalist rasters are data-type #200
         ranking_score = self.get_dataset_ranking_score()
@@ -148,7 +148,7 @@ class ETOPO_source_dataset:
 
         return os.path.splitext(self.config._abspath(gpkg_fname))[0] + ".datalist"
 
-    def retrieve_all_datafiles_list(self, resolution_s= None, verbose=True):
+    def retrieve_all_datafiles_list(self, resolution_s=None, verbose=True):
         """Return a list of every one of the DEM tiff data files in this dataset."""
         gdf = self.get_geodataframe(resolution_s = resolution_s, verbose = verbose)
         return gdf['filename'].tolist()
@@ -342,9 +342,9 @@ class ETOPO_source_dataset:
                 # Put it in the output folder, with an "_egm2008" tag on the filename.
                 # If it already has an "_egm2008" tag at the end of the filename, leave it unchanged.
                 output_fname = os.path.join(output_folder_thisfile,
-                                            base + ("" \
-                                                    if base[-(len(output_vdatum_name)+1):] == ("_" + output_vdatum_name) \
-                                                    else ("_" + output_vdatum_name)) \
+                                            base + (""
+                                                    if base[-(len(output_vdatum_name)+1):] == ("_" + output_vdatum_name)
+                                                    else ("_" + output_vdatum_name))
                                                  + ext)
 
                 # If this GDF already reflects the output file, just continue.
@@ -567,14 +567,6 @@ class ETOPO_source_dataset:
         else:
             return self.config.dataset_vdatum_epsg
 
-    def get_dataset_validation_results(self):
-        """After a validation has been run on this dataset, via the validate_dem_collection.py
-        or validate_etopo_dataset.py scripts, collect a dataframe of all the validation results.
-
-        This is probably in a summary results.h5 file. If we're dealing with CUDEM_CONUS,
-        it would be the composite of all the summary results.h5 files for each region."""
-        # TODO: Finish
-
     def reproject_tiles_from_nad83(self, suffix="_epsg4326", overwrite = False, range_start=None, range_stop=None, verbose=True):
         """Project all the tiles into WGS84/latlon coordinates.
 
@@ -604,12 +596,11 @@ class ETOPO_source_dataset:
             assert (xstep > 0) and (ystep < 0)
             gdal_cmd = ["gdalwarp",
                         "-t_srs", "EPSG:4326",
-                        "-dstnodata", "0.0",
-                        "-tr", str(xstep), str(abs(ystep)),
+                        # "-tr", str(xstep), str(abs(ystep)),
                         "-r", "bilinear",
                         "-of", "GTiff",
-                        "-co", "COMPRESS=LZW",
-                        "-co", "PREDICTOR=3",
+                        "-co", "COMPRESS=DEFLATE",
+                        "-co", "PREDICTOR=2",
                         # "-co", "ZLEVEL=5",
                         fname, dest_fname]
             process = subprocess.run(gdal_cmd, capture_output = True, text=True)
