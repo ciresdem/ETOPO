@@ -1,18 +1,18 @@
 dset_name,name_long,ranking_score,id_number,vdatum_name,vdatum_epsg,is_active
 AW3D30,ALOS World 3D 30m,0,0,EGM96,5773,False
 ArcticDEM,Arctic DEM,0,0,WGS84,4979,False
-BOEM,BOEM,7,7,EGM2008,3855,True
+BOEM,BOEM,8,8,EGM2008,3855,True
 BedMachine,BedMachine,0,0,WGS84,4979,False
-BedMachine_Bed,BedMachine Bed,11,11,egm2008,3855,True
+BedMachine_Bed,BedMachine Bed,12,12,egm2008,3855,True
 BedMachine_Surface,BedMachine Surface,0,0,egm2008,3855,False
-BlueTopo,BlueTopo,6,6,EGM2008,3855,True
-CUDEM,CUDEM,12,12,EGM2008,3855,True
+BlueTopo,BlueTopo,7,7,EGM2008,3855,True
+CUDEM,CUDEM,13,13,EGM2008,3855,True
 CUDEM_CONUS,CUDEM Continental US,0,0,NAVD88,5703,False
 CoastalDEM,CoastalDEM,0,0,,0,False
-CopernicusDEM,Copernicus DEM,8,8,EGM2008,3855,True
+CopernicusDEM,Copernicus DEM,9,9,EGM2008,3855,True
 EMODnet,EMODnet,0,0,MSL,5714,False
 ETOPO1,ETOPO1,0,0,msl,5714,False
-FABDEM,FABDEM,9,9,EGM2008,3855,True
+FABDEM,FABDEM,10,10,EGM2008,3855,True
 GEBCO,GEBCO,1,1,MSL,5714,True
 GEBCO_sub_ice,GEBCO Sub Ice,2,2,MSL,5714,True
 GLOBathy,GLOBathy,0,0,,0,False
@@ -22,8 +22,8 @@ NASADEM,NASA DEM,0,0,EGM96,5773,False
 NOAA_estuarine,NOAA Regional archived (non-tiled) DEMs,3,3,egm2008,3855,True
 NOAA_regional,NOAA Regional archived (non-tiled) DEMs,4,4,egm2008,3855,True
 REMA,REMA,0,0,WGS84,4979,False
-ShallowBathyEverywhere,Shallow Bathy Everywhere,5,5,egm2008,3855,True
+ShallowBathyEverywhere,Shallow Bathy Everywhere,6,6,egm2008,3855,True
 TanDEMX,TanDEMX,0,0,WGS_84,7660,False
 global_lakes_flat,Global Lakes Flat-bed (1m depth),0,0,EGM2008,3855,False
-global_lakes_gebco,Global Lakes GEBCO-derived,10,10,EGM2008,3855,True
+global_lakes_gebco,Global Lakes GEBCO-derived,11,11,EGM2008,3855,True
 global_lakes_globathy,Global Lakes GLOBathy-derived,0,0,EGM2008,3855,False
