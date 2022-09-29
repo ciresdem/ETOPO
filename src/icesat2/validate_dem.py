@@ -360,6 +360,7 @@ def validate_dem_parallel(dem_name,
                           delete_datafiles = False,
                           mask_out_lakes = True,
                           mask_out_buildings = True,
+                          use_osm_planet = False,
                           include_gmrt_mask = False,
                           write_result_tifs = True,
                           write_summary_stats = True,
@@ -378,7 +379,7 @@ def validate_dem_parallel(dem_name,
 
     # Get the results dataframe filename (if not already set)
     if (results_dataframe_file is None) or (results_dataframe_file == ""):
-        results_dataframe_file = os.path.splitext(dem_name) + "_results.h5"
+        results_dataframe_file = os.path.splitext(dem_name)[0] + "_results.h5"
 
     # Get the interim data directory (if not already set)
     if interim_data_dir is None:
@@ -461,6 +462,7 @@ def validate_dem_parallel(dem_name,
         coastline_mask.get_coastline_mask_and_other_dem_data(dem_name,
                                                              mask_out_lakes = mask_out_lakes,
                                                              mask_out_buildings = mask_out_buildings,
+                                                             use_osm_planet = use_osm_planet,
                                                              include_gmrt = include_gmrt_mask,
                                                              target_fname_or_dir = interim_data_dir)
 
@@ -618,6 +620,11 @@ def validate_dem_parallel(dem_name,
     if not quiet:
         print("{0:,}".format(len(photon_df)), "ICESat-2 photons present in photon dataframe.")
 
+    # Filter out to keep only the highest-quality photons.
+    # quality_ph == 0 ("nominal") and "conf_land" == 4 ("high") and/or "conf_land_ice" == 4 ("high")
+    photon_df = photon_df[(photon_df["quality_ph"] == 0) & \
+                          ((photon_df["conf_land"] == 4) | (photon_df["conf_land_ice"] == 4))]
+
     # If the DEM coordinate system isn't WGS84 lat/lon, convert the icesat-2
     # lat/lon data coordinates into the same CRS as the DEM
     if dem_epsg != 4326:
@@ -643,7 +650,6 @@ def validate_dem_parallel(dem_name,
     else:
         ph_xcoords = photon_df["longitude"]
         ph_ycoords = photon_df["latitude"]
-
 
     # Compute the (i,j) indices into the array of all the photons collected.
     # Transform photon lat/lons into DEM indices.
@@ -805,7 +811,7 @@ def validate_dem_parallel(dem_name,
         return None
 
     # If requested, perform a validation on a photon-by-photon basis, in addition to the grid-cell
-    # analysis peformed later on down.
+    # analysis peformed later on down. First, create a dataframe with just the DEM elevations.
     if include_photon_level_validation:
         if not quiet:
             print("Performing photon-level validation...")
@@ -819,7 +825,8 @@ def validate_dem_parallel(dem_name,
 
         if not quiet:
             print("\tGenerating DEM elevation dataframe... ", end="")
-        # Generate a dataframe of the dem elevations, indexed by their i,j coordinates.
+
+        # # Generate a dataframe of the dem elevations, indexed by their i,j coordinates.
         dem_elev_df = pandas.DataFrame({#"dem_i": dem_overlap_i,
                                         #"dem_j": dem_overlap_j,
                                         "dem_elevation": dem_overlap_elevs},
