@@ -78,7 +78,7 @@ def copy_all_gebco_coastline_masks(working_dir, dest_dir, regex_str = r"((GEBCO)
 
 def validate_tile_selections(tile_csv = tile_list_csv,
                              source_dataset ="CopernicusDEM",
-                             working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..","scratch_data","sample_tiles_list"))
+                             working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scratch_data", "sample_tiles_list"))
                              ):
     """Given a list of grid cells to validate against, get all the source DEMs that
     overlap these boxes and then validate against each one of those.
@@ -182,8 +182,8 @@ def validate_tile_selections(tile_csv = tile_list_csv,
             list_of_results_files.append(results_h5_name)
 
 def plot_dataset_results(source_dataset="CopernicusDEM",
-                         working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..","scratch_data","sample_tiles_list")),
-                         plot_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..","scratch_data","sample_tiles_list", "plots"))):
+                         working_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scratch_data", "sample_tiles_list")),
+                         plot_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "scratch_data", "sample_tiles_list", "plots"))):
     # Get all the results tiles from teh working dir for this dataset.
     # regex_match = source_dataset + '/(\w)+' + source_dataset + '(\w)*_results\.h5'
     regex_match = source_dataset + '_results\.h5$'
