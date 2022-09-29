@@ -4,6 +4,7 @@
 import os
 import subprocess
 from osgeo import gdal
+import numpy
 
 #####################################################
 # Code snippet to import the base directory into
@@ -42,6 +43,7 @@ def create_geoid_height_grids(resolution_s = (1,15,30,60), crm_only_if_1s=True, 
     if type(resolution_s) in (int, float):
         resolution_s = [int(resolution_s)]
 
+    egm_grid = os.path.join(etopo_config._abspath(etopo_config.etopo_cudem_cache_directory), ".cudem_cache", "us_nga_egm08_25.tif")
 
     for res_s in resolution_s:
         gdf = datasets.dataset_geopackage.ETOPO_Geopackage(res_s).get_gdf(resolution_s = res_s,
@@ -49,15 +51,15 @@ def create_geoid_height_grids(resolution_s = (1,15,30,60), crm_only_if_1s=True, 
                                                                           verbose=verbose)
 
         dest_dir = os.path.join(etopo_config._abspath(etopo_config.etopo_geoid_directory), "{0}s".format(res_s))
-        temp_dir = os.path.join(dest_dir, "temp")
-        if not os.path.exists(temp_dir):
-            os.mkdir(temp_dir)
+        # temp_dir = os.path.join(dest_dir, "temp")
+        # if not os.path.exists(temp_dir):
+        #     os.mkdir(temp_dir)
 
         print("==", str(res_s) + "s", "resolution,", len(gdf), "files. ==")
 
         for i,row in gdf.iterrows():
-            tempfile = os.path.join(temp_dir, os.path.splitext(os.path.basename(row.filename))[0] + "_ZERO_TEMP.tif")
-            make_temp_zero_grid(row.filename, tempfile, overwrite=overwrite)
+            # tempfile = os.path.join(temp_dir, os.path.splitext(os.path.basename(row.filename))[0] + "_ZERO_TEMP.tif")
+            # make_temp_zero_grid(row.filename, tempfile, overwrite=overwrite)
 
             destfile = os.path.join(dest_dir, os.path.splitext(os.path.basename(row.filename))[0] + "_geoid.tif")
 
@@ -68,12 +70,23 @@ def create_geoid_height_grids(resolution_s = (1,15,30,60), crm_only_if_1s=True, 
                     print("{0}/{1} {2} already exists.".format(i+1, len(gdf), os.path.basename(destfile)))
                     continue
 
-            convert_cmd = ["vertical_datum_convert.py",
-                           "-i", "3855",\
-                           "-o", "7912",
-                           "-D", etopo_config._abspath(etopo_config.etopo_cudem_cache_directory),
-                           "-k",
-                           tempfile, destfile]
+            convert_cmd = ["gdalwarp",
+                           "-te", str(row.xleft),
+                                  str(numpy.round(row.ytop + (row.ysize * row.yres))),
+                                  str(numpy.round(row.xleft +(row.xsize * row.xres))),
+                                  str(row.ytop),
+                           "-ts", str(row.xsize), str(row.ysize),
+                           "-t_srs", "EPSG:4326",
+                           "-r", "cubic",
+                           "-of", "GTiff",
+                           egm_grid, destfile]
+
+            # convert_cmd = ["vertical_datum_convert.py",
+            #                "-i", "3855",\
+            #                "-o", "7912",
+            #                "-D", etopo_config._abspath(etopo_config.etopo_cudem_cache_directory),
+            #                "-k",
+            #                tempfile, destfile]
 
             if silent_subprocs:
                 subprocess.run(convert_cmd, capture_output=True)
@@ -88,8 +101,8 @@ def create_geoid_height_grids(resolution_s = (1,15,30,60), crm_only_if_1s=True, 
                 print("NOT written.")
 
         # Get rid of the temp dir and all its contents.
-        rm_cmd = ["rm", "-rf", temp_dir]
-        subprocess.run(rm_cmd, capture_output=True)
+        # rm_cmd = ["rm", "-rf", temp_dir]
+        # subprocess.run(rm_cmd, capture_output=True)
 
 if __name__ == "__main__":
-    create_geoid_height_grids(resolution_s=(15,30,60,1), silent_subprocs=False)
+    create_geoid_height_grids(resolution_s=(15,30,60,1), silent_subprocs=True, overwrite=True)
