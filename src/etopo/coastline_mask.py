@@ -113,6 +113,7 @@ def create_coastline_mask(input_dem,
                           mask_out_lakes = True,
                           include_gmrt = False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
                           mask_out_buildings = False,
+                          use_osm_planet = False,
                           output_file=None,
                           verbose=True):
     """From a given DEM (.tif or otherwise), generate a coastline mask at the same grid and resolution.
@@ -161,7 +162,8 @@ def create_coastline_mask(input_dem,
                    "-M","coastline:polygonize=False" + \
                        (":want_gmrt=True" if include_gmrt else "") + \
                        (":want_lakes=True" if mask_out_lakes else "") + \
-                       (":want_buildings=True" if mask_out_buildings else ""),
+                       (":want_buildings=True" if mask_out_buildings else "") + \
+                       (":want_osm_planet=True" if use_osm_planet else ""),
                    "-R", "{0}/{1}/{2}/{3}".format(*bbox),
                    "-O", os.path.abspath(output_filepath_base),
                    "-P", "epsg:{0:d}".format(epsg),
@@ -215,6 +217,7 @@ def create_coastal_mask_filename(dem_name, target_dir=None):
 def get_coastline_mask_and_other_dem_data(dem_name,
                                           mask_out_lakes = True,
                                           mask_out_buildings=False,
+                                          use_osm_planet=True,
                                           include_gmrt = True,
                                           target_fname_or_dir = None,
                                           verbose=True):
@@ -247,6 +250,7 @@ def get_coastline_mask_and_other_dem_data(dem_name,
         coastline_mask_file_out = create_coastline_mask(dem_name,
                                                         mask_out_lakes = mask_out_lakes,
                                                         mask_out_buildings = mask_out_buildings,
+                                                        use_osm_planet=use_osm_planet,
                                                         include_gmrt = include_gmrt,
                                                         return_bounds_step_epsg=False,
                                                         output_file=coastline_mask_file,
