@@ -24,3 +24,6 @@ class source_dataset_BedMachine_Surface(etopo_source_dataset.ETOPO_source_datase
 
 if __name__ == "__main__":
     gdf = source_dataset_BedMachine_Surface().get_geodataframe(resolution_s=15)
+    print(gdf)
+    for fname in gdf.filename:
+        print(fname)
