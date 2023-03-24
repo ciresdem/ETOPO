@@ -51,20 +51,13 @@ def validate_dataset(dataset_name,
     orig_bad_granule_list = icesat2.find_bad_icesat2_granules.get_list_of_granules_to_reject(verbose=verbose)
 
     # Run the icesat-2 validation
-    icesat2.validate_dem_collection.validate_list_of_dems(dem_list,
-                                                          None, # results_h5, which isn't needed when we're using the icesat-2 database.
-                                                          use_icesat2_photon_database = True,
-                                                          results_h5 = None,
-                                                          fname_filter = dem_regex,
-                                                          output_dir = results_subdir,
-                                                          input_vdatum = input_vdatum,
-                                                          output_vdatum = output_vdatum,
-                                                          place_name = dset_name,
-                                                          create_individual_results = True,
-                                                          skip_icesat2_download = True,
-                                                          include_photon_validation = True,
-                                                          omit_bad_granules = True,
-                                                          verbose = verbose)
+    icesat2.validate_dem_collection.validate_list_of_dems(dem_list, None, use_icesat2_photon_database=True,
+                                                          results_h5=None, fname_filter=dem_regex,
+                                                          output_dir=results_subdir, input_vdatum=input_vdatum,
+                                                          output_vdatum=output_vdatum, place_name=dset_name,
+                                                          create_individual_results=True, skip_icesat2_download=True,
+                                                          include_photon_validation=True, omit_bad_granules=True,
+                                                          verbose=verbose)
     # Run the find_bad_granules.py code to find bad granules in this dataset and add them to the whole dataset.
     icesat2.find_bad_icesat2_granules.find_bad_granules_in_a_dataset(dset, verbose=verbose)
     # Add any "bad granule" records to the whole dataset
@@ -84,20 +77,14 @@ def validate_dataset(dataset_name,
             if verbose:
                 print("*** Re-running ICESat-2 analysis after removing bad granule data. ***")
         # Re-run the icesat-2 validation
-        icesat2.validate_dem_collection.validate_list_of_dems(dem_list,
-                                                              None, # results_h5, which isn't needed when we're using the icesat-2 database.
-                                                              use_icesat2_photon_database = True,
-                                                              results_h5 = None,
-                                                              fname_filter = dem_regex,
-                                                              output_dir = results_subdir,
-                                                              input_vdatum = input_vdatum,
-                                                              output_vdatum = output_vdatum,
-                                                              place_name = dset_name,
-                                                              create_individual_results = True,
-                                                              skip_icesat2_download = True,
-                                                              include_photon_validation = True,
-                                                              omit_bad_granules = True,
-                                                              verbose = verbose)
+        icesat2.validate_dem_collection.validate_list_of_dems(dem_list, None, use_icesat2_photon_database=True,
+                                                              results_h5=None, fname_filter=dem_regex,
+                                                              output_dir=results_subdir, input_vdatum=input_vdatum,
+                                                              output_vdatum=output_vdatum, place_name=dset_name,
+                                                              create_individual_results=True,
+                                                              skip_icesat2_download=True,
+                                                              include_photon_validation=True, omit_bad_granules=True,
+                                                              verbose=verbose)
 
     return
 
