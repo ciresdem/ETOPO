@@ -16,6 +16,7 @@ import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
 ####################################3
 import utils.configfile
 my_config = utils.configfile.config()
+import utils.progress_bar
 
 
 def is_iterable(obj):
@@ -25,15 +26,29 @@ def is_iterable(obj):
 
 def get_data_from_h5_or_list(h5_name_or_list,
                              empty_val = my_config.etopo_ndv,
+                             include_filenames = False,
                              verbose=True):
     """Return the data either from a single hdf5 results file, or a list of them. Filter out empty (bad data) values."""
     if type(h5_name_or_list) == str:
         data = pandas.read_hdf(h5_name_or_list)
+        if include_filenames:
+            data["filename"] = os.path.basename(h5_name_or_list)
     elif is_iterable(h5_name_or_list):
+
+        if verbose:
+            print("Reading {0} h5 results files.".format(len(h5_name_or_list)))
         data_list = []
-        for h5_file in h5_name_or_list:
+
+        for i,h5_file in enumerate(h5_name_or_list):
             if os.path.exists(h5_file):
-                data_list.append(pandas.read_hdf(h5_file))
+                temp_data = pandas.read_hdf(h5_file)
+                if include_filenames:
+                    temp_data["filename"] = os.path.basename(h5_file)
+                data_list.append(temp_data)
+
+            if verbose:
+                utils.progress_bar.ProgressBar(i+1,len(h5_name_or_list), suffix='{0}/{1}'.format(i+1, len(h5_name_or_list)))
+
         data = pandas.concat(data_list)
     else:
         raise TypeError("Non-iterable value for parameter 'results_h5_name_or_list':", h5_name_or_list)
@@ -63,7 +78,10 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
                                             place_name=None,
                                             figsize=None,
                                             labels_uppercase = True,
+                                            error_max_cutoff = None,
                                             dpi = 600,
+                                            hist_cutoff_num_stddevs = 2,
+                                            also_add_rmse_to_hist = False,
                                             verbose=True):
     """Generate a 4-panel figure of error stats.
     1) Histograms of mean errors
@@ -90,6 +108,14 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
 
     # Get rid of data with 3 or less ground photons in the inter-decile range, and all nans.
     good_data_mask = numphotons_intd > 3 & ~numpy.isnan(meandiff) & ~numpy.isnan(canopy_fraction)
+
+    # Filter out errors that are above a certain threshold, if provided (presumed to be ICESat-2 anomalies, such as in the CUDEM tiles.)
+    if error_max_cutoff is not None:
+        good_data_mask = good_data_mask & (numpy.abs(meandiff) <= error_max_cutoff)
+
+    # TEMP: FOR CUDEM PLOT ONLY:
+
+
     meandiff           =        meandiff[good_data_mask]
     # meddiff            =         meddiff[good_data_mask]
     # cellstd            =         cellstd[good_data_mask]
@@ -121,7 +147,7 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     # Plot 1, differences from iceast-2 mean.
     ax1.hist(meandiff, bins=nbins)
     # Unicode "minus" sign is \u2212
-    ax1.set_title("DEM " + u"\u2212" + " ICESat-2 mean")
+    ax1.set_title("DEM " + u"\u2212" + " ICESat-2 elevation")
     ax1.set_ylabel("% of data cells")
     ax1.set_xlabel("Elevation difference (m)")
     ax1.yaxis.set_major_formatter(ticker.PercentFormatter(len(meandiff), decimals=0))
@@ -138,22 +164,35 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     # cutoffs = [-max(numpy.abs(cutoffs)), max(numpy.abs(cutoffs))]
     # Do not crop the photo to make the stddev lines fall outside the plot.
     # If they do, reset the min/max cutoff to be 2 stddev away from the mean on that side.
-    if (center + std) >= cutoffs[1]:
-        cutoffs[1] = center + (std*2)
-    if (center - std) <= cutoffs[0]:
-        cutoffs[0] = center - (std*2)
+    if (center + std) >= cutoffs[1] or hist_cutoff_num_stddevs is not None:
+        cutoffs[1] = center + (std * hist_cutoff_num_stddevs)
+    if (center - std) <= cutoffs[0] or hist_cutoff_num_stddevs is not None:
+        cutoffs[0] = center - (std * hist_cutoff_num_stddevs)
     ax1.set_xlim(cutoffs)
 
     # Detect whether the mean line is closer to the left or the right (we'll put the text box on the other side)
-    text_left = not ((center - cutoffs[0]) < (cutoffs[1] - center))
-    txt = ax1.text(0.12 if text_left else 0.97,
+    # (In this case, since we're putting sub-panel letters in the upper-left, we'll just always put the other text in the upper-right.
+    text_left = False # not ((center - cutoffs[0]) < (cutoffs[1] - center))
+    txt = ax1.text(0.11, # if text_left else 0.97,
                    0.95, # 0.85 if text_left else 0.95,
                    "{0:.2f} $\pm$ {1:.2f} m".format(center, std),
-                   ha="left" if text_left else "right",
+                   ha="left", # if text_left else "right",
                    va="top",
                    fontsize="small",
                    transform=ax1.transAxes)
-    txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
+    txt.set_bbox(dict(facecolor="white", alpha=0.85, edgecolor="white", boxstyle="square,pad=0"))
+
+    # If requested, as the RMSE value to the figure.
+    if also_add_rmse_to_hist:
+        rmse = numpy.sqrt(numpy.mean(meandiff ** 2))
+        txt_std = ax1.text(0.97, #0.12 if text_left else 0.97,
+                           0.95,
+                           "RMSE: {0:0.2f} m".format(rmse),
+                           ha="right", #"left" if text_left else "right",
+                           va="top",
+                           fontsize="small",
+                           transform=ax1.transAxes)
+        txt_std.set_bbox(dict(facecolor="white", alpha=0.85, edgecolor="white", boxstyle="square,pad=0"))
 
     # Add subplot label "a"
     # Add it on the opposite (horizontal) side of wherever the other text has been placed, in this case.
@@ -208,21 +247,21 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     # 3) Plot Histogram of # of ICESat-2 photons per cell.
     #############################################################################
     # Plot 4, number of photons in interdecile range
-    ax3.hist(numphotons_intd, bins=(numphotons_intd.max() - numphotons_intd.min() + 1), color="darkred")
+    ax3.hist(numphotons_intd, bins=min((numphotons_intd.max() - numphotons_intd.min() + 1), 200), color="darkred")
     ax3.set_title("Number of photons")
     ax3.set_xlabel("Photon count per DEM cell")
     ax3.set_ylabel("% of data cells")
-    ax3.yaxis.set_major_formatter(ticker.PercentFormatter(len(numphotons_intd), decimals=0))
+    ax3.yaxis.set_major_formatter(ticker.PercentFormatter(len(numphotons_intd), decimals=1))
 
     # Crop the left & right, right at 98 percentile.
-    cutoff = numpy.percentile(numphotons_intd, 98)
+    cutoff = numpy.percentile(numphotons_intd, 99)
     xmin = ax3.get_xlim()[0]
     ax3.set_xlim(xmin*0.5, cutoff)
 
     center = numpy.mean(numphotons_intd)
     std = numpy.std(numphotons_intd)
 
-    ax3.text(0.95, 0.95, "{0:d} $\pm$ {1:d} photons per cell".format(int(numpy.round(center)), int(numpy.round(std))),
+    ax3.text(0.95, 0.95, "{0:d} $\pm$ {1:d}\nphotons per cell".format(int(numpy.round(center)), int(numpy.round(std))),
              ha="right", va="top",
              fontsize="small",
              transform=ax3.transAxes)
@@ -287,6 +326,10 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     if verbose:
         print(output_figure_name, "written.")
 
+        # Compute the RMSE and spit that out too.
+        rmse = (numpy.sum(meandiff ** 2) / len(meandiff)) ** 0.5
+        print("\tRMSE: {0:0.3f} m".format(rmse))
+
     # Clear the figure and close the plot.
     # If the plot is not "plt.close()"'ed, MatPlotLib keeps it in memory indefinitely
     # even after it's no longer referenced, which is... annoying. Gotta close it explicitly here.
@@ -296,142 +339,142 @@ def plot_histogram_and_error_stats_4_panels(results_h5_or_list_or_df,
     return
 
 
-def plot_histograms(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
-    data = get_data_from_h5_or_list(results_h5_name_or_list, empty_val = empty_val)
-
-    meddiff         = data['diff_median']
-    cellstd         = data['stddev'].astype(float)
-    meandiff        = data['diff_mean']
-    numphotons      = data['numphotons']
-    numphotons_intd = data['numphotons_intd']
-    canopy_fraction = data["canopy_fraction"]
-
-    # Get rid of data with 3 or less ground photons in the inter-decile range, and all nans.
-    good_data_mask = numphotons_intd > 3 & ~numpy.isnan(meandiff) & ~numpy.isnan(meddiff) & ~numpy.isnan(canopy_fraction) \
-                     & (meandiff != empty_val) & (meddiff != empty_val) & (canopy_fraction != empty_val) & (cellstd != empty_val)
-    meandiff           =        meandiff[good_data_mask]
-    cellstd            =         cellstd[good_data_mask]
-    meddiff            =         meddiff[good_data_mask]
-    canopy_fraction    = canopy_fraction[good_data_mask]
-    numphotons         =      numphotons[good_data_mask]
-    numphotons_intd    = numphotons_intd[good_data_mask]
-
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=600, tight_layout=True) #, sharey=True)
-
-    print("Means:", numpy.mean(meandiff), "+/-", numpy.std(meandiff))
-    print("Medians:", numpy.mean(meddiff), "+/-", numpy.std(meddiff))
-    print("Canopy:", numpy.mean(canopy_fraction), "+/-", numpy.std(canopy_fraction))
-    print("Numphotons:", numpy.mean(numphotons), "+/-", numpy.std(numphotons))
-    print("Numphotons in Interdecile Range:", numpy.mean(numphotons_intd), "+/-", numpy.std(numphotons_intd))
-
-    nbins = 300
-
-    #############################################################################
-    # Plot 1, differences from iceast-2 mean.
-    ax1.hist(meandiff, bins=nbins)
-    ax1.set_title("DEM - ICESat-2 mean (m)")
-    ax1.set_ylabel("Grid cells")
-    ax1.set_xlabel("Elevation diff (m)")
-
-    # Crop the left & right 1% tails.
-    cutoffs = numpy.percentile(meandiff, [1, 99])
-    # cutoffs = [-max(numpy.abs(cutoffs)), max(numpy.abs(cutoffs))]
-    ax1.set_xlim(cutoffs)
-
-    # Add the lines for mean +- std
-    center = numpy.mean(meandiff)
-    std = numpy.std(meandiff)
-    ax1.axvline(x=center, color="darkred", linewidth=1)
-    ax1.axvline(x=center+std, color="darkred", linestyle="--", linewidth=0.75)
-    ax1.axvline(x=center-std, color="darkred", linestyle="--", linewidth=0.75)
-
-    text_left = (abs(cutoffs[0]) > abs(cutoffs[1]))
-    txt = ax1.text(0.03 if text_left else 0.97, 0.95, "{0:.2f} $\pm$ {1:.2f} m".format(center, std), ha="left" if text_left else "right", va="top", transform=ax1.transAxes)
-    txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
-    #############################################################################
-    # Plot 2, differences from icesat-2 median
-    ax2.hist(cellstd, bins=nbins, color="darkred")
-    ax2.set_title("Intra-cell variation (roughness) ")
-    ax2.set_xlabel("std.dev. within cells (m)")
-    # ax2.set_xlim([-2,4])
-
-    # Crop the left & right
-    # print(numpy.count_nonzero(numpy.isnan(cellstd)), "NaNs in cellstd", cellstd.count(), "total.")
-    # cutoffs = numpy.nanpercentile(cellstd, [0.5, 99.5])
-    # ax2.set_xlim(cutoffs)
-    cutoffs = numpy.nanpercentile(cellstd, [0, 99])
-    xmin = ax2.get_xlim()[0]
-    ax2.set_xlim(cutoffs)
-
-
-    # Add the lines for mean +- std
-    # center = numpy.mean(meddiff)
-    # std = numpy.std(meddiff)
-    # ax2.axvline(x=center, color="darkred", linewidth=1)
-    # ax2.axvline(x=center+std, color="darkred", linestyle="--", linewidth=0.75)
-    # ax2.axvline(x=center-std, color="darkred", linestyle="--", linewidth=0.75)
-
-    # ax2.text(0.95, 0.95, "{0:.2f} $\pm$ {1:.2f} m".format(center, std), ha="right", va="top", transform=ax2.transAxes)
-
-
-    #############################################################################
-    # Plot 3, percent canopy cover
-    canopy_fraction = (canopy_fraction * 100).astype(float)
-    # print(canopy_fraction)
-    print("min", min(canopy_fraction), "max", max(canopy_fraction), "median", numpy.median(canopy_fraction), "mean", numpy.mean(canopy_fraction))
-    ax3.hist(canopy_fraction, bins=50,color="darkgreen")
-    ax3.set_title("Canopy Cover (%)")
-    ax3.set_xlabel("% Canopy Cover")
-    ax3.set_ylabel("Grid cells")
-    # ax4.set_xlim([-3,75])
-
-    # Crop the left & right
-    cutoff = numpy.percentile(canopy_fraction, 97)
-    xmin = ax3.get_xlim()[0]
-    ax4.set_xlim(xmin, cutoff)
-
-    # center = numpy.mean(canopy_fraction)
-    # # std = numpy.std(canopy_fraction)
-    # median = numpy.median(canopy_fraction)
-    canopy_mask = (canopy_fraction > 0.0) & numpy.isfinite(canopy_fraction) & ~numpy.isnan(canopy_fraction)
-
-    ax3.text(0.95, 0.95, "In {0:0.1f} % with >0 cover:\n{1:0.1f} $\pm$ {2:0.1f} %".format( \
-                         numpy.count_nonzero(canopy_mask) * 100 / canopy_fraction.size,
-                         numpy.mean(canopy_fraction[canopy_mask]),
-                         numpy.std(canopy_fraction[canopy_mask])),
-             ha="right", va="top", transform=ax3.transAxes)
-
-    #############################################################################
-    # Plot 4, number of photons in interdecile range
-    ax4.hist(numphotons_intd, bins=nbins, color="darkblue")
-    ax4.set_title("# photons (interdecile)")
-    ax4.set_xlabel("Photon count per cell")
-    # ax3.set_xlim([-20,550])
-
-    # Crop the left & right
-    cutoff = numpy.percentile(numphotons_intd, 97)
-    xmin = ax4.get_xlim()[0]
-    ax4.set_xlim(xmin*0.5, cutoff)
-
-    center = numpy.mean(numphotons_intd)
-    std = numpy.std(numphotons_intd)
-
-    ax4.text(0.95, 0.95, "{0:d} $\pm$ {1:d} per cell".format(int(numpy.round(center)), int(numpy.round(std))), ha="right", va="top", transform=ax4.transAxes)
-
-    #############################################################################
-    # Figure finishing
-    # fig.suptitle(figure_titles_dict[fname] + " Distributions")
-    fig.suptitle("NE DEMs Data Distributions\n(N = {0:,} cells)".format(len(data)))
-    fig.tight_layout()
-
-    # figname = os.path.splitext(fname)[0] + "_distributions.png"
-    figname = os.path.join(os.path.split(results_h5_name_or_list[0])[0], os.path.split(os.path.split(results_h5_name_or_list[0])[0])[1]) + "_distributions.png"
-    fig.savefig(figname)
-    print(figname, "written.")
-
-    plt.clf()
-    # plt.close()
-    # fig.show()
+# def plot_histograms(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
+#     data = get_data_from_h5_or_list(results_h5_name_or_list, empty_val = empty_val)
+#
+#     meddiff         = data['diff_median']
+#     cellstd         = data['stddev'].astype(float)
+#     meandiff        = data['diff_mean']
+#     numphotons      = data['numphotons']
+#     numphotons_intd = data['numphotons_intd']
+#     canopy_fraction = data["canopy_fraction"]
+#
+#     # Get rid of data with 3 or less ground photons in the inter-decile range, and all nans.
+#     good_data_mask = numphotons_intd > 3 & ~numpy.isnan(meandiff) & ~numpy.isnan(meddiff) & ~numpy.isnan(canopy_fraction) \
+#                      & (meandiff != empty_val) & (meddiff != empty_val) & (canopy_fraction != empty_val) & (cellstd != empty_val)
+#     meandiff           =        meandiff[good_data_mask]
+#     cellstd            =         cellstd[good_data_mask]
+#     meddiff            =         meddiff[good_data_mask]
+#     canopy_fraction    = canopy_fraction[good_data_mask]
+#     numphotons         =      numphotons[good_data_mask]
+#     numphotons_intd    = numphotons_intd[good_data_mask]
+#
+#     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=600, tight_layout=True) #, sharey=True)
+#
+#     print("Means:", numpy.mean(meandiff), "+/-", numpy.std(meandiff))
+#     print("Medians:", numpy.mean(meddiff), "+/-", numpy.std(meddiff))
+#     print("Canopy:", numpy.mean(canopy_fraction), "+/-", numpy.std(canopy_fraction))
+#     print("Numphotons:", numpy.mean(numphotons), "+/-", numpy.std(numphotons))
+#     print("Numphotons in Interdecile Range:", numpy.mean(numphotons_intd), "+/-", numpy.std(numphotons_intd))
+#
+#     nbins = 300
+#
+#     #############################################################################
+#     # Plot 1, differences from iceast-2 mean.
+#     ax1.hist(meandiff, bins=nbins)
+#     ax1.set_title("DEM - ICESat-2 mean (m)")
+#     ax1.set_ylabel("Grid cells")
+#     ax1.set_xlabel("Elevation diff (m)")
+#
+#     # Crop the left & right 1% tails.
+#     cutoffs = numpy.percentile(meandiff, [1, 99])
+#     # cutoffs = [-max(numpy.abs(cutoffs)), max(numpy.abs(cutoffs))]
+#     ax1.set_xlim(cutoffs)
+#
+#     # Add the lines for mean +- std
+#     center = numpy.mean(meandiff)
+#     std = numpy.std(meandiff)
+#     ax1.axvline(x=center, color="darkred", linewidth=1)
+#     ax1.axvline(x=center+std, color="darkred", linestyle="--", linewidth=0.75)
+#     ax1.axvline(x=center-std, color="darkred", linestyle="--", linewidth=0.75)
+#
+#     text_left = (abs(cutoffs[0]) > abs(cutoffs[1]))
+#     txt = ax1.text(0.03 if text_left else 0.97, 0.95, "{0:.2f} $\pm$ {1:.2f} m".format(center, std), ha="left" if text_left else "right", va="top", transform=ax1.transAxes)
+#     txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
+#     #############################################################################
+#     # Plot 2, differences from icesat-2 median
+#     ax2.hist(cellstd, bins=nbins, color="darkred")
+#     ax2.set_title("Intra-cell variation (roughness) ")
+#     ax2.set_xlabel("std.dev. within cells (m)")
+#     # ax2.set_xlim([-2,4])
+#
+#     # Crop the left & right
+#     # print(numpy.count_nonzero(numpy.isnan(cellstd)), "NaNs in cellstd", cellstd.count(), "total.")
+#     # cutoffs = numpy.nanpercentile(cellstd, [0.5, 99.5])
+#     # ax2.set_xlim(cutoffs)
+#     cutoffs = numpy.nanpercentile(cellstd, [0, 99])
+#     xmin = ax2.get_xlim()[0]
+#     ax2.set_xlim(cutoffs)
+#
+#
+#     # Add the lines for mean +- std
+#     # center = numpy.mean(meddiff)
+#     # std = numpy.std(meddiff)
+#     # ax2.axvline(x=center, color="darkred", linewidth=1)
+#     # ax2.axvline(x=center+std, color="darkred", linestyle="--", linewidth=0.75)
+#     # ax2.axvline(x=center-std, color="darkred", linestyle="--", linewidth=0.75)
+#
+#     # ax2.text(0.95, 0.95, "{0:.2f} $\pm$ {1:.2f} m".format(center, std), ha="right", va="top", transform=ax2.transAxes)
+#
+#
+#     #############################################################################
+#     # Plot 3, percent canopy cover
+#     canopy_fraction = (canopy_fraction * 100).astype(float)
+#     # print(canopy_fraction)
+#     print("min", min(canopy_fraction), "max", max(canopy_fraction), "median", numpy.median(canopy_fraction), "mean", numpy.mean(canopy_fraction))
+#     ax3.hist(canopy_fraction, bins=50,color="darkgreen")
+#     ax3.set_title("Canopy Cover (%)")
+#     ax3.set_xlabel("% Canopy Cover")
+#     ax3.set_ylabel("Grid cells")
+#     # ax4.set_xlim([-3,75])
+#
+#     # Crop the left & right
+#     cutoff = numpy.percentile(canopy_fraction, 97)
+#     xmin = ax3.get_xlim()[0]
+#     ax4.set_xlim(xmin, cutoff)
+#
+#     # center = numpy.mean(canopy_fraction)
+#     # # std = numpy.std(canopy_fraction)
+#     # median = numpy.median(canopy_fraction)
+#     canopy_mask = (canopy_fraction > 0.0) & numpy.isfinite(canopy_fraction) & ~numpy.isnan(canopy_fraction)
+#
+#     ax3.text(0.95, 0.95, "In {0:0.1f} % with >0 cover:\n{1:0.1f} $\pm$ {2:0.1f} %".format( \
+#                          numpy.count_nonzero(canopy_mask) * 100 / canopy_fraction.size,
+#                          numpy.mean(canopy_fraction[canopy_mask]),
+#                          numpy.std(canopy_fraction[canopy_mask])),
+#              ha="right", va="top", transform=ax3.transAxes)
+#
+#     #############################################################################
+#     # Plot 4, number of photons in interdecile range
+#     ax4.hist(numphotons_intd, bins=nbins, color="darkblue")
+#     ax4.set_title("# photons (interdecile)")
+#     ax4.set_xlabel("Photon count per cell")
+#     # ax3.set_xlim([-20,550])
+#
+#     # Crop the left & right
+#     cutoff = numpy.percentile(numphotons_intd, 97)
+#     xmin = ax4.get_xlim()[0]
+#     ax4.set_xlim(xmin*0.5, cutoff)
+#
+#     center = numpy.mean(numphotons_intd)
+#     std = numpy.std(numphotons_intd)
+#
+#     ax4.text(0.95, 0.95, "{0:d} $\pm$ {1:d} per cell".format(int(numpy.round(center)), int(numpy.round(std))), ha="right", va="top", transform=ax4.transAxes)
+#
+#     #############################################################################
+#     # Figure finishing
+#     # fig.suptitle(figure_titles_dict[fname] + " Distributions")
+#     fig.suptitle("NE DEMs Data Distributions\n(N = {0:,} cells)".format(len(data)))
+#     fig.tight_layout()
+#
+#     # figname = os.path.splitext(fname)[0] + "_distributions.png"
+#     figname = os.path.join(os.path.split(results_h5_name_or_list[0])[0], os.path.split(os.path.split(results_h5_name_or_list[0])[0])[1]) + "_distributions.png"
+#     fig.savefig(figname)
+#     print(figname, "written.")
+#
+#     plt.clf()
+#     # plt.close()
+#     # fig.show()
 
 def plot_error_stats(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
     # print(fname)
@@ -503,8 +546,12 @@ def plot_error_stats(results_h5_name_or_list, empty_val = my_config.etopo_ndv):
 
 if __name__ == '__main__':
 
-    plot_histogram_and_error_stats_4_panels("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/chesapeake_bay/icesat2_results/ncei19_n39x75_w076x25_2019v1_results.h5",
-                                            "/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/chesapeake_bay/icesat2_results/ncei19_n39x75_w076x25_2019v1_results_plot.png")
+    for h5 in [os.path.join('/home/mmacferrin/Research/DATA/ETOPO/data/validation_results/15s/2022.09.29/plots/', fn) for fn in
+               ["total_results_gt{0}.h5".format(i) for i in (list(range(40,48)) + [50])]]:
+        #, "total_results_gt42.h5", "total_results_gt43.h5", "total_results_gt44.h5", "total_results_gt46.h5"]]:
+        plotname = os.path.splitext(h5)[0] + "_plot.png"
+
+        plot_histogram_and_error_stats_4_panels(h5, plotname, place_name="ETOPO 2022")
 
     # plot_histograms(h5_names)
     # plot_error_stats(h5_names)

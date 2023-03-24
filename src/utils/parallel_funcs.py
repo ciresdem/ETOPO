@@ -5,6 +5,7 @@ import os
 import multiprocessing as mp
 import numpy
 import time
+import subprocess
 
 ##############################################################################
 # Code for importing the /src directory so that other modules can be accessed.
@@ -89,7 +90,7 @@ def process_parallel(target_func,
     ----------
         target_func (function): process to be executed.
         args_lists (list of lists): A list of arguments to be fed to the function, in the order listed.
-        kwargs_lists (list of dicts): A list of keyword-argument dictinoaries to be fed to the function.
+        kwargs_lists (list of dicts, or dict): A list of keyword-argument dictinoaries to be fed to the function.
         outfiles (list, optional): A list of output files that the functions will create.
         proc_names (list, optional): A list of function names to identify each process. Only used if outfiles is not provided.
         temp_working_dirs (list of paths, optional): A list of temporary-directory pathnames to be created as the working-directory
@@ -204,11 +205,18 @@ def process_parallel(target_func,
                             process_started = True
                             continue
 
-                    proc = mp.Process(target=target_func,
-                                      name=proc_name if (type(proc_name) == str) else None,
-                                      args=args,
-                                      kwargs=kwargs,
-                                      )
+                    if kwargs is not None:
+                        proc = mp.Process(target=target_func,
+                                          name=proc_name if (type(proc_name) == str) else None,
+                                          args=args,
+                                          kwargs=kwargs,
+                                          )
+                    else:
+                        proc = mp.Process(target=target_func,
+                                          name=proc_name if (type(proc_name) == str) else None,
+                                          args=args,
+                                          )
+
 
                     if type(temp_dir) == str and not os.path.exists(temp_dir):
                         os.mkdir(temp_dir)

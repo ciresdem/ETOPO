@@ -260,6 +260,11 @@ def read_or_create_photon_h5(dem_list,
 
     return photon_df
 
+def write_summary_csv_file(total_photon_df: pandas.DataFrame,
+                           csv_name: str) -> None:
+    """Write a summary csv of all the results in a collection, after they've been run."""
+    # TODO: Finish
+
 def validate_list_of_dems(dem_list_or_dir,
                           photon_h5,
                           use_icesat2_photon_database=True,
@@ -273,13 +278,14 @@ def validate_list_of_dems(dem_list_or_dir,
                           overwrite=False,
                           place_name = None,
                           create_individual_results = False,
-                          date_range=["2021-01-01","2021-12-31"],
+                          date_range=["2021-01-01", "2021-12-31"],
                           skip_icesat2_download=False,
                           delete_datafiles=False,
                           include_photon_validation=True,
                           write_result_tifs=False,
                           shapefile_name = None,
                           omit_bad_granules = True,
+                          write_summary_csv = True,
                           # omission_bboxes = None,
                           verbose=True):
     """Take a list of DEMs, presumably in a single area, and output validation files for those DEMs.
@@ -465,6 +471,10 @@ def validate_list_of_dems(dem_list_or_dir,
     #     for bbox in omission_bboxes:
     #         xmin, ymin, xmax, ymax = bbox
 
+    if write_summary_csv:
+        summary_csv_name = os.path.join(this_output_dir, stats_and_plots_base+".csv")
+        write_summary_csv_file(total_results_df, summary_csv_name)
+
     # Output the statistics summary file.
     validate_dem.write_summary_stats_file(total_results_df,
                                           statsfile_name,
@@ -545,7 +555,10 @@ def define_and_parse_args():
         help="By default, all data files generted in this process are kept. If this option is chosen, delete them.")
 
     parser.add_argument("--write_result_tifs", action='store_true', default=False,
-        help=""""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
+        help="""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
+
+    parser.add_argument("--write_summary_csv", action='store_true', default=False,
+        help="Write a CSV with summary results of each individual DEM.")
 
     parser.add_argument("--quiet", "-q", action="store_true", default=False,
         help="Suppress output.")
@@ -607,26 +620,27 @@ def main():
     # or the user manually deletes directories during execusion, it will cause
     # the program to crash when it tries to write files there. That's a user error.
 
-    validate_list_of_dems(args.directory_or_files,
-                          args.photon_h5,
-                          results_h5                = args.results_h5,
-                          fname_filter              = args.fname_filter,
-                          fname_omit                = args.fname_omit,
-                          output_dir                = args.output_dir,
-                          icesat2_dir               = args.icesat2_dir,
-                          input_vdatum              = args.input_vdatum,
-                          output_vdatum             = args.output_vdatum,
-                          overwrite                 = args.overwrite,
-                          date_range                = args.date_range,
-                          skip_icesat2_download     = args.skip_icesat2_download,
-                          place_name                = args.place_name,
-                          delete_datafiles          = args.delete_datafiles,
-                          create_individual_results = args.individual_results,
-                          write_result_tifs         = args.write_result_tifs,
-                          include_photon_validation = args.include_photon_validation,
-                          use_icesat2_photon_database = args.use_icesat2_photon_database,
-                          shapefile_name            = args.shapefile,
-                          verbose                   = not args.quiet)
+    validate_list_of_dems(args.directory_or_files, args.photon_h5,
+                          use_icesat2_photon_database=args.use_icesat2_photon_database,
+                          results_h5=args.results_h5,
+                          fname_filter=args.fname_filter,
+                          fname_omit=args.fname_omit,
+                          output_dir=args.output_dir,
+                          icesat2_dir=args.output_dir,
+                          input_vdatum=args.input_vdatum,
+                          output_vdatum=args.output_vdatum,
+                          overwrite=args.overwrite,
+                          place_name=args.place_name,
+                          create_individual_results=args.individual_results,
+                          date_range=args.date_range,
+                          skip_icesat2_download=args.skip_icesat2_download,
+                          delete_datafiles=args.delete_datafiles,
+                          include_photon_validation=args.include_photon_validation,
+                          write_result_tifs=args.write_result_tifs,
+                          shapefile_name=args.shapefile,
+                          write_summary_csv=args.write_summary_csv,
+                          omit_bad_granules=True,
+                          verbose=not args.quiet)
 
 if __name__ == "__main__":
     main()

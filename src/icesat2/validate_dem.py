@@ -131,13 +131,17 @@ def collect_raw_photon_data(dem_bbox,
 
     return dataframe
 
-def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, connection):
+def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, connection,
+                               measure_coverage=False, input_x=None, input_y=None, num_subdivisions=15):
     """A child process for running the DEM validation in parallel.
 
     It takes the input_height (m) and the dem_indices (flattened), as well
     as a duplexed multiprocessing.connection.Connection object (i.e. an open pipe)
     for processing it. It reads the arrays into local memory, then uses the connection
-    to pass data back and forth until getting a "STOP" command over the connection."""
+    to pass data back and forth until getting a "STOP" command over the connection.
+
+    'measure_coverage' is a boolean parameter to measure how well a given pixel is covered by ICESat-2 photons.
+    We'll measure a couple of different measures (centrality and coverage), and insert those parameters in the output."""
     # Copy the "input_heights" array to local memory.
     # Loop until it's not conflicting with another process.
     # NOTE: This could potentially cause a blocking issue of ConnectionRefusedError happens
@@ -205,15 +209,56 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
             pass
             # counter += 1
 
+    # If we're measuring the coverage of the photons, we need the latitudes and longitudes as well to get the
+    # photon locations within a grid-cell.
+    if measure_coverage:
+        assert (input_x is not None) and (input_x is not None)
+
+        connection_success = False
+        # counter = 0
+        while not connection_success:
+            # if counter >= MAX_TRIES:
+            #     print(f"validate_dem_child_process: Counter exceeded {MAX_TRIES} attempts to get 'photon_codes'. Aborting subprocess.")
+            #     return
+            try:
+                ph_x = numpy.array(input_x[:])
+                connection_success = True
+            except ConnectionRefusedError:
+                pass
+
+        connection_success = False
+        # counter = 0
+        while not connection_success:
+            # if counter >= MAX_TRIES:
+            #     print(f"validate_dem_child_process: Counter exceeded {MAX_TRIES} attempts to get 'photon_codes'. Aborting subprocess.")
+            #     return
+            try:
+                ph_y = numpy.array(input_y[:])
+                connection_success = True
+            except ConnectionRefusedError:
+                pass
+
+        assert len(heights) == len(ph_x) == len(ph_y)
+
     assert len(heights) == len(photon_i) == len(photon_j) == len(ph_codes)
 
     # Just keep looping and checking the connection pipe. When we get
     # a stop command, return from the function.
     while True:
         if connection.poll():
-            dem_i_list, dem_j_list, dem_elev_list = connection.recv()
-            # print(dem_i_list, dem_j_list)
-            # return
+            if measure_coverage:
+                # If we're measuring the coverage, also give us the bounding boxes of the grid cells
+                dem_i_list, \
+                dem_j_list, \
+                dem_elev_list, \
+                cell_xmin_list, \
+                cell_xmax_list, \
+                cell_ymin_list, \
+                cell_ymax_list = connection.recv()
+            else:
+                dem_i_list, \
+                dem_j_list, \
+                dem_elev_list = connection.recv()
 
             # Break out of the infinite loop and return when we get a "STOP" message.
             if (type(dem_i_list) == str) and (dem_i_list == "STOP"):
@@ -237,11 +282,54 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
             r_mean_diff = numpy.zeros((N,), dtype=float)
             r_med_diff = numpy.zeros((N,), dtype=float)
 
+            if measure_coverage:
+                r_min_distance_to_center = numpy.zeros((N,), dtype=float)
+                r_coverage_frac = numpy.zeros((N,), dtype=float)
+
             for counter,(i,j) in enumerate(zip(dem_i_list, dem_j_list)):
+
                 ph_subset_mask = (photon_i == i) & (photon_j == j)
                 # Generate a small pandas dataframe from the subset
                 subset_df = pandas.DataFrame({'height': heights[ph_subset_mask],
                                               'ph_code': ph_codes[ph_subset_mask]})
+
+                # Define and compute measures of centrality & coverage here.
+                if measure_coverage:
+                    # Add the x and y coords to the dataframe
+                    subset_df['xcoord'] = ph_x[ph_subset_mask]
+                    subset_df['ycoord'] = ph_y[ph_subset_mask]
+
+                    cell_xmin = cell_xmin_list[counter]
+                    cell_xmax = cell_xmax_list[counter]
+                    cell_ymin = cell_ymin_list[counter]
+                    cell_ymax = cell_ymax_list[counter]
+                    assert (cell_xmax > cell_xmin) and (cell_ymax > cell_ymin)
+
+                    cell_xstep = (cell_xmax - cell_xmin) / num_subdivisions
+                    # Equal to the geotransform, the y-value starts at the top (max) and iterate downward (negative step.)
+                    cell_ystep = (cell_ymin - cell_ymax) / num_subdivisions
+
+                    assert (cell_xstep > 0) and (cell_ystep < 0)
+
+                    subset_df['subset_i'] = numpy.floor((subset_df.ycoord - cell_ymax) / cell_ystep).astype(int)
+                    subset_df['subset_j'] = numpy.floor((subset_df.xcoord - cell_xmin) / cell_xstep).astype(int)
+                    assert numpy.all((subset_df.subset_i >= 0) & (subset_df.subset_i < num_subdivisions))
+                    assert numpy.all((subset_df.subset_j >= 0) & (subset_df.subset_j < num_subdivisions))
+
+                    cell_xcenter = cell_xmin + ((cell_xmax - cell_xmin)/2)
+                    cell_ycenter = cell_ymin + ((cell_ymax - cell_ymin)/2)
+                    # Calcluate minimum distance from cell center, i.e. distance of the "closest photon."
+                    cell_min_distance_from_center = numpy.power(numpy.power(subset_df.xcoord - cell_xcenter, 2) + \
+                                                                numpy.power(subset_df.ycoord - cell_ycenter, 2),
+                                                                0.5).min()
+
+                    r_min_distance_to_center[counter] = cell_min_distance_from_center
+
+                    # By taking i * (number_of_rows) + j, we come up with unique single values for the cell this is in.
+                    subset_df['subset_ij'] = (subset_df.subset_i * num_subdivisions) + subset_df.subset_j
+                    # Count how many unique subset-cells are covered and divide by the number of total subdivisions.
+                    cell_fraction_covered = len(subset_df.subset_ij.unique()) / (num_subdivisions**2)
+                    r_coverage_frac[counter] = cell_fraction_covered
 
                 r_numphotons[counter] = len(subset_df)
                 if len(subset_df) > 0:
@@ -309,6 +397,10 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
                                            "diff_median": r_med_diff})\
                         .set_index(["i", "j"])
 
+            if measure_coverage:
+                # Add columns for centrality measurements here.
+                results_df["min_dist_from_center"] = r_min_distance_to_center
+                results_df["coverage_frac"] = r_coverage_frac
 
             connection.send(results_df)
 
@@ -332,7 +424,7 @@ def clean_procs_and_pipes(procs, pipes1, pipes2):
             p2.close()
     return
 
-def kick_off_new_child_process(height_array, i_array, j_array, code_array):
+def kick_off_new_child_process(height_array, i_array, j_array, code_array, measure_coverage=False, input_x=None, input_y=None, num_subdivisions=15):
     """Start a new subprocess to handle and process data."""
     pipe_parent, pipe_child = mp.Pipe(duplex=True)
     proc = mp.Process(target=validate_dem_child_process,
@@ -340,7 +432,11 @@ def kick_off_new_child_process(height_array, i_array, j_array, code_array):
                             i_array,
                             j_array,
                             code_array,
-                            pipe_child)
+                            pipe_child),
+                      kwargs={"measure_coverage": measure_coverage,
+                              "input_x": input_x,
+                              "input_y": input_y,
+                              "num_subdivisions": num_subdivisions}
                       )
     proc.start()
     return proc, pipe_parent, pipe_child
@@ -354,13 +450,14 @@ def validate_dem_parallel(dem_name,
                           output_vertical_datum = "egm2008",
                           granule_ids=None,
                           results_dataframe_file = None,
-                          icesat2_date_range = ["2020-01-01", "2020-12-31"],
+                          icesat2_date_range = ["2021-01-01", "2021-12-31"],
                           interim_data_dir = None,
                           overwrite=False,
                           delete_datafiles = False,
                           mask_out_lakes = True,
                           mask_out_buildings = True,
                           use_osm_planet = False,
+                          mask_out_urban = False,
                           include_gmrt_mask = False,
                           write_result_tifs = True,
                           write_summary_stats = True,
@@ -370,6 +467,8 @@ def validate_dem_parallel(dem_name,
                           location_name = None,
                           mark_empty_results = True,
                           omit_bad_granules = True,
+                          measure_coverage = False,
+                          numprocs = parallel_funcs.physical_cpu_count(),
                           quiet=False):
     """The main function. Do it all here. But do it on more than one processor.
     TODO: Document all these method parameters. There are a bunch and they need better explanation.
@@ -462,12 +561,19 @@ def validate_dem_parallel(dem_name,
         coastline_mask.get_coastline_mask_and_other_dem_data(dem_name,
                                                              mask_out_lakes = mask_out_lakes,
                                                              mask_out_buildings = mask_out_buildings,
+                                                             mask_out_urban = mask_out_urban,
                                                              use_osm_planet = use_osm_planet,
                                                              include_gmrt = include_gmrt_mask,
                                                              target_fname_or_dir = interim_data_dir)
 
     # The dem_array and the coastline_mask_array should have the same shape
-    assert coastline_mask_array.shape == dem_array.shape
+    try:
+        assert coastline_mask_array.shape == dem_array.shape
+    except AssertionError as e:
+        print("dem file:", dem_name)
+        print("coastline file:", coastline_mask_filename)
+        print("coastline:", coastline_mask_array.shape, "dem:", dem_array.shape)
+        raise e
     # If the coastline mask is all 1's, warn about that.
     if coastline_mask_array.size == numpy.count_nonzero(coastline_mask_array):
         print("WARNING: Coastline mask file", coastline_mask_filename, "contains all 1's.")
@@ -476,7 +582,9 @@ def validate_dem_parallel(dem_name,
     if type(dem_vertical_datum) == str:
         dem_vertical_datum = dem_vertical_datum.strip().lower()
     assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
-    output_vertical_datum = output_vertical_datum.strip().lower()
+    if type(output_vertical_datum) == str:
+        output_vertical_datum = output_vertical_datum.strip().lower()
+    assert output_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
 
     # Convert the vdatum of the input dem to be the same as the output process.
     if dem_vertical_datum != output_vertical_datum:
@@ -650,6 +758,10 @@ def validate_dem_parallel(dem_name,
     else:
         ph_xcoords = photon_df["longitude"]
         ph_ycoords = photon_df["latitude"]
+        if measure_coverage:
+            # If we're measuring the coverage, we'll just use the "dem_x" and "dem_y" values.
+            photon_df["dem_x"] = ph_xcoords
+            photon_df["dem_y"] = ph_ycoords
 
     # Compute the (i,j) indices into the array of all the photons collected.
     # Transform photon lat/lons into DEM indices.
@@ -722,60 +834,15 @@ def validate_dem_parallel(dem_name,
 
     dem_overlap_mask = dem_goodpixel_mask & dem_mask_w_ground_photons
 
-    #####################################################################
-    # DEBUGGING INFO
-    # TODO: Add here and erase later.
-    #####################################################################
-    # driver = gdal.GetDriverByName("GTiff")
-    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_goodpixel_mask.tif"
-    # maskds = driver.Create(mask_fname,
-    #                         dem_goodpixel_mask.shape[0],
-    #                         dem_goodpixel_mask.shape[1],
-    #                         1,
-    #                         gdal.GDT_Int16)
-    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
-    # maskds.SetProjection(dem_ds.GetProjection())
-    # maskband = maskds.GetRasterBand(1)
-    # maskband.WriteArray(dem_goodpixel_mask)
-    # maskband = None
-    # maskds = None
-    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_goodpixel_mask)))
-
-    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_mask_w_ground_photons.tif"
-    # maskds = driver.Create(mask_fname,
-    #                         dem_goodpixel_mask.shape[0],
-    #                         dem_goodpixel_mask.shape[1],
-    #                         1,
-    #                         gdal.GDT_Int16)
-    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
-    # maskds.SetProjection(dem_ds.GetProjection())
-    # maskband = maskds.GetRasterBand(1)
-    # maskband.WriteArray(dem_mask_w_ground_photons)
-    # maskband = None
-    # maskds = None
-    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_mask_w_ground_photons)))
-
-    # mask_fname = os.path.splitext(results_dataframe_file)[0][:-1*len("_results")] + "_dem_overlap_mask.tif"
-    # maskds = driver.Create(mask_fname,
-    #                         dem_goodpixel_mask.shape[0],
-    #                         dem_goodpixel_mask.shape[1],
-    #                         1,
-    #                         gdal.GDT_Int16)
-    # maskds.SetGeoTransform(dem_ds.GetGeoTransform())
-    # maskds.SetProjection(dem_ds.GetProjection())
-    # maskband = maskds.GetRasterBand(1)
-    # maskband.WriteArray(dem_overlap_mask)
-    # maskband = None
-    # maskds = None
-    # print(mask_fname, "written, {0} valid pixels.".format(numpy.count_nonzero(dem_overlap_mask)))
-
-    #####################################################################
-    # End debug area.
-    #####################################################################
-
 
     dem_overlap_i, dem_overlap_j = numpy.where(dem_overlap_mask)
     dem_overlap_elevs = dem_array[dem_overlap_mask]
+
+    if measure_coverage:
+        dem_overlap_xmin = xstart + (xstep * dem_overlap_j)
+        dem_overlap_xmax = dem_overlap_xmin + xstep
+        dem_overlap_ymax = ystart + (ystep * dem_overlap_i)
+        dem_overlap_ymin = dem_overlap_ymax + ystep
     N = len(dem_overlap_i)
 
     if not quiet:
@@ -827,10 +894,7 @@ def validate_dem_parallel(dem_name,
             print("\tGenerating DEM elevation dataframe... ", end="")
 
         # # Generate a dataframe of the dem elevations, indexed by their i,j coordinates.
-        dem_elev_df = pandas.DataFrame({#"dem_i": dem_overlap_i,
-                                        #"dem_j": dem_overlap_j,
-                                        "dem_elevation": dem_overlap_elevs},
-                                       # columns = ["dem_i", "dem_j", "dem_elevation"],
+        dem_elev_df = pandas.DataFrame({"dem_elevation": dem_overlap_elevs},
                                        index = pandas.MultiIndex.from_arrays((dem_overlap_i, dem_overlap_j),
                                                                              names=("i", "j"))
                                        )
@@ -889,7 +953,7 @@ def validate_dem_parallel(dem_name,
     t_start = time.perf_counter()
 
     # Set up subprocessing data structures for parallelization.
-    cpu_count = parallel_funcs.physical_cpu_count()
+    cpu_count = numprocs
     dt_dict = parallel_funcs.dtypes_dict
     with mp.Manager() as manager:
 
@@ -907,6 +971,13 @@ def validate_dem_parallel(dem_name,
         i_array = manager.Array(dt_dict[photon_df.i.dtype], photon_df.i)
         j_array = manager.Array(dt_dict[photon_df.j.dtype], photon_df.j)
         code_array = manager.Array(dt_dict[photon_df.class_code.dtype], photon_df.class_code)
+
+        if measure_coverage:
+            x_array = manager.Array(dt_dict[photon_df.dem_x.dtype], photon_df.dem_x)
+            y_array = manager.Array(dt_dict[photon_df.dem_y.dtype], photon_df.dem_y)
+        else:
+            x_array = None
+            y_array = None
 
         running_procs     = [None] * cpu_count
         open_pipes_parent = [None] * cpu_count
@@ -933,14 +1004,26 @@ def validate_dem_parallel(dem_name,
 
                 # Generate a new parallel subprocess to handle the data.
                 running_procs[i], open_pipes_parent[i], open_pipes_child[i] = \
-                    kick_off_new_child_process(height_array, i_array, j_array, code_array)
+                    kick_off_new_child_process(height_array, i_array, j_array, code_array,
+                                               measure_coverage=measure_coverage,
+                                               input_x=x_array,
+                                               input_y=y_array)
 
                 # Send the first batch of (i,j) pixel locations & elevs to processes now.
                 # Kick off the computations.
                 counter_chunk_end = min(counter_started + items_per_process_chunk, N)
-                open_pipes_parent[i].send((dem_overlap_i[counter_started: counter_chunk_end],
-                                           dem_overlap_j[counter_started: counter_chunk_end],
-                                           dem_overlap_elevs[counter_started: counter_chunk_end]))
+                if measure_coverage:
+                    open_pipes_parent[i].send((dem_overlap_i[counter_started: counter_chunk_end],
+                                               dem_overlap_j[counter_started: counter_chunk_end],
+                                               dem_overlap_elevs[counter_started: counter_chunk_end],
+                                               dem_overlap_xmin[counter_started: counter_chunk_end],
+                                               dem_overlap_xmax[counter_started: counter_chunk_end],
+                                               dem_overlap_ymin[counter_started: counter_chunk_end],
+                                               dem_overlap_ymax[counter_started: counter_chunk_end]))
+                else:
+                    open_pipes_parent[i].send((dem_overlap_i[counter_started: counter_chunk_end],
+                                               dem_overlap_j[counter_started: counter_chunk_end],
+                                               dem_overlap_elevs[counter_started: counter_chunk_end]))
                 counter_started = counter_chunk_end
                 num_chunks_started += 1
 
@@ -964,7 +1047,10 @@ def validate_dem_parallel(dem_name,
                         pipe.close()
                         pipe_child.close()
                         # Kick off a shiny new process
-                        proc, pipe, pipe_child = kick_off_new_child_process(height_array, i_array, j_array, code_array)
+                        proc, pipe, pipe_child = kick_off_new_child_process(height_array, i_array, j_array, code_array,
+                                                                            measure_coverage=measure_coverage,
+                                                                            input_x=x_array,
+                                                                            input_y=y_array)
                         # Put that process and pipes into the lists of active procs & pipes.
                         running_procs[i] = proc
                         open_pipes_parent[i] = pipe
@@ -994,15 +1080,27 @@ def validate_dem_parallel(dem_name,
                             counter_chunk_end = min(counter_started + items_per_process_chunk, N)
                             # DEBUG statement
                             # print("counter_started:", counter_started, "counter_chunk_end", counter_chunk_end)
-                            pipe.send((dem_overlap_i[counter_started: counter_chunk_end],
-                                       dem_overlap_j[counter_started: counter_chunk_end],
-                                       dem_overlap_elevs[counter_started: counter_chunk_end]))
+                            if measure_coverage:
+                                pipe.send((dem_overlap_i[counter_started: counter_chunk_end],
+                                           dem_overlap_j[counter_started: counter_chunk_end],
+                                           dem_overlap_elevs[counter_started: counter_chunk_end],
+                                           dem_overlap_xmin[counter_started: counter_chunk_end],
+                                           dem_overlap_xmax[counter_started: counter_chunk_end],
+                                           dem_overlap_ymin[counter_started: counter_chunk_end],
+                                           dem_overlap_ymax[counter_started: counter_chunk_end]))
+                            else:
+                                pipe.send((dem_overlap_i[counter_started: counter_chunk_end],
+                                           dem_overlap_j[counter_started: counter_chunk_end],
+                                           dem_overlap_elevs[counter_started: counter_chunk_end]))
                             # Increment the "started" counter. Let it run free on the data.
                             counter_started = counter_chunk_end
                             num_chunks_started += 1
                         else:
                             # Nothing more to send. Send a "STOP" command to the child proc.
-                            pipe.send(("STOP", None, None))
+                            if measure_coverage:
+                                pipe.send(("STOP", None, None, None, None, None, None))
+                            else:
+                                pipe.send(("STOP", None, None))
                             proc.join()
                             pipe.close()
                             pipe_child.close()
@@ -1222,6 +1320,8 @@ def read_and_parse_args():
                         help="Use the optimized ICESat-2 photon database rather than downloading granules separately. This can save time & memory if the database has already been built on this machine.")
     parser.add_argument('--delete_datafiles', action='store_true', default=False,
                         help='Delete the interim data files generated. Reduces storage requirements. (Default: keep them all.)')
+    parser.add_argument('--use_urban_mask', action='store_true', default=False,
+                        help="Use the WSL 'Urban Area' mask rather than OSM building footprints to mask out IceSat-2 data. Useful over lower-resolution (10m or coarser) dems, which tend to be bigger than building footprints.")
     parser.add_argument('--write_result_tifs', action='store_true', default=False,
                         help=""""Write output geotiff with the errors in cells that have ICESat-2 photons, NDVs elsewhere.""")
     parser.add_argument('--skip_icesat2_download', action="store_true", default=False,
@@ -1276,13 +1376,15 @@ if __name__ == "__main__":
                           output_vertical_datum = args.output_vdatum,
                           results_dataframe_file = output_h5,
                           icesat2_date_range = icesat2_date_range,
-                          interim_data_dir = args.datadir,
+                          interim_data_dir = (None if (args.datadir=="") else args.datadir),
                           overwrite=args.overwrite,
                           delete_datafiles=args.delete_datafiles,
                           write_result_tifs = args.write_result_tifs,
                           skip_icesat2_download = args.skip_icesat2_download,
                           plot_results = args.plot_results,
                           location_name = args.place_name,
+                          mask_out_buildings=not args.use_urban_mask,
+                          mask_out_urban=args.use_urban_mask,
                           quiet=args.quiet)
     # # fname = '/home/mmacferrin/Research/DATA/CopernicusDEM/data/30m/COP30_hh/Copernicus_DSM_COG_10_N26_00_W079_00_DEM.tif'
     # # output_file = "../data/freeport_coastline"

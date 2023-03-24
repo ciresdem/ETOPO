@@ -7,7 +7,7 @@ import os
 import argparse
 
 def list_files(dirname: str,
-               regex_match: str = r"\A\w*",
+               regex_match: str = r"\A[\w\-\.]*",
                ordered: bool = True,
                depth: int = -1,
                include_base_directory: bool = True) -> list:
@@ -52,8 +52,15 @@ if __name__ == "__main__":
     fnames = list_files(args.DIR,
                         regex_match=args.text,
                         depth=args.depth)
+
+    if len(fnames) > 0 and args.delete:
+        response = input("{0} files found matching pattern '{1}' found for deletion. Do you want to proceed (y/n)? ".format(len(fnames), args.text))
+        response = response.strip().lower()[0]
+    else:
+        response = None
+
     for fn in fnames:
-        if args.delete:
+        if args.delete and response == "y":
             print("Removing", fn)
             os.remove(fn)
         else:

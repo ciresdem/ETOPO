@@ -3,6 +3,7 @@
 """find_bad_icesat2_granules.py -- code for identifying and eliminating bad ICESat-2 granules from analyses."""
 
 import os
+import sys
 import pandas
 import numpy
 import matplotlib.pyplot as plt
@@ -18,6 +19,7 @@ import icesat2.validate_dem as validate_dem
 import icesat2.atl_granules as atl_granules
 import utils.configfile
 import utils.traverse_directory
+import utils.parallel_funcs
 import datasets.etopo_source_dataset
 
 my_config = utils.configfile.config()
@@ -68,7 +70,7 @@ def collect_granule_level_data(photon_results_df,
     elif type(photon_results_df) == pandas.DataFrame:
         df = photon_results_df
     else:
-        raise TypeError("Unknown type of 'photon_results_dataframe' in granule_hist():", type(photon_results_df))
+        raise TypeError("Unknown type of 'photon_results_dataframe' in collect_granule_level_data():", type(photon_results_df))
 
     # Get some cutoff boundaries in order to eliminate distant outliers from the histogram plots.
     low, hi = numpy.percentile(df.dem_minus_is2_m, (lo_pct_cutoff, hi_pct_cutoff))
@@ -80,12 +82,16 @@ def collect_granule_level_data(photon_results_df,
     return gids, piles
 
 def plot_stacked_histograms_with_bad_granule_marked(dem_fname,
+                                                    photon_db_fname,
                                                     bad_gids_list,
-                                                    photon_df,
                                                     nbins=200,
                                                     verbose=True):
 
-    granule_hist_plotname = get_photon_histogram_plotname_from_dem_fname(dem_fname)
+    photon_df = pandas.read_hdf(photon_db_fname)
+    assert isinstance(photon_df, pandas.DataFrame)
+
+    # granule_hist_plotname = get_photon_histogram_plotname_from_dem_fname(dem_fname, results_subdir=results_subdir)
+    granule_hist_plotname = os.path.join(os.path.dirname(photon_db_fname), os.path.basename(dem_fname).replace(".tif", "_bad_granule_histogram.png"))
     gids, piles = collect_granule_level_data(photon_df)
 
     # - 'gids' is a Nx2 list of granule-id pairs. All the other data corresponds with this list.
@@ -98,7 +104,7 @@ def plot_stacked_histograms_with_bad_granule_marked(dem_fname,
 
     # Generate the axes and histogram.
     fig, ax = plt.subplots(dpi=600)
-    gid_totals, bin_boundaries, _ = ax.hist(piles, nbins, histtype='bar', stacked=True)
+    gid_totals, bin_boundaries, _ = ax.hist(piles, bins=int(nbins), histtype='bar', stacked=True)
 
     # for i, (p, gt) in enumerate(zip(piles, gid_totals)):
     #     print("====================", i, "++++++++++++++++++")
@@ -107,14 +113,10 @@ def plot_stacked_histograms_with_bad_granule_marked(dem_fname,
     #     print(numpy.argmax(gt), bin_boundaries[numpy.argmax(gt)])
     #     print(gt)
 
-
-    # foobar
-    # print(len(gids), len(piles), len(gid_totals), len(bin_boundaries))
-
     # For each bad granule, put its name on the plot.
-    for gid1, gid2 in bad_gids_list:
-        # gid1, gid2 = atl_granules.granule_id_to_intx2(gid)
-        gname = atl_granules.intx2_to_granule_id((gid1, gid2))
+    for gname in bad_gids_list:
+        gid1, gid2 = atl_granules.granule_id_to_intx2(gname)
+        # gname = atl_granules.intx2_to_granule_id((gid1, gid2))
 
         # Find that bad granule in the list of all the granules in this file.
         for i, (tgid1, tgid2) in enumerate(gids):
@@ -166,8 +168,11 @@ def plot_stacked_histograms_with_bad_granule_marked(dem_fname,
 
     return
 
-def find_bad_granules_in_a_dataset(dataset_name_or_object,
+def find_bad_granules_in_a_dataset(results_dirname,
+                                   photon_results_regex = r"_results_photon_level_results\.h5\Z",
                                    make_histogram_plots_if_bad = True,
+                                   recurse=True,
+                                   nprocs = 20,
                                    verbose = True):
     """Loop through all the validation results of a dataset that has been validated.
     Look for all photon-level validation results produced previously and tag all
@@ -175,107 +180,167 @@ def find_bad_granules_in_a_dataset(dataset_name_or_object,
 
     Return a dataframe of all the bad granules found, along with the number of DEMs in which that bad granule was found.
     Save the dataframe to "csv_list_output."""
-    if type(dataset_name_or_object) == str:
-        dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_object)
+    # if type(dataset_name_or_object) == str:
+    #     dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_object)
+    #
+    # elif isinstance(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset) \
+    #     or issubclass(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset):
+    #     dset = dataset_name_or_object
 
-    elif isinstance(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset) \
-        or issubclass(dataset_name_or_object, datasets.etopo_source_dataset.ETOPO_source_dataset):
-        dset = dataset_name_or_object
+    # else:
+    #     raise TypeError("Unhandled object type given for parameter 'dataset_name_or_object':", type(dataset_name_or_object))
 
+    # list_of_datafiles = dset.retrieve_all_datafiles_list()
+    if recurse:
+        list_of_photon_results_datasets = utils.traverse_directory.list_files(results_dirname, regex_match=photon_results_regex)
     else:
-        raise TypeError("Unhandled object type given for parameter 'dataset_name_or_object':", type(dataset_name_or_object))
+        list_of_photon_results_datasets = [os.path.join(results_dirname, fn) for fn in os.listdir(results_dirname) \
+                                           if re.search(photon_results_regex, fn) is not None]
 
-    list_of_datafiles = dset.retrieve_all_datafiles_list()
+    # Find the DEM name (.tif) associated with each photon_database fname in the same directory.
+    fbases = [os.path.basename(fn[:re.search(photon_results_regex, fn).span()[0]]) + ".tif" for fn in list_of_photon_results_datasets]
+    tif_list = utils.traverse_directory.list_files(results_dirname, regex_match="\.tif\Z", depth=-1 if recurse else 1)
+    list_of_dems = [None] * len(fbases)
+    for i,fb in enumerate(fbases):
+        for tif in tif_list:
+            if tif.find(fb) > -1:
+                list_of_dems[i] = tif
+                continue
+    # Every one of these results databases should have a DEM associated with it.
+    assert numpy.all([(dem is not None) for dem in list_of_dems])
 
-    list_of_bad_granule_ids = []
+    # Get absolute paths for each of these files.
+    list_of_photon_results_datasets = [os.path.abspath(fn) for fn in list_of_photon_results_datasets]
+    list_of_dems = [os.path.abspath(fn) for fn in list_of_dems]
+
+    # list_of_dems = [os.path.basename(fn[:re.search(photon_results_regex, fn).span()[0]] + "_results.h5") for fn in list_of_photon_results_datasets]
+
     # list_of_filenames_containing_bad_granules = []
-    for dem_fname in list_of_datafiles:
-        # photon_h5_fname = get_photon_validation_fname_from_dem_fname(dem_fname)
-        bad_granules_csv_name = get_bad_granule_csv_name_from_dem_fname(dem_fname)
+    if verbose:
+        print("Starting loop of {0} photon results to validate.".format(len(list_of_dems)))
+        sys.stdout.flush()
+
+    #
+    # for i,(dem_fname,photon_df_name) in enumerate(zip(list_of_dems, list_of_photon_results_datasets)):
+    #     if verbose:
+    #         print("{0}/{1}".format(i+1, len(list_of_dems)), photon_df_name, dem_fname)
+    # foobar
 
         # # If we've already created a "BAD_GRANULES.csv" file from this DEM, skip it.
         # if os.path.exists(bad_granules_csv_name):
         #     continue
 
         # Step through, find the granules that are separated from one another.
-        bad_granule_ids, photon_df = \
-            find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
-                                                                 also_return_photon_df = True,
-                                                                 skip_if_no_photon_results_file = True,
-                                                                 write_bad_granules_csv_if_needed = True,
-                                                                 verbose = verbose)
+    utils.parallel_funcs.process_parallel(find_granules_that_are_separate_from_others_in_a_dem,
+                                          args_lists=[[dem,phf] for dem,phf in zip(list_of_dems, list_of_photon_results_datasets)],
+                                          kwargs_list = {'write_bad_granules_csv_if_needed': True,
+                                                         'plot_distributions_if_bad_granules': True,
+                                                         'remove_photon_db_if_no_bad_granules': False,
+                                                         'verbose': False},
+                                          max_nprocs=nprocs,
+                                          verbose=verbose)
+
+
+
+    # bad_granule_ids, photon_df = \
+    #     find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
+    #                                                          also_return_photon_df = True,
+    #                                                          skip_if_no_photon_results_file = True,
+    #                                                          write_bad_granules_csv_if_needed = True,
+    #                                                          verbose = verbose)
+
+    # TODO: Change name convention here.
+    # bad_granules_csv_names = [get_bad_granule_csv_name_from_dem_fname(fn, results_subdir=None) for fn in list_of_dems]
+    bad_granules_csv_names = [os.path.join(os.path.dirname(pdb), os.path.basename(dem).replace(".tif", "_BAD_GRANULES.csv"))
+                              for (dem,pdb) in zip(list_of_dems, list_of_photon_results_datasets)]
+    list_of_bad_granule_ids = []
+
+    for i, (dem_fname, photon_db_fname, bg_csv_name) in enumerate(zip(list_of_dems, list_of_photon_results_datasets, bad_granules_csv_names)):
+
+        if not os.path.exists(bg_csv_name):
+            continue
+
+        bad_granule_ids = pandas.read_csv(bg_csv_name)['granule_name'].tolist()
 
         if len(bad_granule_ids) > 0:
-            assert os.path.exists(bad_granules_csv_name)
+            # if verbose:
+            #     print(len(bad_granule_ids), "bad granules found.")
+            assert os.path.exists(bg_csv_name)
             list_of_bad_granule_ids.extend(bad_granule_ids)
 
+            # print(bad_granule_ids)
+
             if make_histogram_plots_if_bad:
-                plot_stacked_histograms_with_bad_granule_marked(dem_fname, bad_granule_ids, photon_df, verbose=verbose)
+                plot_stacked_histograms_with_bad_granule_marked(dem_fname, photon_db_fname, bad_granule_ids, verbose=verbose)
+        # elif verbose:
+        #     print(" done.")
 
-    return list(set(list_of_bad_granule_ids))
+    # Convert to a set to remove duplicates, than back to a (sorted) list.
+    return sorted(list(set(list_of_bad_granule_ids)))
 
 
-def get_photon_validation_fname_from_dem_fname(dem_fname,
-                                               results_subdir='icesat2_results',
-                                               include_results_df_name = False):
-    base_path, fname = os.path.split(dem_fname)
-    # If the results directory doesn't exist yet, create it.
-    if results_subdir is not None:
-        results_dir = os.path.join(base_path, results_subdir)
-    else:
-        results_dir = base_path
-
-    fbase, ext = os.path.splitext(fname)
-    results_database_name = os.path.join(results_dir, fbase + "_results.h5")
-
-    base, ext = os.path.splitext(results_database_name)
-    photon_results_database_name = base + "_photon_level_results.h5"
-    if include_results_df_name:
-        return photon_results_database_name, results_database_name
-    else:
-        return photon_results_database_name
-
-def get_bad_granule_csv_name_from_dem_fname(dem_fname,
-                                            results_subdir='icesat2_results'):
-    base_path, fname = os.path.split(dem_fname)
-    # If the results directory doesn't exist yet, create it.
-    if results_subdir is not None:
-        results_dir = os.path.join(base_path, results_subdir)
-    else:
-        results_dir = base_path
-
-    fbase, ext = os.path.splitext(fname)
-    bad_granule_csv_name = os.path.join(results_dir, fbase + "_BAD_GRANULES.csv")
-    return bad_granule_csv_name
-
-def get_granule_stats_h5_name_from_dem_fname(dem_fname,
-                                             results_subdir = 'icesat2_results'):
-    base_path, fname = os.path.split(dem_fname)
-    # If the results directory doesn't exist yet, create it.
-    if results_subdir is not None:
-        results_dir = os.path.join(base_path, results_subdir)
-    else:
-        results_dir = base_path
-
-    fbase, ext = os.path.splitext(fname)
-    bad_granule_csv_name = os.path.join(results_dir, fbase + "_granule_stats.h5")
-    return bad_granule_csv_name
-
-def get_photon_histogram_plotname_from_dem_fname(dem_fname,
-                                                 results_subdir = "icesat2_results"):
-    base_path, fname = os.path.split(dem_fname)
-    # If the results directory doesn't exist yet, create it.
-    if results_subdir is not None:
-        results_dir = os.path.join(base_path, results_subdir)
-    else:
-        results_dir = base_path
-
-    fbase, ext = os.path.splitext(fname)
-    bad_granule_png_name = os.path.join(results_dir, fbase + "_bad_granule_histogram.png")
-    return bad_granule_png_name
+# def get_photon_validation_fname_from_dem_fname(dem_fname,
+#                                                results_subdir='icesat2_results',
+#                                                include_results_df_name = False):
+#     base_path, fname = os.path.split(dem_fname)
+#     # If the results directory doesn't exist yet, create it.
+#     if results_subdir is not None:
+#         results_dir = os.path.join(base_path, results_subdir)
+#     else:
+#         results_dir = base_path
+#
+#     fbase, ext = os.path.splitext(fname)
+#     results_database_name = os.path.join(results_dir, fbase + "_results.h5")
+#
+#     base, ext = os.path.splitext(results_database_name)
+#     photon_results_database_name = base + "_photon_level_results.h5"
+#     if include_results_df_name:
+#         return photon_results_database_name, results_database_name
+#     else:
+#         return photon_results_database_name
+#
+# def get_bad_granule_csv_name_from_dem_fname(dem_fname,
+#                                             results_subdir='icesat2_results'):
+#     base_path, fname = os.path.split(dem_fname)
+#     # If the results directory doesn't exist yet, create it.
+#     if results_subdir is not None:
+#         results_dir = os.path.join(base_path, results_subdir)
+#     else:
+#         results_dir = base_path
+#
+#     fbase, ext = os.path.splitext(fname)
+#     bad_granule_csv_name = os.path.join(results_dir, fbase + "_BAD_GRANULES.csv")
+#     return bad_granule_csv_name
+#
+# def get_granule_stats_h5_name_from_dem_fname(dem_fname,
+#                                              results_dir = 'icesat2_results'):
+#     base_path, fname = os.path.split(dem_fname)
+#     # If the results directory doesn't exist yet, create it.
+#     if results_subdir is not None:
+#         results_dir = os.path.join(base_path, results_subdir)
+#     else:
+#         results_dir = base_path
+#
+#     fbase, ext = os.path.splitext(fname)
+#     bad_granule_csv_name = os.path.join(results_dir, fbase + "_granule_stats.h5")
+#     return bad_granule_csv_name
+#
+# def get_photon_histogram_plotname_from_dem_fname(dem_fname,
+#                                                  results_subdir = "icesat2_results"):
+#     base_path, fname = os.path.split(dem_fname)
+#     # If the results directory doesn't exist yet, create it.
+#     if results_subdir is not None:
+#         results_dir = os.path.join(base_path, results_subdir)
+#     else:
+#         results_dir = base_path
+#
+#     fbase, ext = os.path.splitext(fname)
+#     bad_granule_png_name = os.path.join(results_dir, fbase + "_bad_granule_histogram.png")
+#     return bad_granule_png_name
 
 
 def generate_photon_database_validation(dem_fname,
+                                        photon_db_fname,
                                         dem_vdatum,
                                         vdatum_out = "EGM2008",
                                         overwrite = False, # Probably need to add variables for cutoffs here.
@@ -294,87 +359,69 @@ def generate_photon_database_validation(dem_fname,
     if not os.path.exists(results_dir):
         os.mkdir(results_dir)
 
-    photon_results_database_name, results_database_name = get_photon_validation_fname_from_dem_fname(dem_fname, include_results_df_name=True)
-
+    # photon_results_database_name, results_database_name = get_photon_validation_fname_from_dem_fname(dem_fname,
+    #                                                                                                  resluts_subdir=results_subdir,
+    #                                                                                                  include_results_df_name=True)
+    results_database_name = os.path.join(os.path.dirname(photon_db_fname), os.path.basename(dem_fname).replace('.tif', "_results.h5"))
     # Check to make sure it's not already in there (skip if it is, unless we've specified to overwrite it.)
-    if os.path.exists(photon_results_database_name):
+    if os.path.exists(photon_db_fname):
         if overwrite:
             if verbose:
-                print("Removing old", os.path.split(photon_results_database_name)[1] + ".")
-            os.remove(photon_results_database_name)
+                print("Removing old", os.path.split(photon_db_fname)[1] + ".")
+            os.remove(photon_db_fname)
         else:
             if verbose:
-                print(os.path.split(photon_results_database_name)[1], "already exists.")
+                print(os.path.split(photon_db_fname)[1], "already exists.")
             return
 
     # Check to make sure it's not already in there (skip if it is, unless we've specified to overwrite it.)
-    # if os.path.exists(results_database_name):
-    #     if overwrite:
-    #         if verbose:
-    #             print("Removing old", os.path.split(results_database_name)[1] + ".")
-    #         os.remove(results_database_name)
-    #     else:
-    #         if verbose:
-    #             print(os.path.split(results_database_name)[1], "already exists.")
-    #         return
+    if os.path.exists(results_database_name):
+        if overwrite:
+            if verbose:
+                print("Removing old", os.path.split(results_database_name)[1] + ".")
+            os.remove(results_database_name)
+        else:
+            if verbose:
+                print(os.path.split(results_database_name)[1], "already exists.")
+            return
 
-    else: # not os.path.exists(photon_results_database_name)
+    # else: # not os.path.exists(photon_results_database_name)
         # If we don't have a photon-level validations file, make sure we generate one
         # Key point: ensure "include_photon_level_validation = True".
-        validate_dem.validate_dem_parallel(dem_fname,
-                                           photon_dataframe_name = None,
-                                           use_icesat2_photon_database = True,
-                                           icesat2_photon_database_obj = None,
-                                           dem_vertical_datum = dem_vdatum,
-                                           output_vertical_datum = vdatum_out,
-                                           results_dataframe_file = results_database_name,
-                                           interim_data_dir = results_dir,
-                                           include_photon_level_validation=True,
-                                           quiet=not verbose,
-                                           )
+    validate_dem.validate_dem_parallel(dem_fname,
+                                       photon_dataframe_name = photon_db_fname,
+                                       use_icesat2_photon_database = True,
+                                       icesat2_photon_database_obj = None,
+                                       dem_vertical_datum = dem_vdatum,
+                                       output_vertical_datum = vdatum_out,
+                                       results_dataframe_file = results_database_name,
+                                       interim_data_dir = results_dir,
+                                       include_photon_level_validation=True,
+                                       quiet=not verbose,
+                                       )
 
-    return photon_results_database_name
+    return photon_db_fname
 
 def find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
-                                                         also_return_photon_df = False,
-                                                         skip_if_no_photon_results_file = False,
-                                                         dem_vdatum = None,
+                                                         photon_db_fname,
                                                          save_granule_stats_df=False,
                                                          remove_granules_with_less_than_N_photons=20,
                                                          write_bad_granules_csv_if_needed=True,
+                                                         plot_distributions_if_bad_granules=True,
+                                                         remove_photon_db_if_no_bad_granules=False,
                                                          verbose=True):
     """For a given fname, perform a validation (if not done already) and compute the photon-level
     validation stats for the DEM. Then, compute a granule-by-granule 2-sided KS stat to
-    determine whether these granules come from the same "population". Save the results to a new dataframe."""
+    determine whether these granules come from the same "population". Save the results to a new dataframe in the same
+    directory as the photon_db_fname."""
 
-    photon_results_database_name = get_photon_validation_fname_from_dem_fname(dem_fname)
-    if not os.path.exists(photon_results_database_name):
-        if skip_if_no_photon_results_file:
-            if also_return_photon_df:
-                return [], None
-            else:
-                return []
-
-        if verbose:
-            print("Generating", photon_results_database_name)
-        # If the original validation hasn't been done yet, we'd better supply the
-        # correct vdatum of the dem here.
-        if dem_vdatum is None:
-            raise ValueError("If ICESat-2 validation has not been performed yet, " + \
-                             "dem_vdatum must be supplied to find_granules_separate_from_others(). " + \
-                             "'None' supplied.")
-        generate_photon_database_validation(dem_fname,
-                                            dem_vdatum=dem_vdatum,
-                                            verbose=verbose)
-
-    # 2. Loop through all the unique granules and organize the photons by those.
+    # 1. Loop through all the unique granules and organize the photons by those.
     # Read the photon_level validations dataframe
-    photon_df = pandas.read_hdf(photon_results_database_name, mode='r')
+    photon_df = pandas.read_hdf(photon_db_fname, mode='r')
     # A Nx2 array of uniqpe granule-id integer pairs.
     # unique_granule_ids = numpy.unique(list(zip(photon_df.granule_id1, photon_df.granule_id2)))
 
     granule_ids, granule_data = collect_granule_level_data(photon_df)
-
 
     # Remove any granules that have less than the requisite number of photons in them in this database.
     granule_idxs_to_remove = []
@@ -467,7 +514,7 @@ def find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
     # Comment this out later.
     # print(grdf)
     if save_granule_stats_df:
-        granule_stats_fname = get_granule_stats_h5_name_from_dem_fname(dem_fname)
+        granule_stats_fname = os.path.join(os.path.dirname(photon_db_fname), os.path.basename(dem_fname).replace(".tif", "_granule_stats.h5"))
         grdf.to_hdf(granule_stats_fname, "icesat2", complevel=3, complib='zlib')
         if verbose:
             print(granule_stats_fname, "written.")
@@ -492,24 +539,61 @@ def find_granules_that_are_separate_from_others_in_a_dem(dem_fname,
             photon_count = ((photon_df.granule_id1 == gid1) & (photon_df.granule_id2 == gid2)).sum()
             LIST_OF_PHOTON_COUNTS.append(photon_count)
 
-    if (len(LIST_OF_OUTSIDE_GRANULES_IDS) > 0) and write_bad_granules_csv_if_needed:
-        csv_fname = get_bad_granule_csv_name_from_dem_fname(dem_fname)
-        outside_granule_df = pandas.DataFrame(data={"granule_name": [atl_granules.intx2_to_granule_id(g)+".h5" for g in LIST_OF_OUTSIDE_GRANULES_IDS],
-                                                    "gid1": [g[0] for g in LIST_OF_OUTSIDE_GRANULES_IDS],
-                                                    "gid2": [g[1] for g in LIST_OF_OUTSIDE_GRANULES_IDS],
-                                                    "photon_count": LIST_OF_PHOTON_COUNTS},
-                                             )
-        outside_granule_df.to_csv(csv_fname, index=False)
+    if (len(LIST_OF_OUTSIDE_GRANULES_IDS) > 0):
+        granule_names = [atl_granules.intx2_to_granule_id(g) + ".h5" for g in LIST_OF_OUTSIDE_GRANULES_IDS]
+
+        if write_bad_granules_csv_if_needed:
+            # csv_fname = get_bad_granule_csv_name_from_dem_fname(dem_fname, results_subdir=results_subdir)
+            csv_fname = os.path.join(os.path.dirname(photon_db_fname), os.path.basename(dem_fname).replace(".tif", "_BAD_GRANULES.csv"))
+            outside_granule_df = pandas.DataFrame(data={"granule_name": granule_names,
+                                                        "gid1": [g[0] for g in LIST_OF_OUTSIDE_GRANULES_IDS],
+                                                        "gid2": [g[1] for g in LIST_OF_OUTSIDE_GRANULES_IDS],
+                                                        "photon_count": LIST_OF_PHOTON_COUNTS},
+                                                 )
+            outside_granule_df.to_csv(csv_fname, index=False)
+            if verbose:
+                print(os.path.join(*(os.path.normpath(csv_fname).split(os.sep)[-3:])), "written with {0} entries.".format(len(LIST_OF_OUTSIDE_GRANULES_IDS)))
+
+        if plot_distributions_if_bad_granules:
+            # Plot the data here.
+            plot_stacked_histograms_with_bad_granule_marked(dem_fname,
+                                                            photon_db_fname,
+                                                            granule_names,
+                                                            verbose=verbose)
+
+    if remove_photon_db_if_no_bad_granules and len(LIST_OF_OUTSIDE_GRANULES_IDS) == 0:
+        os.remove(photon_db_fname)
         if verbose:
-            print(os.path.join(*(os.path.normpath(csv_fname).split(os.sep)[-3:])), "written with {0} entries.".format(len(LIST_OF_OUTSIDE_GRANULES_IDS)))
+            print(os.path.basename(photon_db_fname), "removed.")
 
-    if also_return_photon_df:
-        return LIST_OF_OUTSIDE_GRANULES_IDS, photon_df
-    else:
-        return LIST_OF_OUTSIDE_GRANULES_IDS
+    return LIST_OF_OUTSIDE_GRANULES_IDS
 
 
-def accumulate_bad_granule_dfs(dataset_name_or_obj,
+def symlink_bad_granule_plots_to_histogram_dir(plotdir, histdir):
+    """For all tiles that contain a "BAD_GRANULES.csv" file in the histdir, copy a hotlink to the "results_lot.png" file
+    into the histogram directory.
+
+    Just use a symlink to do this without copying/moving any actual files.
+
+    Often, after running the 'bad granule-finder', I put all the "histogram plots" and
+    associated csv files into a sub-directory to easily peruse them. It's handy to look at the results_plot's as well,
+    to see if it's really a bad double-surface or just a random error. This helps do that."""
+    tag_regex = r"[SN]\d{2}[EW]\d{3}"
+    bad_granule_ids = [re.search(tag_regex, fn).group() for fn in os.listdir(histdir) if (fn.find("_BAD_GRANULES.csv") > 0)]
+
+    print(len(bad_granule_ids))
+
+    plotfiles = [os.path.join(plotdir, fn) for fn in os.listdir(plotdir) if (fn.find("_results_plot.png") > 0) and (re.search(tag_regex, fn).group() in bad_granule_ids)]
+
+    for pfile in plotfiles:
+        os.symlink(pfile, os.path.join(histdir, os.path.basename(pfile)))
+
+    print(len(plotfiles), "plot files symlink'ed.")
+
+    return
+
+
+def accumulate_bad_granule_dfs(dirname,
                                bad_granule_regex = "_BAD_GRANULES\.csv\Z",
                                verbose = True):
     """Run through a whole dataset, find all the "_BAD_GRANULES.csv" filenames, accumulate them all into a collective dataframe.
@@ -517,12 +601,12 @@ def accumulate_bad_granule_dfs(dataset_name_or_obj,
     Just return a dataframe that includes all the "_BAD_GRANULES.csv" entries, along with the filename they came from.
     Return this dataframe.
     """
-    if isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset):
-        dset_obj = dataset_name_or_obj
-    else:
-        dset_obj = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
+    # if isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset):
+    #     dset_obj = dataset_name_or_obj
+    # else:
+    #     dset_obj = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
 
-    bad_granule_file_list = utils.traverse_directory.list_files(dset_obj.config._abspath(dset_obj.config.source_datafiles_directory),
+    bad_granule_file_list = utils.traverse_directory.list_files(dirname,
                                                                 regex_match=bad_granule_regex,
                                                                 include_base_directory=True)
     # Make sure we're only dealing in absolute paths here.
@@ -540,7 +624,7 @@ def accumulate_bad_granule_dfs(dataset_name_or_obj,
     else:
         return None
 
-def create_master_list_of_bad_granules(dataset_name_or_obj,
+def create_master_list_of_bad_granules(dirname,
                                        master_bad_granule_csv = my_config._abspath(my_config.icesat2_bad_granules_csv),
                                        append = True,
                                        verbose = True):
@@ -549,11 +633,10 @@ def create_master_list_of_bad_granules(dataset_name_or_obj,
 
     Pick out all the _BAD_GRANULES.csv files from it, add their records to the master list if they are not already in there.
     """
-    new_bad_granules_df = accumulate_bad_granule_dfs(dataset_name_or_obj, verbose=verbose)
+    new_bad_granules_df = accumulate_bad_granule_dfs(dirname, verbose=verbose)
     if new_bad_granules_df is None or len(new_bad_granules_df) == 0:
         if verbose:
-            print("No bad granules found in dataset '{0}'".format(dataset_name_or_obj if (type(dataset_name_or_obj) == str) \
-                                                                                      else dataset_name_or_obj.dataset_name))
+            print("No bad granules found in dataset '{0}'".format(dirname))
 
         if append and os.path.exists(master_bad_granule_csv):
             existing_bad_granules_df = pandas.read_csv(master_bad_granule_csv, index_col=False)
@@ -601,7 +684,7 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
                                    refind_bad_granules = False,
                                    regenerate_bad_granule_csv = False,
                                    append_if_regenerating_bad_granule_csv = True,
-                                   dataset_name_if_regenerating = "CUDEM_CONUS", # TODO: Change this to Copernicus when ready to do the whole world.
+                                   dirname_if_regenerating = "CUDEM_CONUS", # TODO: Change this to Copernicus when ready to do the whole world.
                                    files_identified_threshold = 2,
                                    min_photons_threshold = 1000,
                                    return_as_gid_numbers=False,
@@ -614,7 +697,7 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
     If return_as_gid_numbers, return a list of 2-tuple (gid1,gid2) granule identifiers.
     Otherwise, return a list of ATL03...h5 granule names."""
     if refind_bad_granules:
-        find_bad_granules_in_a_dataset(dataset_name_if_regenerating)
+        find_bad_granules_in_a_dataset(dirname_if_regenerating)
 
     if regenerate_bad_granule_csv:
         create_master_list_of_bad_granules(dataset_name_if_regenerating,
@@ -647,16 +730,14 @@ def get_list_of_granules_to_reject(bad_granule_csv = my_config._abspath(my_confi
 
 def delete_results_with_bad_granules(dirname,
                                      dem_regex = "v[123]\.tif\Z",
-                                     results_subdir="icesat2_results",
-                                     place_name = None,
-                                     delete_master_results_too = True,
+                                     photon_db_regex = r"_results_photon_level_results\.h5\Z",
                                      verbose = True):
     """Run through a results directory and elimiate all results that contain bad granules.
 
     It will be assumed that the "photon-level results" will have been generated, which
     simplifies finding results that contain photons from bad granules.
 
-    Will not elimiate vdatum-converted DEMs or coastline masks, as those have
+    Will not eliminate vdatum-converted DEMs or coastline masks, as those have
     nothing to do with bad granules. Those are kept in place.
 
     If "place_name" is given, if some bad granules were found, also eliminate
@@ -674,33 +755,61 @@ def delete_results_with_bad_granules(dirname,
     # else:
     #     dset_obj = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
 
-    # # List of all the DEMs
-    # dem_filenames = utils.traverse_directory.list_files(dset_obj.config._abspath(dset_obj.config.source_datafiles_directory),
-    #                                                     regex_match=dem_regex,
-    #                                                     include_base_directory=True)
+    # List of all the DEMs
+    dem_filenames_all = utils.traverse_directory.list_files(dirname,
+                                                        regex_match=dem_regex,
+                                                        include_base_directory=True)
 
-    dem_filenames = [os.path.join(dirname, fn) for fn in os.listdir(dirname) if (re.search(dem_regex, fn) != None)]
-    # List of the bad granules, by GID integers.
+    photon_df_filenames = utils.traverse_directory.list_files(dirname,
+                                                              regex_match=photon_db_regex,
+                                                              include_base_directory=True)
+
+    # Get the base name of the dem .tif file that should be associated with each photon database filename.
+    fbases = [os.path.basename(fn[:re.search(photon_db_regex, fn).span()[0]]) + ".tif" for fn in photon_df_filenames]
+
+    # Get the associated DEM filename for each photon_database filename.
+    list_of_dems = [None] * len(photon_df_filenames)
+    for i,fb in enumerate(fbases):
+        for tif in dem_filenames_all:
+            if tif.find(fb) > -1:
+                list_of_dems[i] = tif
+                continue
+    # Every one of these results databases should have a DEM associated with it.
+    assert numpy.all([(dem is not None) for dem in list_of_dems])
+
+    # if recurse:
+    #     dem_filenames = utils.traverse_directory.list_files(dirname, regex_match=dem_regex)
+    # else:
+    #     dem_filenames = [os.path.join(dirname, fn) for fn in os.listdir(dirname) if (re.search(dem_regex, fn) != None)]
+    # # List of the bad granules, by GID integers.
     bad_gid_list = get_list_of_granules_to_reject(return_as_gid_numbers = True)
 
     # Get the directory where all the results are hidden.
-    if results_subdir != None:
-        results_dir = os.path.join(dirname, results_subdir)
-    else:
-        results_dir = dirname
+    # if results_subdir != None:
+    #     results_dir = os.path.join(dirname, results_subdir)
+    # else:
+    #     results_dir = dirname
 
     files_removed = []
+    dirs_to_remove_summary_files = []
 
-    for dem_fname in dem_filenames:
-        results_base = os.path.join(results_dir, os.path.splitext(os.path.split(dem_fname)[1])[0])
+    for dem_fname, photon_db_fname in zip(list_of_dems, photon_df_filenames):
 
-        photon_results_df_fname = results_base + "_results_photon_level_results.h5"
-        if not os.path.exists(photon_results_df_fname):
-            if verbose:
-                print(os.path.split(photon_results_df_fname)[1], "not found. Moving on.")
-                continue
+        # photon_results_df_regex = os.path.basename(dem_fname)[:os.path.basename(dem_fname).find(".tif")] + r"_results_photon_level_results\.h5\Z"
+        # photon_results_df_list = utils.traverse_directory.list_files(os.path.dirname(os.path.dirname(dem_fname)), photon_results_df_regex)
 
-        photon_df = pandas.read_hdf(photon_results_df_fname)
+        # if not os.path.exists(photon_results_df_fname):
+        # if len(photon_results_df_list) == 0:
+        #     if verbose:
+        #             # print(os.path.split(photon_results_df_fname)[1], "not found. Moving on.")
+        #             print("{0} not found in {1}. Moving on.".format(photon_results_df_regex, os.path.dirname(os.path.dirname(dem_fname))))
+        #             continue
+        # else:
+        #     assert len(photon_results_df_list) == 1
+        #     photon_results_df_fname = photon_results_df_list[0]
+
+        photon_df = pandas.read_hdf(photon_db_fname)
+        results_base = os.path.join(os.path.dirname(photon_db_fname), os.path.basename(dem_fname).replace(".tif", ""))
 
         for gid1, gid2 in bad_gid_list:
             # If no photons in this dataset come from the bad granule, just move along to the next one.
@@ -726,36 +835,45 @@ def delete_results_with_bad_granules(dirname,
                     if verbose:
                         print(os.path.split(r_fname)[1], "deleted.")
 
+            dirs_to_remove_summary_files.append(os.path.dirname(photon_db_fname))
+
             # After deleting the files, we don't need to keep looking for bad granule data in that file.
             break
 
     # If we've removed some files and the cumulative summary dataset exists, remove that too to have it regenerated.
-    if len(files_removed) > 0:
-        dirname_base = os.path.splitext(os.path.split(dirname)[1])[0]
-        h5_results_fname = os.path.join(results_dir, dirname_base + "_results.h5")
-        files_to_remove = [h5_results_fname]
+    if len(dirs_to_remove_summary_files) > 0:
+        # First, get rid of duplicate listings of directories where results files have been deleted.
+        dirs_to_remove_summary_files = list(set(dirs_to_remove_summary_files))
 
-        if place_name != None:
-            # Also remove the plots and stats, which tend to be named after the place name, not the subdir.
-            plot_fname = os.path.join(results_dir, place_name + "_results.png")
-            txt_fname = os.path.join(results_dir, place_name + "_results.txt")
-            files_to_remove.extend([plot_fname, txt_fname])
+        for dirname in dirs_to_remove_summary_files:
+            # First, remove any files that contain the phrase "summary_results" in the title.
+            summary_files = [os.path.join(dirname, fn) for fn in os.listdir(dirname) if fn.find("summary_results") > -1]
 
-        for fname in files_to_remove:
-            if os.path.exists(fname):
-                # Add it to our list of deleted files
-                files_removed.append(fname)
-                # Delete the file
-                os.remove(fname)
-                # Say that we deleted the file.
-                if verbose:
-                    print(os.path.split(fname)[1], "deleted.")
+            for fn in summary_files:
+                if os.path.exists(fn):
+                    files_removed.append(fn)
+                    os.remove(fn)
+                    if verbose:
+                        print(os.path.basename(fn), "deleted.")
+
+            # Now, find any "_results.h5" files that contain a base that matches a sub-directory name in the directory path.
+            # This is because most summary results are akin to "CNMI_results.h5" where "CNMI" is a parent folder somewhere up the directory tree.
+            # Look for these.
+            path_parts = [dn for dn in dirname.split(os.sep) if len(dn)>0]
+
+            results_h5s = [fn for fn in os.listdir(dirname) if fn.find("_results.h5") > -1]
+
+            for r_h5 in results_h5s:
+                if r_h5[:r_h5.find("_results.h5")] in path_parts:
+                    h5_path = os.path.join(dirname, r_h5)
+                    files_removed.append(h5_path)
+                    os.remove(h5_path)
+                    if verbose:
+                        print(os.path.basename(h5_path), "deleted.")
 
     return files_removed
 
-def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
-                                                       base_dir_if_not_default = None,
-                                                       results_subdir = "icesat2_results",
+def check_for_and_remove_bad_granules_after_validation(dirname,
                                                        verbose=True):
     """After a dataset has been validated (or even just partially validated) against ICESat-2
     with photon_results included, go back and check whether any granules contain bad data.
@@ -764,31 +882,30 @@ def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
     re-computed.
 
     This is kinda the "do-it-all" functino for this module."""
-    if type(dataset_name_or_obj) == str:
-        dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
-    else:
-        assert isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset)
-        dset = dataset_name_or_obj
+    # if type(dataset_name_or_obj) == str:
+    #     dset = datasets.etopo_source_dataset.get_source_dataset_object(dataset_name_or_obj)
+    # else:
+    #     assert isinstance(dataset_name_or_obj, datasets.etopo_source_dataset.ETOPO_source_dataset)
+    #     dset = dataset_name_or_obj
 
-    find_bad_granules_in_a_dataset(dset,
+    find_bad_granules_in_a_dataset(dirname,
                                    make_histogram_plots_if_bad = True,
+                                   # results_subdir="icesat2_results",
                                    verbose=verbose)
 
-    create_master_list_of_bad_granules(dset, append=True, verbose=verbose)
+    create_master_list_of_bad_granules(dirname, append=True, verbose=verbose)
 
-    # list_of_bad_granules = get_list_of_granules_to_reject()
-    # if len(list_of_bad_granules) > 0 and verbose:
-    #     print(len(list_of_bad_granules), "granules found to be deleted.")
+    list_of_bad_granules = get_list_of_granules_to_reject()
+    if len(list_of_bad_granules) > 0 and verbose:
+        print(len(list_of_bad_granules), "granules found to be deleted.")
 
     # dirname_list = [os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d) \
     #                 for d in \
     #                 os.listdir("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/") \
     #                     if os.path.isdir(os.path.join("/home/mmacferrin/Research/DATA/DEMs/CUDEM/data/CONUS/NCEI_ninth_Topobathy_2014_8483/", d))]
 
-    deleted_list = delete_results_with_bad_granules(dset.config.source_datafiles_directory,
-                                                    dem_regex = dset.config.datafiles_regex,
-                                                    place_name = dset.config.dataset_name,
-                                                    delete_master_results_too = True,
+    deleted_list = delete_results_with_bad_granules(dirname,
+                                                    dem_regex = r"_egm2008\.tif\Z",
                                                     verbose=verbose)
 
     if verbose:
@@ -799,14 +916,18 @@ def check_for_and_remove_bad_granules_after_validation(dataset_name_or_obj,
 
 def read_and_parse_args():
     parser = argparse.ArgumentParser(description="Look through photon validation results, pick out any bad ICESat-2 granules, and delete result datafiles that relied on those granules.")
-    parser.add_argument("NAME", help="Dataset name to check results for bad granules. Should be an ETOPO source dataset object.")
+    parser.add_argument("dirname", help="Directory to find '_photon_level_results.h5' files.")
+    parser.add_argument("--plot_all_histograms", "-p", action="store_true", default=False, help="Plot all the stacked histograms for each granule in the dataset.")
+    # parser.add_argument("NAME", help="Dataset name to check results for bad granules. Should be an ETOPO source dataset object.")
     return parser.parse_args()
 
 if __name__ == "__main__":
 
+    # symlink_bad_granule_plots_to_histogram_dir('/home/mmacferrin/Research/DATA/ETOPO/data/validation_results/15s/2022.09.29/plots',
+    #                                            '/home/mmacferrin/Research/DATA/ETOPO/data/validation_results/15s/2022.09.29/bad_granules')
     args = read_and_parse_args()
 
-    check_for_and_remove_bad_granules_after_validation(args.NAME)
+    check_for_and_remove_bad_granules_after_validation(args.dirname)
 
     # gr = get_list_of_granules_to_reject(refind_bad_granules = True, regenerate_bad_granule_csv = True)
     # if len(gr) > 0:

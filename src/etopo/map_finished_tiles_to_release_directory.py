@@ -67,7 +67,7 @@ def convert_tile_fname(tilename: str,
                        also_strip_date: bool = True):
     "The lat/lon TileID numbers currently map to the southwest corner of the tile. Rename a tile so it maps to the northwest corner instead, without changing the file contents at all."""
     tile_fname = os.path.basename(tilename)
-    if os.path.splitext(tile_fname)[1] not in (".nc", ".tif") or re.search("_w\.tif\Z", tile_fname) is not None:
+    if os.path.splitext(tile_fname)[1] not in (".nc", ".tif") or re.search("_w\.((tif)|(nc))\Z", tile_fname) is not None:
         return None
 
     tile_ID_orig = re.search("(?<=_)[NS](\d{2})[EW](\d{3})(?=[_\.])", tile_fname).group()
@@ -95,10 +95,11 @@ def convert_tile_fname(tilename: str,
         except AssertionError as e:
             print(tile_fname_new)
             raise e
-        if tile_fname_new.find("_sid.tif") == -1:
-            tile_fname_new = tile_fname_new.replace(".tif", "_surface.tif")
+        ext = os.path.splitext(tile_fname)[1]
+        if tile_fname_new.find("_sid" + ext) == -1:
+            tile_fname_new = tile_fname_new.replace(ext, "_surface" + ext)
         else:
-            tile_fname_new = tile_fname_new.replace("_sid.tif", "_surface_sid.tif")
+            tile_fname_new = tile_fname_new.replace("_sid" + ext, "_surface_sid" + ext)
 
     tile_directory_new = provide_destination_folder(tilename)
 

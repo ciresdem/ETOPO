@@ -164,6 +164,12 @@ TEMP_15_sec_tiles.datalist*
 /data/crm/cudem_tiles_shp.zip
 /data/datalists/60s/TEMP_15_sec_tiles_empty.datalist
 /data/datalists/60s/TEMP_15_sec_tiles_weights.datalist
+/compress_tool/*
+/data/ETOPO_2022_release_tar_gz/*
+/data/ETOPO_2022_release_compressed/*
+/data/validation_results/*
+/data/empty_tiles/*
+
 tileindex_NCEI_*
 tides:s*.inf
 *.nc
@@ -171,3 +177,5 @@ tides:s*.inf
 *_tmp_*
 *trans_grid.tif
 gmrt:layer=*.inf
+/src/icesat2/validate_dem_TEMP.py
+/compress_tool.zip

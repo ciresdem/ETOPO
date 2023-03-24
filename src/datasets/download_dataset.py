@@ -93,7 +93,7 @@ class DatasetDownloader_BaseClass:
             # Here we're looking for the two words between 'Length: ' and the first "[". Those tell us the
             # exact bite size (fsize_remove) and the short string for the file size (fsize_small)
             try:
-                fsize_remote, fsize_small = re.search("(?<=Length: )[\w\(\) ]+(?=\[)", command_output.decode('utf-8')).group().split()
+                fsize_remote, fsize_small = re.search("(?<=Length: )[\w\(\)\. ]+(?=\[)", command_output.decode('utf-8')).group().split()
             except AttributeError:
                 # If the regex search fails, at least print the output so I can debug it.
                 print("WARNING: String regex-match failed in query_for_remote_filesize()...")
@@ -119,6 +119,7 @@ class DatasetDownloader_BaseClass:
 
         file_of_urls = self.url_list
         data_dir = self.local_data_dir
+        print(file_of_urls)
         if not os.path.exists(file_of_urls):
             self.create_list_of_links()
 

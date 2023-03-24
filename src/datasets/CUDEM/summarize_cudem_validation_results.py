@@ -40,21 +40,26 @@ def plot_regions():
         all_files.extend(files)
 
         print(region, ",", len(files), "files.")
-        # for fname in files:
-        #     print(" ", fname[len(os.path.dirname(os.path.dirname(os.path.dirname(fname)))):])
-
-        figname = os.path.join(cudem_config.source_datafiles_directory, region + "_validation_results.png")
-        icesat2.plot_validation_results.plot_histogram_and_error_stats_4_panels(files,
-                                                                                figname,
-                                                                                place_name = region,
-                                                                                dpi = 1200)
+        # # for fname in files:
+        # #     print(" ", fname[len(os.path.dirname(os.path.dirname(os.path.dirname(fname)))):])
+        #
+        # figname = os.path.join(cudem_config.source_datafiles_directory, region + "_validation_results.png")
+        # icesat2.plot_validation_results.plot_histogram_and_error_stats_4_panels(files,
+        #                                                                         figname,
+        #                                                                         place_name = region,
+        #                                                                         dpi = 1200)
 
     print("CUDEM all,", len(all_files), "files.")
-    figname_all = os.path.join(cudem_config.source_datafiles_directory, "CUDEM_all_validation_results.png")
-    icesat2.plot_validation_results.plot_histogram_and_error_stats_4_panels(all_files,
-                                                                            figname_all,
-                                                                            place_name="CUDEM",
-                                                                            dpi=1200)
+    for ext in (".png", ".eps"):
+        figname_all = os.path.join(cudem_config.source_datafiles_directory, "CUDEM_all_validation_results" + ext)
+        icesat2.plot_validation_results.plot_histogram_and_error_stats_4_panels(all_files,
+                                                                                figname_all,
+                                                                                error_max_cutoff = 25,
+                                                                                hist_cutoff_num_stddevs = 3,
+                                                                                place_name="CUDEM",
+                                                                                also_add_rmse_to_hist = True,
+                                                                                dpi=1200)
+
 
 if __name__ == "__main__":
     plot_regions()

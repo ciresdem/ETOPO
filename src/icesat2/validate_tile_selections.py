@@ -156,22 +156,16 @@ def validate_tile_selections(tile_csv = tile_list_csv,
 
             icesat2_data_exists = atl03_granules_exist and atl08_granules_exist
 
-            icesat2.validate_dem_collection.validate_list_of_dems(list_of_source_files,
-                                                                  photon_h5_name,
+            icesat2.validate_dem_collection.validate_list_of_dems(list_of_source_files, photon_h5_name,
                                                                   results_h5=results_h5_name,
                                                                   fname_filter=dsconfig.datafiles_regex,
-                                                                  output_dir=dset_subdir,
-                                                                  icesat2_dir=icesat2_dir,
-                                                                  input_vdatum=vdatum_in,
-                                                                  output_vdatum="EGM2008",
-                                                                  overwrite=False,
-                                                                  place_name=area_name_dirname,
+                                                                  output_dir=dset_subdir, icesat2_dir=icesat2_dir,
+                                                                  input_vdatum=vdatum_in, output_vdatum="EGM2008",
+                                                                  overwrite=False, place_name=area_name_dirname,
                                                                   create_individual_results=False,
-                                                                  date_range=["2021-01-01","2021-12-31"],
+                                                                  date_range=["2021-01-01", "2021-12-31"],
                                                                   skip_icesat2_download=icesat2_data_exists,
-                                                                  delete_datafiles=False,
-                                                                  verbose=True
-                                                                  )
+                                                                  delete_datafiles=False, verbose=True)
 
         except Exception:
             print("-->", area_name, ",", source_dataset, "analysis failed. Here is the error:")

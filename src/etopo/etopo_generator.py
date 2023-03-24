@@ -612,7 +612,9 @@ class ETOPO_Generator:
                                                          self.etopo_config.etopo_ndv,
                                                          self.etopo_config.etopo_cudem_cache_directory,
                                                          temp_dirname),
-                                                   kwargs = {'verbose': False,
+                                                   # If we're only generating one tile and have 'verbose' set, then keep
+                                                   # the output on. Else, off, to avoid the parallel-stdout mess.
+                                                   kwargs = {'verbose': True if (tile_id and verbose) else False,
                                                              'algorithm': 'average'})
                                                              # 'algorithm': 'bilinear' if resolution==1 else 'average'})
                 else:
@@ -682,7 +684,8 @@ class ETOPO_Generator:
                     active_procs.append(proc_to_start)
                     active_tempdirs.append(tmpdir)
 
-                if verbose and resolution < 30:
+                # If we're generating more than one tile and 'verbose' is set, use a progress bar.
+                if verbose and resolution < 30 and not tile_id:
                     # pass
                     utils.progress_bar.ProgressBar(total_finished_procs, N, suffix="{0:,}/{1:,}".format(total_finished_procs, N))
 
@@ -1048,7 +1051,11 @@ class ETOPO_Generator:
 
         # Run it. Make the "cwd" a temp dir to avoid conflicts.
         # proc = subprocess.run(waffles_args)
-        proc = subprocess.run(waffles_args, cwd=temp_dir_for_cwd, capture_output=subprocess.PIPE, text=True)
+        if verbose:
+            capture_flag = False
+        else:
+            capture_flag = subprocess.PIPE
+        proc = subprocess.run(waffles_args, cwd=temp_dir_for_cwd, capture_output=capture_flag, text=True)
         if verbose:
             print(dest_tile_fname, "written.")
 
@@ -1434,7 +1441,7 @@ if __name__ == "__main__":
 
     elif args.all_tiles:
         EG = ETOPO_Generator()
-        for res in (15,60,30,1):
+        for res in args.resolution:
             if res == 1:
                 bed_opts = (False,)
             else:
@@ -1446,6 +1453,7 @@ if __name__ == "__main__":
                                             add_datestamp_to_files= args.datestamp,
                                             crm_only_if_1s=True,
                                             bed=bed_o,
+                                            tile_id=args.tile_id,
                                             overwrite=args.overwrite,
                                             subdir=args.subdir,
                                             tempdir_prefix=args.tempdir_prefix,
@@ -1463,11 +1471,14 @@ if __name__ == "__main__":
                                  overwrite=args.overwrite,
                                  verbose=not args.quiet)
 
-        etopo.map_finished_tiles_to_release_directory.generate_output_directory_and_files(src_subdir = args.subdir,
-                                                                                          delete_old = True,
-                                                                                          skip_pdfs = True,
-                                                                                          print_only = False,
-                                                                                          summarize = not args.quiet)
+        # If we're only producing the 1s versions, don't re-generate the output directory. Otherwise if we're generating tiles
+        # at 15, 30, and/or 60s resolution, re-create the output directory with those tiles.
+        if not ((len(args.resolution) == 1) and (args.resolution[0] == 1)):
+            etopo.map_finished_tiles_to_release_directory.generate_output_directory_and_files(src_subdir = args.subdir,
+                                                                                              delete_old = True,
+                                                                                              skip_pdfs = True,
+                                                                                              print_only = False,
+                                                                                              summarize = not args.quiet)
 
     else:
         EG = ETOPO_Generator()

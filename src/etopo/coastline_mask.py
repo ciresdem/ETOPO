@@ -71,12 +71,70 @@ def get_bounding_box_and_step(gdal_dataset, invert_for_waffles=False):
                 max(ymin, ymax)], \
             [abs(xstep), abs(ystep)]
 
-def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
+def get_horizontal_projection_only(gdal_ds_crs_wkt_or_epsg, as_epsg: bool = True):
+    """Given an input projection, which may be a combined horizontal+vertical projection, return only the horizontal
+    projection.
+
+    gdal_ds_prj_wkt_or_epsg can be any of the following:
+    - An open gdal.Dataset object.
+    - A pyproj.crs.CRS object
+    - A string of well-known-text projection
+    - An integer EPSG code (usually 4- or 5-digit)
+
+    If the input projection is horizontal only, it will return the projection identical to the input.
+    If the input projection is a combined horizontal+vetical, it will return the horizontal projection only.
+
+    If as_epsg is true, it will return an integer EPSG value.
+    If as_egsp is False, it will return a pyproj.crs.CRS object.
+
+    If the input is an unhandled datatype (includine NoneType), or unreadable, None will be returned."""
+    # If it's a gdal Dataset object, get the projection and turn it into a pyproj object.
+    if isinstance(gdal_ds_crs_wkt_or_epsg, gdal.Dataset):
+        prj = pyproj.crs.CRS.from_wkt(gdal_ds_crs_wkt_or_epsg.GetProjection())
+
+    # If it's an integer, presume it's an EPSG.
+    elif type(gdal_ds_crs_wkt_or_epsg) == int:
+        prj = pyproj.crs.CRS.from_epsg(gdal_ds_crs_wkt_or_epsg)
+
+    # If it's a string, presume it's a WKT, proj-string, or other user input (let the from_user_input() method handle that).
+    elif type(gdal_ds_crs_wkt_or_epsg) == str:
+        prj = pyproj.crs.CRS.from_user_input(gdal_ds_crs_wkt_or_epsg)
+
+    # If it's already a pyproj.crs.CRS object, just use it.
+    elif isinstance(gdal_ds_crs_wkt_or_epsg, pyproj.crs.CRS):
+        prj = gdal_ds_crs_wkt_or_epsg
+
+    # If it's none of these, return None (this includes if NoneType is given)
+    else:
+        return None
+
+    # If it has two or more sub_crs objects with it, then it's a combined projection and the first one in the list is the horizontal projection.
+    # Extract it.
+    if len(prj.sub_crs_list) >= 2:
+        prj = prj.sub_crs_list[0]
+
+    # Return either as an EPSG number or a pyprjo.crs.CRS object.
+    if as_epsg:
+        epsg = prj.to_epsg()
+        # Some of the CUDEM tiles are in NAD83 but the CRS doesn't explicitly give an
+        # EPSG code. Handle that special case manually here.
+        if epsg is None and prj.to_wkt().find('GEOGCS["NAD83",') >= 0:
+            epsg = 4269
+        return epsg
+    else:
+        return prj
+
+def get_dataset_epsg(gdal_dataset, warn_if_not_present=True, horizontal_only=False):
     """Get the projection EPSG value from the dataset, if it's defined."""
 
     # Testing some things out.
-    wkt=gdal_dataset.GetProjection()
-    prj = pyproj.crs.CRS(wkt)
+    wkt = gdal_dataset.GetProjection()
+    prj = pyproj.crs.CRS.from_wkt(wkt)
+
+    # Some projections are combined (horizontal + vertical). If we only want the horizontal, retrieve that useing the sub-crs values.
+    # When it's a horizontal + vertical CRS, the horizontal comes first.
+    if horizontal_only:
+        prj = get_horizontal_projection_only(prj, as_epsg=False)
 
     epsg = prj.to_epsg()
     # Some of the CUDEM tiles are in NAD83 but the CRS doesn't explicitly give an
@@ -85,6 +143,10 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True):
         # print(wkt)
         if wkt.find('GEOGCS["NAD83",') >= 0:
             return 4269
+        elif warn_if_not_present:
+            raise UserWarning("File {0} has no retrievable EPSG value.".format(gdal_dataset.GetFileList()[0]))
+        return epsg
+
     else:
         return epsg
 
@@ -113,8 +175,11 @@ def create_coastline_mask(input_dem,
                           mask_out_lakes = True,
                           include_gmrt = False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
                           mask_out_buildings = False,
+                          mask_out_urban = False,
                           use_osm_planet = False,
                           output_file=None,
+                          run_in_tempdir=False,
+                          horizontal_datum_only=True,
                           verbose=True):
     """From a given DEM (.tif or otherwise), generate a coastline mask at the same grid and resolution.
 
@@ -134,6 +199,8 @@ def create_coastline_mask(input_dem,
     rounding errors where the pixel size causes the grid to be shortened by one pixel
     along one of the axes. It does not affect the bounding box returned to the calling function.
 
+    if "horizontal_datum_only", if the input DEM is a combined horizontal+vertical datum, create in the horizontal datum only.
+
     Return the .tif name of the mask file generated."""
 
     input_ds = gdal.Open(input_dem, gdal.GA_ReadOnly)
@@ -143,7 +210,7 @@ def create_coastline_mask(input_dem,
     bbox, step_xy = get_bounding_box_and_step(input_ds, invert_for_waffles=True)
     # print(bbox, step_xy)
 
-    epsg = get_dataset_epsg(input_ds)
+    epsg = get_dataset_epsg(input_ds, horizontal_only=horizontal_datum_only)
     # print(epsg)
 
     if output_file:
@@ -163,7 +230,8 @@ def create_coastline_mask(input_dem,
                        (":want_gmrt=True" if include_gmrt else "") + \
                        (":want_lakes=True" if mask_out_lakes else "") + \
                        (":want_buildings=True" if mask_out_buildings else "") + \
-                       (":want_osm_planet=True" if use_osm_planet else ""),
+                       (":want_osm_planet=True" if use_osm_planet else "") + \
+                       (":want_wsf=True" if mask_out_urban else ""),
                    "-R", "{0}/{1}/{2}/{3}".format(*bbox),
                    "-O", os.path.abspath(output_filepath_base),
                    "-P", "epsg:{0:d}".format(epsg),
@@ -185,7 +253,11 @@ def create_coastline_mask(input_dem,
                   "stderr": subprocess.DEVNULL}
     # Put the data files generated in this processin the same directory as the output file.
     # This will be the home working directory of the process.
-    kwargs["cwd"] = os.path.split(output_filepath_base)[0]
+    if run_in_tempdir:
+        tempdir = os.path.join(etopo_config._abspath(etopo_config.etopo_cudem_cache_directory), "temp" + str(os.getpid()))
+        if not os.path.exists(tempdir):
+            os.mkdir(tempdir)
+        kwargs["cwd"] = tempdir
 
     subprocess.run(waffle_args,
                    check=True, **kwargs)
@@ -195,6 +267,10 @@ def create_coastline_mask(input_dem,
     else:
         final_output_path = output_filepath_base
     assert os.path.exists(final_output_path)
+
+    if run_in_tempdir:
+        rm_cmd = ["rm", "-rf", tempdir]
+        subprocess.run(rm_cmd, stdout=None, stderr=None)
 
     if return_bounds_step_epsg:
         return final_output_path, bbox, step_xy, epsg
@@ -208,6 +284,9 @@ def create_coastline_mask(input_dem,
 
 def create_coastal_mask_filename(dem_name, target_dir=None):
     """If given a DEM name, create a filename for the coastal mask."""
+    if type(target_dir) == str and (len(target_dir.strip()) == 0):
+        target_dir = None
+
     fdir, fname = os.path.split(os.path.abspath(dem_name))
     base, ext = os.path.splitext(fname)
     coastline_mask_fname = os.path.join(fdir if (target_dir is None) else target_dir, base + "_coastline_mask" + ext)
@@ -217,9 +296,11 @@ def create_coastal_mask_filename(dem_name, target_dir=None):
 def get_coastline_mask_and_other_dem_data(dem_name,
                                           mask_out_lakes = True,
                                           mask_out_buildings=False,
+                                          mask_out_urban=False,
                                           use_osm_planet=True,
                                           include_gmrt = True,
                                           target_fname_or_dir = None,
+                                          run_in_tempdir=False,
                                           verbose=True):
     """Get data from the DEM and a generated/opened coastline mask.
 
@@ -232,7 +313,7 @@ def get_coastline_mask_and_other_dem_data(dem_name,
         6. coastline mask array in the same grid as the dem.
             (here derived from Copernicus data using the CUDEM "waffles" command))
     """
-    if (target_fname_or_dir is None) or os.path.isdir(target_fname_or_dir):
+    if (target_fname_or_dir is None) or (len(target_fname_or_dir.strip()) == 0) or os.path.isdir(target_fname_or_dir):
         coastline_mask_file = create_coastal_mask_filename(dem_name, target_fname_or_dir)
     else:
         coastline_mask_file = target_fname_or_dir
@@ -250,13 +331,19 @@ def get_coastline_mask_and_other_dem_data(dem_name,
         coastline_mask_file_out = create_coastline_mask(dem_name,
                                                         mask_out_lakes = mask_out_lakes,
                                                         mask_out_buildings = mask_out_buildings,
+                                                        mask_out_urban=mask_out_urban,
                                                         use_osm_planet=use_osm_planet,
                                                         include_gmrt = include_gmrt,
                                                         return_bounds_step_epsg=False,
                                                         output_file=coastline_mask_file,
+                                                        run_in_tempdir=run_in_tempdir,
                                                         verbose=verbose)
 
-        assert coastline_mask_file == coastline_mask_file_out
+        try:
+            assert coastline_mask_file == coastline_mask_file_out
+        except AssertionError as e:
+            print("coastline_mask_file:", coastline_mask_file, "\ncoastline_mask_file_out:", coastline_mask_file_out)
+            raise e
 
     if verbose:
         print("Reading", coastline_mask_file + "...", end="")
@@ -283,8 +370,8 @@ def read_and_parse_args():
                         help="DO NOT Mask out areas that are covered by building polygons in the OpenStreetMap dataset. Masking out buildings is useful when using this for IceSat-2 validation.")
     parser.add_argument("--dont_mask_out_lakes", default=False, action="store_true",
                         help="DO NOT Mask out areas that are covered by lake polygons in the global HydroLakes dataset. Masking out lakes is useful when using this for IceSat-2 validation.")
-    parser.add_argument("--dont_include_gmrt", default=False, action="store_true",
-                        help="DO NOT Include land areas covered by the GMRT land-cover dataset. Including GMRT is useful for including many small outlying islands that Copernicus may exclude.")
+    parser.add_argument("--use_gmrt", default=False, action="store_true",
+                        help="Include land areas covered by the GMRT land-cover dataset. Including GMRT is useful for including many small outlying islands that Copernicus may exclude.")
     parser.add_argument("--quiet", "-q", action="store_true", default=False,
                         help="Run quietly.")
 
@@ -295,9 +382,9 @@ if __name__ == "__main__":
     args = read_and_parse_args()
 
     create_coastline_mask(args.dem_filename,
-                          return_ds_bounds_step_epsg=False,
+                          return_bounds_step_epsg=False,
                           mask_out_buildings = not args.dont_mask_out_buildings,
                           mask_out_lakes = not args.dont_mask_out_lakes,
-                          include_gmrt = not args.dont_include_gmrt,
+                          include_gmrt = args.use_gmrt,
                           output_file=None if (args.dest.strip() == "") else args.dest,
                           verbose=not args.quiet)

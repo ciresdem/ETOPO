@@ -45,6 +45,9 @@ class ICESat2_Database:
         self.etopo_config = utils.configfile.config()
         self.gpkg_fname = self.etopo_config.icesat2_photon_geopackage
         self.tiles_directory = self.etopo_config.icesat2_photon_tiles_directory
+        self.granules_directory = self.etopo_config.icesat2_granules_directory
+        self.alt_granules_directories = [self.etopo_config.icesat2_granules_directory_alternate,
+                                         self.etopo_config.icesat2_granules_directory_alternate_2]
 
         self.gdf = None # The actual geodataframe object.
         self.tile_resolution_deg = tile_resolution_deg
@@ -415,10 +418,10 @@ class ICESat2_Database:
             if len(list_of_files) > 0:
                 example_file = os.path.join(self.tiles_directory, list_of_files[0])
             else:
-                list_of_files = [fn for fn in os.listdir(self.etopo_config.icesat2_granules_directory) if re.search("\AATL03_(\w)+_photons\.((h5)|(feather))\Z", fn) != None]
+                list_of_files = [fn for fn in os.listdir(self.granules_directory) if re.search("\AATL03_(\w)+_photons\.((h5)|(feather))\Z", fn) != None]
                 if len(list_of_files) == 0:
                     raise FileNotFoundError("Could not find an existing photon tile or granule to use to create the file", self.etopo_config.icesat2_photon_empty_tile)
-                example_file = os.path.join(self.etopo_config.icesat2_granules_directory, list_of_files[0])
+                example_file = os.path.join(self.granules_directory, list_of_files[0])
 
             df = pandas.read_hdf(example_file, mode="r")
             # Empty out all the records and return the empty dataframe.
@@ -429,6 +432,25 @@ class ICESat2_Database:
 
         assert len(empty_df) == 0
         return empty_df
+
+    def look_for_local_icesat2_photon_db(self, db_name):
+        """Look through the local granules directory, as well as any alternate directories, to find ICESat-2 photon database granule files.
+        Return the file location if it exists. Return None if not."""
+
+        possible_exts = [".h5", ".feather"]
+        possible_dirs = [self.granules_directory] + self.alt_granules_directories
+
+        basename, ext = os.path.splitext(os.path.basename(db_name))
+        assert ext in possible_exts
+
+        # Look in all the possible directories, using both possible extensions, for this photon database file.
+        for dirname in possible_dirs:
+            for ext_name in possible_exts:
+                possible_fname = os.path.join(dirname, basename + ext_name)
+                if os.path.exists(possible_fname):
+                    return possible_fname
+
+        return None
 
     def create_photon_tile(self, bbox_polygon,
                                  tilename,
@@ -469,7 +491,7 @@ class ICESat2_Database:
         # Okay, so the tile doesn't exist. Query the icesat-2 photons files that overlap this bounding-box.
         granule_names = nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
                                                          region = bbox_bounds,
-                                                         local_dir = self.etopo_config.icesat2_granules_directory,
+                                                         local_dir = self.granules_directory,
                                                          dates = date_range,
                                                          download_only_matching_granules = True,
                                                          query_only = True,
@@ -493,12 +515,12 @@ class ICESat2_Database:
 
             # I am making is so the photon databases can be either .h5 or .feather database formats.
             # .h5 (saved flat)
-            base, ext = os.path.splitext(photon_db)
-            ext = ext.lower()
-            if ext == ".h5":
-                photon_db_other = base + ".feather"
-            else:
-                photon_db_other = base + ".h5"
+            # base, ext = os.path.splitext(photon_db)
+            # ext = ext.lower()
+            # if ext == ".h5":
+            #     photon_db_other = base + ".feather"
+            # else:
+            #     photon_db_other = base + ".h5"
 
             # Generate a temporary empty textfile to indicate this file is currently being downloaded.
             # This helps prevent multiple processes from downloading the files all at the same time.
@@ -515,9 +537,12 @@ class ICESat2_Database:
             downloading_fname = downloading_fbase + "_TEMP_DOWNLOADING.txt"
 
             df_is_read = False
+            photon_db_location = None
             while not df_is_read:
-                # If the tile doesn't exist, get the granules needed for it.
-                if not (os.path.exists(photon_db) or os.path.exists(photon_db_other)):
+                # If the tile doesn't exist, get the granules needed for it. First, look for the photon database, either in .h5 or .feather format.
+                if photon_db_location is None:
+                    photon_db_location = self.look_for_local_icesat2_photon_db(photon_db)
+                if photon_db_location is None:
                     # If the granules don't exist, download them.
 
                     # Check for existence of "_TEMP_DOWNLOADING.txt" file.
@@ -534,10 +559,11 @@ class ICESat2_Database:
                             f.close()
 
                         # If either of the granules aren't there, download them from NSIDC
+                        # Only granules that don't currently exist will be downloaded
                         try:
                             list_of_files = nsidc_download.download_granules(short_name=["ATL03", "ATL08"],
                                                                              region=bbox_bounds,
-                                                                             local_dir = self.etopo_config.icesat2_granules_directory,
+                                                                             local_dir = self.granules_directory,
                                                                              dates = date_range,
                                                                              download_only_matching_granules = False,
                                                                              query_only = False,
@@ -568,12 +594,18 @@ class ICESat2_Database:
                                                                               overwrite = False,
                                                                               verbose=verbose)
 
-                    # TODO: Remove the temp downloading file.
+                    # Remove the temp downloading file.
                     if os.path.exists(downloading_fname):
                         os.remove(downloading_fname)
 
+                else:
+                    # Update the photon_db variable from its default location to wherever it actually sits on the various
+                    # drives.
+                    photon_db = photon_db_location
+
                 # At this point, the photon database should exist locally. So read it.
                 # Then, subset within the bounding box.
+                base, ext = os.path.splitext(photon_db)
                 if df is None:
                     try:
                         if ext == ".h5":

@@ -779,7 +779,7 @@ def _main(short_name=None,
 
     fname_bases = [url.split("/")[-1] for url in urls_total]
 
-    # print(url_list)
+    # Look for existing files.
     local_files = [os.path.join(local_dir, fn) for fn in fname_bases]
     for url, lfile in zip(urls_total, local_files):
         if os.path.exists(lfile) and not force:

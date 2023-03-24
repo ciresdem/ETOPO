@@ -33,7 +33,7 @@ def check_for_gmt():
 def print_progress(i: int, N: int) -> None:
     progress_bar.ProgressBar(i, N, suffix="{0}/{1}".format(i, N))
 
-def gtiff_to_netcdf(dirname: str,
+def gtiff_to_netcdf(dir_or_file_name: str,
                     driver: str = 'gdal',
                     recurse_subdirs: bool = False,
                     gtif_regex: str = r'\.tif\Z',
@@ -44,11 +44,11 @@ def gtiff_to_netcdf(dirname: str,
     """Take all the geotiff files in a directory, convert them to netcdf. Return the number of files converted.
 
         Parameters:
-            dirname (str): Directory to look for geotiff files.
+            dir_or_file_name (str): Directory to look for geotiff files, or a geotiff file explicitly. Geotiff file names are presumed to end in .tif.
             driver (str) = 'gdal': The utility to use for the transformation. Options 'gdal' or 'gmt'.
             recurse_subdirs (bool): If True, recurse all sub-directories for files to convert. If False, stay in the 1st level local directory.
-            gtif_regex (str) = r'\.tif\Z': A regular expression (see python 're' library) for identifying geotiff files and omitting other files. Defaults to r'\.tif\Z' (files that end in ".tif"). Useful to narrow down the search to only a subset of files in the directory.
-            omit_regex (str) = r'\Z\A': A regular expression to omit certain files from processling. Defaults to an unmatchable regex target.
+            gtif_regex (str) = r'\.tif\Z': A regular expression (see python 're' library) for identifying geotiff files and omitting other files. Defaults to r'\.tif\Z' (files that end in ".tif"). Useful to narrow down the search to only a subset of files in the directory. Ignored if only a single file is given.
+            omit_regex (str) = r'\Z\A': A regular expression to omit certain files from processling. Defaults to an unmatchable regex target. Ignored if only a single file is given.
             dest_subdir (str) = '': A sub-directory in which to put each output file, with respect to the original filename. Default: put .nc files in the same directory.
             overwrite (bool) = False: Overwrite existing .nc files. Default: leave .nc files if they already exist. Already existing files are added to the output numfiles result.
             verbose (bool) = True: If False, run quietly. If true, output some results.
@@ -59,9 +59,14 @@ def gtiff_to_netcdf(dirname: str,
     # if not does_gmt_exist:
     #     raise FileNotFoundError("Package 'gmt' (general mapping tools) required to run this script.")
 
-    fnames = traverse_directory.list_files(dirname, regex_match=gtif_regex, include_base_directory=True, depth=-1 if recurse_subdirs else 0)
-    if omit_regex != r'\Z\A':
-        fnames = [fn for fn in fnames if (re.search(omit_regex, os.path.basename(fn)) is None)]
+    if not os.path.exists(dir_or_file_name):
+        raise FileNotFoundError(dir_or_file_name)
+    elif os.path.isdir(dir_or_file_name):
+        fnames = traverse_directory.list_files(dir_or_file_name, regex_match=gtif_regex, include_base_directory=True, depth=-1 if recurse_subdirs else 0)
+        if omit_regex != r'\Z\A':
+            fnames = [fn for fn in fnames if (re.search(omit_regex, os.path.basename(fn)) is None)]
+    else:
+        fnames = [dir_or_file_name]
 
     driver_name = driver.strip().lower()
 
@@ -169,7 +174,7 @@ def gtiff_to_netcdf(dirname: str,
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Convert a directory of GeoTiff (.tif) files to NetCDF (.nc) using 'gmt grdconvert'.")
-    parser.add_argument("DIRNAME", help="Directory name to look for GeoTiff files.")
+    parser.add_argument("dir_or_file", help="Geotiff file, or a directory name to look for GeoTiff files.")
     parser.add_argument("-driver", default="gdal", help="Tool to use. Can be 'gdal' or 'gmt'. Uses 'gdal_translate' and 'gmt grdconvert', respectively. Default: gdal")
     parser.add_argument("-dest_subdir", default="netcdf", help="A sub-directory (relative to each file's local directory) in which to put the destination .nc file. Default 'netcdf'.")
     parser.add_argument("-gtif_regex", default=r"\.tif\Z", help="A regular expression (see python 're' library) for which to search for geotiff files. Defaults to any file ending in '.tif'.")
@@ -183,7 +188,13 @@ def define_and_parse_args():
 
 if __name__ == "__main__":
     args = define_and_parse_args()
-    gtiff_to_netcdf(args.DIRNAME,
+
+    if not os.path.exists(args.dir_or_file):
+        print(args.dir_or_file, "does not exist on local machine.")
+        import sys
+        sys.exit(0)
+
+    gtiff_to_netcdf(args.dir_or_file,
                     recurse_subdirs=args.recurse,
                     driver=args.driver,
                     dest_subdir = args.dest_subdir,
@@ -191,3 +202,4 @@ if __name__ == "__main__":
                     omit_regex=args.omit_regex,
                     overwrite=args.overwrite,
                     verbose=not args.quiet)
+

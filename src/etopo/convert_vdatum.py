@@ -31,39 +31,48 @@ import sys
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
-import import_parent_dir; import_parent_dir.import_src_dir_via_pythonpath()
+import import_parent_dir;
+
+import_parent_dir.import_src_dir_via_pythonpath()
 ####################################3
+import utils.traverse_directory
 import utils.configfile
+
 my_config = utils.configfile.config()
 
 # Vertical datum dictionary -- for converting vertical datums to their corresponding EPSG numbers
 vdd_lookup_dict = {
-           "wgs84"   : 7912,  # WGS84 has numerous iterations. In this case, go with the ITRF 2014 datum
-           "itrf2014": 7912,
-           "navd88"  : 5703,  # Northa American Vertical Datum of 1988. Used in CONUS
-           "guvd04"  : 6644,  # Guam Vertical Datum 2004
-           "asvd02"  : 6643,  # American Samoa 2002
-           "prvd02"  : 6641,  # Puerto Rico 2002
-           "egm2008" : 3855,  # Earth Gravitational Model 2008
-           "egm96"   : 5773,  # Earth Gravitational Model 1996
-           "egm84"   : 5798,  # Earth Gravitational Model 1984 (not currently implemented.) NOTE: Can use/resample the EGM84 global grid and do it myself if we want.
-           "msl"     : 5174,  # Mean Sea Level
-           "wgs_84(g1150)": 7660,
-           }
+    "wgs84": 7912,  # WGS84 has numerous iterations. In this case, go with the ITRF 2014 datum
+    "itrf2014": 7912,
+    "navd88": 5703,  # Northa American Vertical Datum of 1988. Used in CONUS
+    "guvd04": 6644,  # Guam Vertical Datum 2004
+    "nmvd03": 6644,  # Northern Marianas Vertical Datum 2003, same as GUVD04
+    "asvd02": 6643,  # American Samoa 2002
+    "prvd02": 6641,  # Puerto Rico 2002
+    "vivd09": 6641,  # Virgin Islands VD 2009 (same grid used as PRVD02)
+    "egm2008": 3855,  # Earth Gravitational Model 2008
+    "egm96": 5773,  # Earth Gravitational Model 1996
+    "egm84": 5798,
+    # Earth Gravitational Model 1984 (not currently implemented.) NOTE: Can use/resample the EGM84 global grid and do it myself if we want.
+    "msl": 5174,  # Mean Sea Level
+    "wgs84(g1150)": 7660,
+}
 
 vdd_descriptions_dict = {
-           "wgs84"   : "World Geodetic System 1984 vertical datum (using ITRF 2014 Iteration, identical to 'itrf2014'). EPSG: 7912",
-           "itrf2014": "International Terrestrial Reference Fram 2014, vertical heights. EPSG: 7912",
-           "navd88"  : "Nortah American Vertical Datum of 1988. EPSG: 5703",
-           "guvd04"  : "Guam Vertical Datum of 2004. EPSG: 6644",
-           "asvd02"  : "American Samoa Vertical Datum of 2002. EPSG: 6643",
-           "prvd02"  : "Puerto Rico 2002. EPSG: 6641",
-           "egm2008" : "Earth Gravitational Model of 2008, vertical heights. EPSG: 3855",
-           "egm96"   : "Earth Gravitational Model of 1996, vertical heights. EPSG: 5733",
-           "egm84"   : "Earth Gravitational Model of 1984, vertical heights. EPSG: 5798 (not currently implemented)",
-           "msl"     : "Mean Sea Level. EPSG: 5174",
-           "wgs84(g1150)" : "WGS 84 vertical datum, using G1150 iteration.",
-           }
+    "wgs84": "World Geodetic System 1984 vertical datum (using ITRF 2014 Iteration, identical to 'itrf2014'). EPSG: 7912",
+    "itrf2014": "International Terrestrial Reference Fram 2014, vertical heights. EPSG: 7912",
+    "navd88": "Nortah American Vertical Datum of 1988. EPSG: 5703",
+    "guvd04": "Guam Vertical Datum of 2004. EPSG: 6644",
+    "nmvd03": "Northern Marianas Vertical Datum of 2003. Same as GUVD04 (EPSG: 6644)",
+    "asvd02": "American Samoa Vertical Datum of 2002. EPSG: 6643",
+    "prvd02": "Puerto Rico 2002. EPSG: 6641",
+    "vivd09": "Virgin Islands 2009. EPSG: 6641 (uses same grid as PRVD02)",
+    "egm2008": "Earth Gravitational Model of 2008, vertical heights. EPSG: 3855",
+    "egm96": "Earth Gravitational Model of 1996, vertical heights. EPSG: 5733",
+    "egm84": "Earth Gravitational Model of 1984, vertical heights. EPSG: 5798 (not currently implemented)",
+    "msl": "Mean Sea Level. EPSG: 5174",
+    "wgs84(g1150)": "WGS 84 vertical datum, using G1150 iteration. EPSG: 7660",
+}
 
 # A list of all supported vdatum names and values in this module. Useful for other
 # modules to check.
@@ -72,9 +81,11 @@ SUPPORTED_VDATUMS = (list(vdd_lookup_dict.keys()) + list(vdd_lookup_dict.values(
 SUPPORTED_VDATUMS.remove("egm84")
 SUPPORTED_VDATUMS.remove(5798)
 
+
 def list_all_datums():
     for key in sorted(list(vdd_lookup_dict.keys())):
         print("{0:<8s}".format(key), ":", vdd_descriptions_dict[key])
+
 
 def cmd_smart_split(cmd_str, strip_quotes=True):
     """Split up a string using posix standards where quotes are respected.
@@ -90,6 +101,7 @@ def cmd_smart_split(cmd_str, strip_quotes=True):
 
     return items
 
+
 def vertical_datum_lookup(vd_name):
     """Given a string name or number, return the EPSG integer corresponding with that vertical datum."""
     try:
@@ -97,11 +109,12 @@ def vertical_datum_lookup(vd_name):
     except ValueError:
         return vdd_lookup_dict[vd_name.lower().strip()]
 
+
 def convert_vdatum(input_dem,
                    output_dem,
                    input_vertical_datum="itrf2014",
                    output_vertical_datum="itrf2014",
-                   cwd = None,
+                   cwd=None,
                    verbose=True):
     """Input a DEM of a known vetical datum, and convert the elevations to another vertical datum.
 
@@ -138,14 +151,15 @@ def convert_vdatum(input_dem,
 
     return retproc.returncode
 
-# TODO: Add command-line interface for converting an individual file and/or an entire directory of DEMs.
+
 def define_args():
     """convert_vdatum.py -i [input_vdatum] -o [output_vdatum] -output_suffix [output_suffix]
     -input_file_filter [input_file_filter] -output_folder [output_folder] -output_filename [output_filename]
     --list_vdatums
     input_DEM_or_directory
     """
-    parser = argparse.ArgumentParser(description="A quick tool for converting vertical datums of a DEM or directory of DEMs to other vertical datums.")
+    parser = argparse.ArgumentParser(
+        description="A quick tool for converting vertical datums of a DEM or directory of DEMs to other vertical datums.")
     parser.add_argument("-input_vdatum", "-i", type=str, default="itrf2014",
                         help="Input vertical datum.")
     parser.add_argument("-output_vdatum", "-o", type=str, default="itrf2014",
@@ -154,6 +168,8 @@ def define_args():
                         help="Regex string to search for in input file names. Ignore all other files. Default '.tif\Z', indicating .tif at the end of the string.")
     parser.add_argument("-output_folder", "-dir", default=None,
                         help="Directory in which to put the output files. Ignored if -output_filename is given. Default: Use same directory as input file directory.")
+    parser.add_argument("-output_subdir", "-sdir", default=None,
+                        help="Put the output file in a relative sub-directory of the input file. This will override any '-output_folder' argument.")
     parser.add_argument("-output_filename", "-of", default=None,
                         help="Output filename. Only used if the input_DEM_or_directory is a single file (and not a directory). If a directory is listed, this option is ignored and the suffix specified in '-output_suffix' is appended onto each of the input file names.")
     parser.add_argument("-output_suffix", "-suffix", type=str, default="_out",
@@ -162,6 +178,10 @@ def define_args():
                         help="Print a list of all supported vertical datums in the tool. Ignore all other arguments. If this argument is omitted, an argument must be provided for [input_DEM_or_directory].")
     parser.add_argument("--quiet", action="store_true", default=False,
                         help="Execute quietly (unless an error occurs). Ignored if --help or --list_vdatums is selected.")
+    parser.add_argument("--recurse", "-r", default=False, action="store_true",
+                        help="Recurse through the directory to find matching files (default: only look in the local directory).")
+    parser.add_argument("--overwrite", "-ov", default=False, action="store_true",
+                        help="Overwrite output files. Default: Skip generating output file if it already exists.")
     parser.add_argument("input_DEM_or_directory", nargs='?', default=None,
                         help="Input DEM file or a directory of DEM files. If a single existing file is given, -input_file_filter is ignored and the file is read, and the converted file is written either to -output_filename location (if given), or is put in the -output_directory with the -output_suffix applied to the filename. If a directory is given, -input_file_filter is applied to identify input files, and the outputs are written to the -output_filter (if given) with the string denoted in ")
 
@@ -184,33 +204,51 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(0)
 
-    assert args.input_DEM_or_directory != None # Shouldn't logically get here if this argument is still empty. Sanity Check.
+    assert args.input_DEM_or_directory is not None  # Shouldn't logically get here if this argument is still empty. Sanity Check.
 
     # Check to see if the file/directory exists. If not, toss an error.
     if not os.path.exists(args.input_DEM_or_directory):
         raise FileNotFoundError("ERROR: '{0}' not found.".format(args.input_DEM_or_directory))
+
     if os.path.isdir(args.input_DEM_or_directory):
         # A directory is given here.
         # 1. Get a list of files in the directory.
-        fnames = sorted(os.listdir(args.input_DEM_or_directory))
+        if args.recurse:
+            fnames = utils.traverse_directory.list_files(args.input_DEM_or_directory, include_base_directory=True)
+        else:
+            fnames = [os.path.join(args.input_DEM_or_directory, fn) for fn in
+                      sorted(os.listdir(args.input_DEM_or_directory))]
+
         # 2. Filter out files according to -input_file_filter
         if args.input_file_filter:
             # Use only names that pass the file filter screening.
-            fnames = [fn for fn in fnames if (re.search(args.input_file_filter, fn) != None)]
+            fnames = [fn for fn in fnames if (re.search(args.input_file_filter, os.path.basename(fn)) != None)]
         if args.output_suffix:
             # Omit name that have the exact same suffix as the -output_suffix flag
             fnames = [fn for fn in fnames if (os.path.splitext(fn)[0][-len(args.output_suffix):] != args.output_suffix)]
 
-        # 3. Create a list of output files using the -output_folder and -output_suffix
-        if args.output_folder:
-            output_folder = args.output_folder
-        else:
-            output_folder = args.input_DEM_or_directory
-
         # 4. Loop thorugh, call vdatum_convert() on each of them.
-        for i,fn in enumerate(fnames):
-            base,ext = os.path.splitext(fn)
-            output_filename = os.path.join(output_folder, base + args.output_suffix + ext)
+        for i, fn in enumerate(fnames):
+            base, ext = os.path.splitext(fn)
+            basedir, basename = os.path.split(base)
+
+            # 3. Create a list of output files using the -output_folder and -output_suffix
+            if args.output_subdir:
+                output_folder = os.path.join(basedir, args.output_subdir)
+            elif args.output_folder:
+                output_folder = args.output_folder
+            else:
+                output_folder = args.input_DEM_or_directory
+
+            output_filename = os.path.join(output_folder,
+                                           basename + (args.output_suffix if args.output_suffix else "") + ext)
+
+            if os.path.exists(output_filename):
+                if args.overwrite:
+                    os.remove(output_filename)
+                else:
+                    print(output_filename, "already exists. Moving on.")
+                    continue
 
             convert_vdatum(fn,
                            output_filename,
@@ -218,24 +256,39 @@ if __name__ == "__main__":
                            output_vertical_datum=args.output_vdatum,
                            verbose=not args.quiet)
 
-
     else:
         # A file was input.
-        if args.output_filename != None:
+        if args.output_filename is not None:
             # If an output filename was given, use that.
             output_filename = args.output_filename
-        elif args.output_folder == None:
-            # Otherwise, if no output directry was given, just use the input directory, adding whatever suffix was provided.
+        elif args.output_subdir is not None:
+            # If we're given a relative sub-directory, put it there.
             base, ext = os.path.splitext(args.input_DEM_or_directory)
-            output_filename = base + args.output_suffix + ext
-        else:
+            basedir, basename = os.path.split(base)
+            output_filename = os.path.join(basedir, args.output_subdir,
+                                           basename + (args.output_suffix if args.output_suffix else "") + ext)
+        elif args.output_folder is not None:
             # If an output directory was provided, put it thre, along with the suffix at the end of the filename.
             base, ext = os.path.splitext(os.path.split(args.input_DEM_or_directory)[1])
-            output_filename = os.path.join(args.output_folder, base + args.output_suffix + ext)
+            output_filename = os.path.join(args.output_folder,
+                                           base + (args.output_suffix if args.output_suffix else "") + ext)
+        else:
+            # Otherwise, if no output directry was given, just use the input directory, adding whatever suffix was provided.
+            base, ext = os.path.splitext(args.input_DEM_or_directory)
+            output_filename = base + (args.output_suffix if args.output_suffix else "") + ext
+
+        if os.path.exists(output_filename):
+            if args.overwrite:
+                os.remove(output_filename)
+            else:
+                print(output_filename, "already exists. Use the --overwrite (-o) functino to overwrite this file.")
+                import sys
+
+                sys.exit(0)
 
         # Convert the file.
         convert_vdatum(args.input_DEM_or_directory,
                        output_filename,
-                       input_vertical_datum = args.input_vdatum,
-                       output_vertical_datum = args.output_vdatum,
+                       input_vertical_datum=args.input_vdatum,
+                       output_vertical_datum=args.output_vdatum,
                        verbose=not args.quiet)
