@@ -18,16 +18,27 @@ import_parent_dir.import_src_dir_via_pythonpath()
 ##############################################################################
 
 import datasets.etopo_source_dataset as etopo_source_dataset
+import datasets.BlueTopo.download_BlueTopo_tiles
+import etopo.convert_vdatum as convert_vdatum
+import utils.traverse_directory
+import utils.parallel_funcs
 # import utils.progress_bar
 
+# Look for the 3-letter string prefixed by "NAD83 / UTM zone" and consisting of 2 digit characters (\d{2}) following by either "N" or "S" ([NS])
 utm_zone_regex = r"(?<=NAD83 / UTM zone )(\d{2})[NS]"
 # These cover all the UTM zones covered by the BlueTopo tiles.
-epsg_lookups  = {"14N" : 26914,
+epsg_lookups  = {"10N" : 26910,
+                 "11N" : 26911,
+                 "12N" : 26912,
+                 "13N" : 26913,
+                 "14N" : 26914,
                  "15N" : 26915,
                  "16N" : 26916,
-                 # "17N" : 26917,
+                 "17N" : 26917,
                  "18N" : 26918,
                  "19N" : 26919,
+                 "20N" : 26920,
+                 "21N" : 26921
                  }
 
 # Suppress gdal warnings in this file.
@@ -41,6 +52,16 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
 
         super(source_dataset_BlueTopo, self).__init__("BlueTopo", configfile)
 
+        self.downloader = None
+
+
+    def get_downloader_obj(self):
+        if self.downloader is None:
+            self.downloader = download_BlueTopo_tiles.BlueTopo_Downloader()
+
+        return self.downloader
+
+
     def get_file_epsg(self, filename, utm_zone_name=False):
         """Given a BlueTopo tile, return the EPSG code for it."""
         # If we're using a "converted" file but can't find it, look for the original.
@@ -50,7 +71,11 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         assert os.path.exists(filename)
         ds = gdal.Open(filename, gdal.GA_ReadOnly)
         wkt = ds.GetProjection()
-        utmz = re.search(utm_zone_regex, wkt).group()
+        try:
+            utmz = re.search(utm_zone_regex, wkt).group()
+        except:
+            # If we hit here, we aren't actally using a tile with a real UTM zone. Return None.
+            return None
         if utm_zone_name:
             return utmz
         else:
@@ -187,7 +212,13 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         return ["{0} {1} {2}".format(fname, DTYPE_CODE, get_tile_size_from_fname(fname, weight)) \
                 for fname in list_of_overlapping_files]
 
-    def reproject_tiles(self, suffix="_epsg4326", overwrite = False, verbose=True):
+    def reproject_tiles(self,
+                        infile_regex = r"BlueTopo_\w{8}_\d{8}\.tiff",
+                        suffix="_epsg4326",
+                        suffix_vertical="_egm2008",
+                        n_subprocs = 15,
+                        overwrite = False,
+                        verbose=True):
         """Project all the tiles into WGS84/latlon coordinates.
 
         The fucked-up NAD83 / UTM zone XXN is fucking with waffles. Converting them is the easiest answer now.
@@ -195,44 +226,99 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         delete the 5 BlueTopo_14N to _19N datasets, because they'll all be projected into the same coordinate system,
         which will be a lot easier.
         """
+
+        # tilenames = self.retrieve_all_datafiles_list(verbose=verbose)
+        input_tilenames = utils.traverse_directory.list_files(self.config._abspath(self.config.source_datafiles_directory),
+                                                              regex_match = infile_regex)
+        if verbose:
+            print(len(input_tilenames), "input BlueTopo tiles.")
+
+        horz_trans_fnames = [os.path.join(os.path.dirname(fname), "converted", os.path.splitext(os.path.basename(fname))[0] + suffix + ".tif") for fname in input_tilenames]
+        output_fnames = [os.path.splitext(dfn)[0] + suffix_vertical + ".tif" for dfn in horz_trans_fnames]
+
+        self_args = [self] * len(input_tilenames)
+
+        args = list(zip(self_args, input_tilenames, horz_trans_fnames, output_fnames))
+        kwargs = {"overwrite": overwrite,
+                  "verbose": False}
+
+        tempdirs = [os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "scratch_data", "temp{0:04d}".format(i))) for i in range(len(input_tilenames))]
+
+        utils.parallel_funcs.process_parallel(source_dataset_BlueTopo.transform_single_tile,
+                                              args,
+                                              kwargs_list = kwargs,
+                                              outfiles = output_fnames,
+                                              temp_working_dirs = tempdirs,
+                                              max_nprocs=n_subprocs
+                                              )
+
+        # for i, fname in enumerate(input_tilenames):
+        #     dest_fname = os.path.join(os.path.dirname(fname), "converted", os.path.splitext(os.path.basename(fname))[0] + suffix + ".tif")
+        #     # Now, do the vertical reprojection too.
+        #     dest_fname_2 = os.path.splitext(dest_fname)[0] + suffix_vertical + ".tif"
+        #
+        #
+        #     if verbose:
+        #         print("{0}/{1} {2} ".format(i+1, len(input_tilenames), os.path.split(dest_fname_2)[1]), end="")
+        #     if process.returncode == 0 and os.path.exists(dest_fname_2):
+        #         if verbose:
+        #             print("written.")
+        #     elif verbose:
+        #             print("FAILED")
+        #             print(" ".join(gdal_cmd), "\n")
+        #             print(process.stdout)
+
+        return
+
+
+    def transform_single_tile(self, input_name, horiz_transform_name_TEMP, output_name, overwrite=False, verbose=True):
         # 1 arc-second is ~30.8 m at the equator.
         # The 0.3 tiles (level 3) are 16 m, 0.4 are 8 m, 0.5 are 4 m
         res_lookup_dict = {0.3: 16 / (30.8 * 60 * 60),
-                           0.4: 8  / (30.8 * 60 * 60),
-                           0.5: 4  / (30.8 * 60 * 60)}
-        tilenames = self.retrieve_all_datafiles_list(verbose=verbose)
-        for i,fname in enumerate(tilenames):
-            dest_fname = os.path.splitext(fname)[0] + suffix + ".tif"
-            if os.path.exists(dest_fname):
-                if overwrite or gdal.Open(dest_fname, gdal.GA_ReadOnly) is None:
-                    os.remove(dest_fname)
-                else:
-                    print("{0}/{1} {2} already written.".format(i+1, len(tilenames), os.path.split(dest_fname)[1]))
-                    continue
+                           0.4: 8 / (30.8 * 60 * 60),
+                           0.5: 4 / (30.8 * 60 * 60),
+                           0.6: 2 / (30.8 * 60 * 60)}
 
-            resolution = res_lookup_dict[get_tile_size_from_fname(fname, 0)]
-            gdal_cmd = ["gdalwarp",
-                        "-t_srs", "EPSG:4326",
-                        "-dstnodata", "0.0",
-                        "-tr", str(resolution), str(resolution),
-                        "-r", "bilinear",
-                        "-of", "GTiff",
-                        "-co", "COMPRESS=DEFLATE",
-                        "-co", "PREDICTOR=2",
-                        "-co", "ZLEVEL=5",
-                        fname, dest_fname]
-            process = subprocess.run(gdal_cmd, capture_output = True, text=True)
-            if verbose:
-                print("{0}/{1} {2} ".format(i+1, len(tilenames), os.path.split(dest_fname)[1]), end="")
-            if process.returncode == 0:
-                if verbose:
-                    print("written.")
-            elif verbose:
-                    print("FAILED")
-                    print(" ".join(gdal_cmd), "\n")
-                    print(process.stdout)
+        # Some of these files aren't using a proper UTM zone (nor are they in NAVD88). Ignore them for now.
+        if self.get_file_epsg(input_name) is None:
+            return
+
+        if os.path.exists(output_name):
+            if overwrite or gdal.Open(output_name, gdal.GA_ReadOnly) is None:
+                os.remove(output_name)
+            else:
+                return
+
+        # First, transform horizontally.
+        resolution = res_lookup_dict[get_tile_size_from_fname(input_name, 0)]
+        gdal_cmd = ["gdalwarp",
+                    "-t_srs", "EPSG:4326",
+                    "-dstnodata", "0.0",
+                    "-tr", str(resolution), str(resolution),
+                    "-r", "bilinear",
+                    "-of", "GTiff",
+                    "-co", "COMPRESS=DEFLATE",
+                    "-co", "PREDICTOR=2",
+                    "-co", "ZLEVEL=5",
+                    input_name, horiz_transform_name_TEMP]
+        subprocess.run(gdal_cmd, capture_output = not verbose, text=True)
+
+        if not os.path.exists(horiz_transform_name_TEMP):
+            return
+
+        # Then, transform that file vertically.
+        convert_vdatum.convert_vdatum(horiz_transform_name_TEMP,
+                                      output_name,
+                                      input_vertical_datum="navd88",
+                                      output_vertical_datum="egm2008",
+                                      cwd=None,
+                                      verbose=verbose)
+
+        if os.path.exists(horiz_transform_name_TEMP):
+            os.remove(horiz_transform_name_TEMP)
 
         return
+
 def get_tile_size_from_fname(fname, orig_weight):
     """looking at the filename, get the file size from it (3,4,5), and add it as a decimal to the weight.
 
@@ -242,18 +328,56 @@ def get_tile_size_from_fname(fname, orig_weight):
     This will put the bigger numbers (smaller tile sizes) at a greater weight than smaller numbers (larger tiles)."""
     # Look for the number just after "BlueTopo_US" and just before "LLNLL" wher L is a capital letter and N is a number.
     try:
-        tile_size = int(re.search("(?<=BlueTopo_US)\d(?=[A-Z]{2}\w[A-Z]{2})", os.path.split(fname)[1]).group())
+        # This was the naming convention used in the previous version (summer 2022). It has since been replaced by a new naming convention.
+        # tile_size = int(re.search("(?<=BlueTopo_US)\d(?=[A-Z]{2}\w[A-Z]{2})", os.path.split(fname)[1]).group())
+        # This uses the new naming convetion (spring 2023)
+        # BC = 16m, BF = 8m, BH = 4m
+        # size numbers are 3,4, and 5, respectively.
+        tile_size = {"C": 3, "F": 4, "H": 5, "J": 6}[re.search(r"(?<=BlueTopo_B)\w(?=\w{6}_)", os.path.split(fname)[1]).group()]
     except AttributeError as e:
         print("ERROR IN TILE:", fname)
         raise e
-    assert 1 <= tile_size <= 5
+    assert 1 <= tile_size <= 6
     new_weight = orig_weight + (tile_size / 10.0)
     return new_weight
+
+def get_updated_BlueTopo_tiles():
+    """The BlueTopo tiles are regularly updated in their Amazon schema. Go get the latest GPKG download to the Tile_Scheme directory.
+
+    Search through then new Scheme, grab any new tiles that we don't already have downloaded. Download those tiles.
+    Convert the tiles in to WGS84/EPSG2008 horiz/vert datums.
+    Re-build the BlueTopo geopackage using all the tiles (including the new ones).
+    """
+    # 1. Look on the website, get the name of the latest Tile_Scheme GPKG.
+    # 2. Compare to the current GPKG in there. If the same, don't download. If different, download the new one.
+    # 3. Parse through the GPKG, look for all tile URLs in there. If we don't yet have the tile locally, add it to the list.
+    # 4. Use the dataset_downloader class to download all the new tiles we need.
+    # 5. For all new tiles, create symlinks in the "14N" thru "19N" folders depending on their horizontal projections.
+    # 6. Convert the tiles from NAVD88 --> EGM2008 vertical projection.
+    # 7. Convert the tiles from UTM --> WGS84 horizontal projection.
+
 
 if "__main__" == __name__:
     # print(get_tile_size_from_fname("BlueTopo_US4LA1EN_20211018_egm2008.tiff", 0))
     bt = source_dataset_BlueTopo()
+    # bt.transform_single_tile("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BC26H26C_20220926.tiff",
+    #                       "//home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26H26C_20220926_epsg4326.tif",
+    #                       "/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26H26C_20220926_epsg4326_egm2008.tif",
+    #                       overwrite=True)
+    #
+    # foobar
+    # print(
+    # bt.get_file_epsg("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BC26H26C_20220926.tiff")
+    # )
+    # foobar
+
+    # bt.reproject_tiles()
+
     gdf = bt.get_geodataframe()
-    print(gdf.filename)
+    # for fname in gdf.filename:
+    #     print(fname)
+    #
+    # print(bt.list_utm_zones())
+    # print(bt.list_utm_zones(as_epsg=True))
     # bt.reproject_tiles()
     # bt.split_files_into_epsg_folders()

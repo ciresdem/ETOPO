@@ -32,7 +32,7 @@ class source_dataset_CopernicusDEM(etopo_source_dataset.ETOPO_source_dataset):
 
     def regrid_and_reassign_ndv_parallel(self, nprocs=10, overwrite=False, verbose=True):
         """Do the stuff in regrid_and_reassign_ndv(), but do it for all the tiles, in parallel."""
-        files = self.retrieve_all_datafiles_list(verbose=verbose)
+        files = self.retrieve_all_datafiles_list(resolution_s = 1, verbose=verbose)
         output_dir = os.path.dirname(files[0]) + "_regridded_1s"
 
         output_fns = [os.path.join(output_dir, os.path.basename(fn).replace(".tif", "_1s.tif")) for fn in files]
@@ -68,7 +68,7 @@ class source_dataset_CopernicusDEM(etopo_source_dataset.ETOPO_source_dataset):
 
         Put in the COP30_hh_regridded_1s folder"""
         if tilename is None:
-            files = self.retrieve_all_datafiles_list()
+            files = self.retrieve_all_datafiles_list(resolution_s=1, verbose=verbose)
             output_dir = os.path.dirname(files[0]) + "_regridded_1s"
         else:
             files = [tilename]
@@ -146,7 +146,7 @@ class source_dataset_CopernicusDEM(etopo_source_dataset.ETOPO_source_dataset):
         Create a 15s average, a 15s nearest, then trim the 15s-average to the 15s-nearest mask. Save that to
         a 15s-average_trimmed file. DOES THIS WORK AT 15s ETOPO GRID-LINES?"""
         trimmed_1s_dir = self.config._abspath(self.config.soruce_datafiles_regridded_1s_directory)
-        trimmed_1s_files = sorted([os.path.join(trimmed_1s_dir, fn) for fn in os.listdir(trimmed_1s_dir) if re.search("_00_DEM_1s.tif\Z", fn) is not None])
+        trimmed_1s_files = sorted([os.path.join(trimmed_1s_dir, fn) for fn in os.listdir(trimmed_1s_dir) if re.search(r"_00_DEM_1s.tif\Z", fn) is not None])
 
         near_dir_15 = self.config._abspath(self.config.source_datafiles_directory_15s_nearest)
         avg_dir_15 = self.config._abspath(self.config.source_datafiles_directory_15s_average)
@@ -183,9 +183,9 @@ class source_dataset_CopernicusDEM(etopo_source_dataset.ETOPO_source_dataset):
 
         Try it on the ETOPO grid and see how we do."""
         tile_1s_basename = os.path.basename(tilename_1s)
-        n_tag = re.search("(?<=_)[NS](\d{2})(?=_)", tile_1s_basename).group()
+        n_tag = re.search(r"(?<=_)[NS](\d{2})(?=_)", tile_1s_basename).group()
         etopo_ymin = (-1 if (n_tag[0] == "S") else 1) * int(n_tag[1:])
-        e_tag = re.search("(?<=_)[EW](\d{3})(?=_)", tile_1s_basename).group()
+        e_tag = re.search(r"(?<=_)[EW](\d{3})(?=_)", tile_1s_basename).group()
         etopo_xmin = (-1 if (e_tag[0] == "W") else 1) * int(e_tag[1:])
         etopo_ymax = etopo_ymin + 1
         etopo_xmax = etopo_xmin + 1
@@ -300,5 +300,9 @@ if __name__ == "__main__":
     #                             verbose_gdal=True)
     # cop.regrid_and_reassign_ndv(verbose=True,
     #                             verbose_gdal=False)
-    # cop.regrid_and_reassign_ndv_parallel(nprocs=15)
-    cop.create_trimmed_15s_tiles(overwrite = True, nprocs=18, verbose=True)
+    cop.regrid_and_reassign_ndv_parallel(overwrite=False, nprocs=15)
+    cop.create_trimmed_15s_tiles(overwrite = False, nprocs=12, verbose=True)
+
+    # gdf = cop.get_geodataframe(resolution_s=1)
+    # print(gdf)
+    # print(gdf.filename[0])

@@ -65,27 +65,17 @@ def validate_region(basedir,
         print(place_name if (place_name is not None) else region_subdir, "results already generated. Moving on.\n" )
         return
 
-    icesat2.validate_dem_collection.validate_list_of_dems(data_dir,
-                                                          photon_h5=None,
-                                                          use_icesat2_photon_database=True,
-                                                          results_h5=results_h5,
-                                                          fname_filter=datafiles_regex,
-                                                          fname_omit=None,
-                                                          output_dir=results_dir,
-                                                          icesat2_dir=icesat2_dir,
-                                                          input_vdatum=input_vdatum,
-                                                          output_vdatum=output_vdatum,
-                                                          overwrite=False,
-                                                          place_name = place_name,
-                                                          create_individual_results = True,
-                                                          date_range=["2021-01-01","2021-12-31"],
-                                                          skip_icesat2_download=False,
-                                                          delete_datafiles=False,
-                                                          include_photon_validation = include_photon_validations,
-                                                          omit_bad_granules=True,
-                                                          write_result_tifs=True,
-                                                          shapefile_name = None,
-                                                          verbose=True)
+    icesat2.validate_dem_collection.validate_list_of_dems(data_dir, photon_h5=None, use_icesat2_photon_database=True,
+                                                          results_h5=results_h5, fname_filter=datafiles_regex,
+                                                          fname_omit=None, output_dir=results_dir,
+                                                          icesat2_dir=icesat2_dir, input_vdatum=input_vdatum,
+                                                          output_vdatum=output_vdatum, overwrite=False,
+                                                          place_name=place_name, create_individual_results=True,
+                                                          date_range=["2021-01-01", "2021-12-31"],
+                                                          skip_icesat2_download=False, delete_datafiles=False,
+                                                          include_photon_validation=include_photon_validations,
+                                                          write_result_tifs=True, shapefile_name=None,
+                                                          omit_bad_granules=True, verbose=True)
 
 # Default directory ... just validate the 1/9" tiles, not the 1/3" tiles (which are bathy only)
 def validate_all(basedir=os.path.join(cudem_config._abspath(cudem_config.source_datafiles_directory), "NCEI_ninth_Topobathy_2014_8483"),

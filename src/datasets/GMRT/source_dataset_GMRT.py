@@ -8,6 +8,7 @@ import subprocess
 import re
 from osgeo import gdal
 import pandas
+import shapely.geometry
 
 #####################
 # Don't actually need the CUDEM package here, but it's an indicator whether CUDEM is installed on this machine.
@@ -131,7 +132,6 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                 # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
                 print("\n" + " ".join(stacks_command))
-                # FOOBAR
                 p = subprocess.run(stacks_command)
 
             xml_file = gmrt_tile_fname + ".aux.xml"
@@ -298,7 +298,111 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             # The dataset_geopackage object will rebuild the gdf using the new files.
             gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
 
-    def remove_xml_files(self, and_inf = True):
+
+    def translate_15s_bad_regions_to_1s(self, verbose=True):
+        """We had come up with "GMRT_bad_tile_values_15s.csv" to eliminate regions in the GMRT tiles that had bad data.
+        We new need to translate those same regions into the 1s tile coordinates.
+        """
+        gdf_15 = self.get_geodataframe(resolution_s=15, verbose=verbose)
+        gdf_1 = self.get_geodataframe(resolution_s=1, verbose=verbose)
+        # TODO: Finish here.
+
+        bad_tiles_csvname_15s = self.config.gmrt_bad_values_csv.format(15)
+        bad_tiles_csvname_1s = self.config.gmrt_bad_values_csv.format(1)
+
+        df_bad_values_15s = pandas.read_csv(bad_tiles_csvname_15s)
+        # Create a dtype-like dictionary object to define the columns of the new datatype.
+        dt_dict = dict([(name, pandas.Series(dtype=df_bad_values_15s[name].dtype)) for name in df_bad_values_15s.columns])
+        df_bad_values_1s = pandas.DataFrame(dt_dict)
+        # list_of_new_records = []
+
+        for i, row_15 in df_bad_values_15s.iterrows():
+            tile_id = str(row_15.TileID)
+
+            # Find the feature in the 15s gdf with this tile_ID
+            tile_15s_row = gdf_15[gdf_15.filename.str.contains(tile_id)]
+            tile_15s_geom = tile_15s_row.geometry.tolist()[0]
+
+            if not numpy.isnan(row_15.badvalue) and numpy.isnan(row_15.bad_row_min):
+                # In this case, we're giving it a bad value to mask out, not a bad bounding box.
+                print(i, "Case 1", tile_id)
+
+                # print(tilenames_1s)
+                tilenames_1s = self.retrieve_list_of_datafiles_within_polygon(tile_15s_geom, gdf_15.crs, resolution_s=1,
+                                                                              verbose=verbose)
+                tile_ids_1s = [re.search(r"[NS]\d{2}[EW]\d{3}", os.path.basename(tn)).group() for tn in tilenames_1s]
+
+                # Since there are currently no IDs overlapping the CRMs where we had used "badvalue" notation (the only
+                # tile we used that one on was in Alaska, which does not intersect the CONUS-coastal CRMs), then this
+                # produces an empty set there. I could flesh out this logic for completeness, but will skip it for now.
+                # If we ever do produce 1s tiles over Alaska, and/or include other mask areas to omit certain values,
+                # we will fix this then. But I'm skipping it for now.
+
+            elif numpy.isnan(row_15.badvalue) and not numpy.isnan(row_15.bad_row_min):
+                # In this case, we've specified a row/col bounding box to mask out.
+
+                # None of these values should be blank here. We need them all.
+                assert not (numpy.isnan(row_15.bad_row_min) or numpy.isnan(row_15.bad_row_max) or
+                            numpy.isnan(row_15.bad_col_min) or numpy.isnan(row_15.bad_col_max))
+
+                # Get the geotransform from the 15s raster file.
+                gtf_15s = gdal.Open(tile_15s_row.filename.tolist()[0], gdal.GA_ReadOnly).GetGeoTransform()
+                xmin, xstep, _, ymax, _, ystep = gtf_15s
+                assert (xstep > 0) and (ystep < 0)
+
+                latmax = ymax + (row_15.bad_row_min * ystep)
+                latmin = ymax + (row_15.bad_row_max * ystep)
+                lonmin = xmin + (row_15.bad_col_min * xstep)
+                lonmax = xmin + (row_15.bad_col_max * xstep)
+                assert (latmin < latmax) and (lonmin < lonmax)
+                # Create a lat/lon geometry from this bounding 15s bounding box.
+                bbox_15s = shapely.geometry.Polygon.from_bounds(lonmin, latmin, lonmax, latmax)
+
+                # Find the subset of all the 1s tiles that insersect this 15s bounding-box.
+                # Create a copy, since we'll be assigning to it in the next command.
+                subset_1s = self.retrieve_list_of_datafiles_within_polygon(bbox_15s,
+                                                                           gdf_15.crs,
+                                                                           resolution_s=1,
+                                                                           return_fnames_only=False,
+                                                                           verbose=verbose).copy()
+
+                # Get just the subset of each 1s polygon that insersects with the 15s polygon.
+                subset_1s["intersect_1s"] = subset_1s.intersection(bbox_15s)
+
+                print(i, "Case 2", tile_id, len(subset_1s), "1s records.")
+
+                for j, row_1s in subset_1s.iterrows():
+                    sub_minlon, sub_minlat, sub_maxlon, sub_maxlat = row_1s.intersect_1s.bounds
+                    # Get the 1s geotransform from the file.
+                    gtf_1s = gdal.Open(row_1s.filename, gdal.GA_ReadOnly).GetGeoTransform()
+                    tile_minx, tile_xstep, _, tile_maxy, _, tile_ystep = gtf_1s
+                    badvalue_data_1s = {'TileID': re.search(r"[NS]\d{2}[EW]\d{3}", os.path.basename(row_1s.filename)).group(),
+                                        'badvalue': numpy.NaN,
+                                        'bad_row_min': int((sub_maxlat - tile_maxy) / tile_ystep),
+                                        'bad_row_max': int((sub_minlat - tile_maxy) / tile_ystep),
+                                        'bad_col_min': int((sub_minlon - tile_minx) / tile_xstep),
+                                        'bad_col_max': int((sub_maxlon - tile_minx) / tile_xstep),
+                                        'comment': row_15.comment
+                                        }
+
+                    assert badvalue_data_1s['bad_row_min'] < badvalue_data_1s['bad_row_max']
+                    assert badvalue_data_1s['bad_col_min'] < badvalue_data_1s['bad_col_max']
+                    # print(badvalue_data_1s)
+
+                    # Add this row to the dataframe_badvalues_1s
+                    df_bad_values_1s.loc[len(df_bad_values_1s.index)] = badvalue_data_1s.values()
+                    # list_of_new_records.append(pandas.Series(badvalue_data_1s))
+
+            else:
+                raise ValueError("GMRT Bad_value bad row instance. Must specify a 'badvalue' or a bounding-box, but not both:\n    " +
+                                 str(row))
+
+        # df_bad_values_1s = pandas.concat([df_bad_values_1s] + list_of_new_records)
+        df_bad_values_1s.to_csv(bad_tiles_csvname_1s)
+        if verbose:
+            print(bad_tiles_csvname_1s, "written with", len(df_bad_values_1s), "records.")
+
+def remove_xml_files(self, and_inf = True):
         """Remove all XML files from the data directory. If and_inf, remove the .inf files as well."""
         xml_files = utils.traverse_directory.list_files(self.config.source_datafiles_directory,
                                                         regex_match=r"\.((xml)|(inf))\Z" if and_inf else r"\.xml\Z",
@@ -310,15 +414,17 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 if __name__ == "__main__":
     # Create the tiles.
     gmrt = source_dataset_GMRT()
-    # gmrt.create_tiles(resolution_s=1)
+    # gmrt.translate_15s_bad_regions_to_1s()
+    gmrt.clean_bad_gmrt_values(resolution_s=1)
+    # gmrt.create_tiles(resolution_s=1, overwrite=True)
     # Get rid of any empty tiles.
-    # gmrt.delete_empty_tiles(resolution_s=15)
+    # # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)
 
     # for res in (15,1):
-    for res in (15,):
+    # for res in (15,):
         # gmrt.create_tiles(resolution_s=res, overwrite=False)
-        gmrt.clean_bad_gmrt_values(resolution_s = res, verbose = True)
+        # gmrt.clean_bad_gmrt_values(resolution_s = res, verbose = True)
         # gmrt.delete_empty_tiles(resolution_s=res)
     # gmrt.delete_empty_tiles(resolution_s=res)
 
@@ -326,7 +432,7 @@ if __name__ == "__main__":
     # print(os.path.basename(gmrt.get_geopkg_object().get_gdf_filename(resolution_s=15)), "removed.")
     # gdf15 = gmrt.get_geodataframe(resolution_s = 15)
 
-    gmrt.remove_xml_files(and_inf=True)
+    # gmrt.remove_xml_files(and_inf=True)
     # gmrt1 = source_dataset_GMRT()
     # gdf1 = gmrt1.get_geodataframe(resolution_s = 1)
     #

@@ -5,6 +5,8 @@
 import os
 import numpy
 from osgeo import gdal
+import geopandas
+import random
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -17,6 +19,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 import datasets.etopo_source_dataset as etopo_source_dataset
 import etopo.convert_vdatum
 import utils.traverse_directory
+import utils.configfile
 
 class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
     """Look in "src/datasets/etopo_source_dataset.py" to get base class definition."""
@@ -25,6 +28,54 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
         """Initialize the CUDEM source dataset object."""
 
         super(source_dataset_CUDEM, self).__init__("CUDEM", configfile)
+
+    def measure_navd88_vs_egm2008_elevs(self):
+        """Give a distribution of how much elevation was changed when we converted from NAVD88 to EGM2008.
+
+        (Specifically for CONUS tiles in the southeast US, covering the CRMs)."""
+        etopo_config = utils.configfile.config()
+        crm_gdf = geopandas.read_file(etopo_config._abspath(etopo_config.crm_tiles_outline_shapefile)).geometry
+        assert len(crm_gdf) == 1
+        crm_polygon = crm_gdf.geometry[0]
+
+        fnames = self.retrieve_list_of_datafiles_within_polygon(crm_polygon, crm_gdf.crs, resolution_s = 1, return_fnames_only=True)
+        random.shuffle(fnames)
+
+        assert numpy.all([fn.find("_egm2008_epsg4326.tif") > 0 for fn in fnames])
+        for i,fname in enumerate(fnames):
+            egm_2008_fname = fname.replace("_epsg4326", "")
+            orig_fname = egm_2008_fname.replace("/converted/", "/").replace("_egm2008", "")
+            try:
+                assert os.path.exists(egm_2008_fname)
+                assert os.path.exists(orig_fname)
+            except AssertionError as e:
+                print("Original file:", orig_fname)
+                print("EGM2008 file:", egm_2008_fname)
+                print("WGS84 file:", fname)
+                print("One of these is not found.")
+                raise e
+
+            egm_ds = gdal.Open(egm_2008_fname, gdal.GA_ReadOnly)
+            egm_band = egm_ds.GetRasterBand(1)
+            egm_array = egm_band.ReadAsArray()
+
+            navd_ds = gdal.Open(orig_fname, gdal.GA_ReadOnly)
+            navd_band = navd_ds.GetRasterBand(1)
+            navd_array = navd_band.ReadAsArray()
+
+            navd_band = None
+            navd_ds = None
+            egm_band = None
+            egm_ds = None
+
+            diffs = egm_array - navd_array
+            mind = numpy.amin(diffs)
+            maxd = numpy.amax(diffs)
+            meand = numpy.mean(diffs)
+            stdd = numpy.std(diffs)
+
+            print("{0}/{1}".format(i+1, len(fnames)), os.path.basename(orig_fname), meand, "+/-", stdd, "min", mind, "max", maxd)
+        return
 
     def delete_empty_tiles(self, recreate_if_deleted=True, delete_if_any_nodata=True, check_start=0, check_end=None, verbose=True):
         """For some fucking reason, some of the CUDEM converted tiles don't have any valid data in them.
@@ -114,9 +165,8 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
         basedir = self.config.source_datafiles_directory
         fnames_list = utils.traverse_directory.list_files(basedir, regex_match="ncei([\w\-\.]+)_v\d\.tif\Z", include_base_directory=True)
 
-
         for fname in fnames_list:
-            fname_converted_1 = os.path.splitext(fname_converted)[0] + "_egm2008_epsg4326.tif"
+            fname_converted_1 = os.path.splitext(fname_converted)[0] + "_egm2008.tif"
             fname_converted_2 = os.path.join(os.path.dirname(fname_converted_1), "converted", os.path.basename(fname_converted_1))
 
             if not (os.path.exists(fname_converted_1) or os.path.exists(fname_converted_2)):
@@ -124,7 +174,6 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
 
         print("Done.")
         return
-
 
 def get_cudem_original_vdatum_from_file_path(file_path):
     """Quick little uility for getting the original vetical datum from the folder or filename of the CUDEM tile."""
@@ -150,7 +199,9 @@ def get_cudem_original_vdatum_from_file_path(file_path):
 if __name__ == "__main__":
     # gdf = source_dataset_CUDEM().get_geodataframe()
     cudem = source_dataset_CUDEM()
+    cudem.convert_vdatum()
+    # cudem.measure_navd88_vs_egm2008_elevs()
     # cudem.reproject_tiles_from_nad83(overwrite=False)
-    cudem.delete_empty_tiles(check_start=0, recreate_if_deleted=True)
+    # cudem.delete_empty_tiles(check_start=0, recreate_if_deleted=True)
 
     # cudem.check_if_all_tiles_are_converted()
