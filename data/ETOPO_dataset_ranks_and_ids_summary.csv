@@ -1,0 +1,13 @@
+dset_name,name_long,ranking_score,id_number,vdatum_name,vdatum_epsg,is_active
+GEBCO,GEBCO,1,1,MSL,5714,True
+CUDEM_derived_bathy,CUDEM-derived bathymetry,2,2,EGM2008,3855,True
+NOAA_estuarine,NOAA Regional archived (non-tiled) DEMs,3,3,egm2008,3855,True
+NOAA_regional,NOAA Regional archived (non-tiled) DEMs,4,4,egm2008,3855,True
+GMRT,Globatl Multi-Resolutin Topography Data Synthesis (GMRT),5,5,EGM2008,3855,True
+ShallowBathyEverywhere,Shallow Bathy Everywhere,6,6,egm2008,3855,True
+BlueTopo,BlueTopo,7,7,EGM2008,3855,True
+BOEM,BOEM,8,8,egm2008,3855,True
+FABDEM,FABDEM,9,9,EGM2008,3855,True
+HRDEM_Canada,HRDEM Canada Land Tiles,10,10,egm2008,3855,True
+USGS_TNM,"USGS National Map, 3-Dep tiles",11,11,EGM2008,3855,True
+CUDEM,CUDEM,12,12,EGM2008,3855,True
