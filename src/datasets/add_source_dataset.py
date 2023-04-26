@@ -34,6 +34,9 @@ class source_dataset_FOOBAR(etopo_source_dataset.ETOPO_source_dataset):
         \"""Initialize the FOOBAR source dataset object.\"""
 
         super(source_dataset_FOOBAR, self).__init__("FOOBAR", configfile)
+        
+if __name__ == "__main__":
+    pass
 """
 
 import os
