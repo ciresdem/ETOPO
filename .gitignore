@@ -132,6 +132,8 @@ dmypy.json
 # ETOPO DATA FILES and other things to ignore in my directory specific to ETOPO
 data/*.tif
 data/*.gpkg
+data/crm_issues/*
+data/crm/*
 data/*.nc
 data/*.inf
 .nsidc_credentials
