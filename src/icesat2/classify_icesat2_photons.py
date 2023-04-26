@@ -651,7 +651,7 @@ def save_granule_ground_photons(granule_path,
     #  2 = canopy
     #  3 = canopy top
     # Save only 1,2,3 photons.
-    dataframe = dataframe.loc[dataframe.class_code.between(1,3,inclusive="both")]
+    dataframe = dataframe.loc[dataframe.class_code.between(1,3,inclusive="both")].reset_index()
 
     if ext == ".h5":
         dataframe.to_hdf(output_db, "icesat2", complib="zlib", complevel=3, mode='w')
