@@ -313,10 +313,10 @@ class ICESat2_Database:
             print(os.path.split(self.gpkg_fname)[1], "written with", len(gdf), "entries.")
         return
 
-        if also_delete_redundant_csvs:
-            self.delete_csvs_already_in_database(gdf = gdf,
-                                                 force_read_from_disk = False,
-                                                 verbose = verbose)
+        # if also_delete_redundant_csvs:
+        #     self.delete_csvs_already_in_database(gdf = gdf,
+        #                                          force_read_from_disk = False,
+        #                                          verbose = verbose)
 
     def query_geopackage(self, polygon_or_bbox, use_sindex=True, return_whole_records=True):
         """Return the photon database tile filenames that intersect the polygon in question.
@@ -349,7 +349,7 @@ class ICESat2_Database:
         else:
             return gdf_subset["filename"].tolist()
 
-    def get_photon_database(self, polygon_or_bbox,
+    def get_photon_database(self, polygon_or_bbox = None,
                                   build_tiles_if_nonexistent = True,
                                   verbose=True):
         """Given a polygon or bounding box, return the combined database of all
@@ -433,10 +433,20 @@ class ICESat2_Database:
         assert len(empty_df) == 0
         return empty_df
 
-    def look_for_local_icesat2_photon_db(self, db_name):
+    def look_for_local_icesat2_photon_db(self, db_name, look_for_subset_at_longitude=None, lon_chunksize=2):
         """Look through the local granules directory, as well as any alternate directories, to find ICESat-2 photon database granule files.
-        Return the file location if it exists. Return None if not."""
+        Return the file location if it exists. Return None if not.
 
+        If look_for_subset_at_longitude is set to a number, it will first look for a subset granule that fits that longitude."""
+
+        # First, if we've opted to do this with the optional parameters, look for a smaller subset of the granule file. If it exists, just use that.
+        if (look_for_subset_at_longitude is not None) and (lon_chunksize is not None):
+            granule_sub_filename = self.give_granule_subset_name(db_name, look_for_subset_at_longitude, lon_deg_chunksize=lon_chunksize)
+            if os.path.exists(granule_sub_filename):
+                return granule_sub_filename
+
+        # Otherwise, look for either a .h5 or .feather file in the granules directory.
+        # If you can't find it in the main granules directory, look in the alternate directories.
         possible_exts = [".h5", ".feather"]
         possible_dirs = [self.granules_directory] + self.alt_granules_directories
 
@@ -450,11 +460,12 @@ class ICESat2_Database:
                 if os.path.exists(possible_fname):
                     return possible_fname
 
+        # Otherwise, if we couldn't find a matching granule or subset-of-a-granule anywhere, just return None.
         return None
 
     def create_photon_tile(self, bbox_polygon,
                                  tilename,
-                                 date_range = ['2021-01-01','2021-12-31'], # Calendar-year 2021 is the dates we're using for ETOPO. TODO: Change this to read from the config file later.
+                                 date_range = ['2021-01-01', '2021-12-31'], # Calendar-year 2021 is the dates we're using for ETOPO. TODO: Change this to read from the config file later.
                                  overwrite = False,
                                  write_stats = True,
                                  verbose = True):
@@ -541,7 +552,15 @@ class ICESat2_Database:
             while not df_is_read:
                 # If the tile doesn't exist, get the granules needed for it. First, look for the photon database, either in .h5 or .feather format.
                 if photon_db_location is None:
-                    photon_db_location = self.look_for_local_icesat2_photon_db(photon_db)
+                    photon_db_location = self.look_for_local_icesat2_photon_db(photon_db, look_for_subset_at_longitude=None) #=(None if bbox_bounds[1] > -88 else bbox_bounds[0]))
+                    # TODO: DELETE THIS LATER.
+                    # FOR NOW, we know that if there exists no "subset datafraome" for this tile in this bounding box, then there are
+                    # no photons in that bounding box for this tile. Don't bother reading it to check again.
+                    # Just look for the pattern to see if this was a subset tile. If not, skip & move along.
+                    # print(photon_db_location)
+                    # if bbox_bounds[1] <= -88 and re.search("_[EW]((\d){3})_[EW]((\d){3})\.feather", photon_db_location) is None:
+                    #     df = self.read_empty_tile()
+
                 if photon_db_location is None:
                     # If the granules don't exist, download them.
 
@@ -603,33 +622,42 @@ class ICESat2_Database:
                     # drives.
                     photon_db = photon_db_location
 
+                # print(i+1, len(atl03_photon_db_filenames), photon_db)
+
                 # At this point, the photon database should exist locally. So read it.
                 # Then, subset within the bounding box.
-                base, ext = os.path.splitext(photon_db)
                 if df is None:
+                    base, ext = os.path.splitext(photon_db)
                     try:
                         if ext == ".h5":
                             df = pandas.read_hdf(photon_db, mode='r')
                         else:
                             df = pandas.read_feather(photon_db)
                     except (AttributeError, tables.exceptions.HDF5ExtError):
-                        db_to_remove = photon_db if os.path.exists(photon_db) else photon_db_other
-                        print("===== ERROR: Photon database {0} corrupted. Will build anew. =====".format(os.path.split(db_to_remove)[1]))
-                        print("Removing", db_to_remove)
+                        print("===== ERROR: Photon database {0} corrupted. Will build anew. =====".format(os.path.basename(photon_db)))
+                        print("Removing", photon_db)
                         # Remove the corrupted database.
                         os.remove(photon_db)
                         continue
-                    except FileNotFoundError:
-                        # If the file is not found, try to find the other one. One of them should be in here.
-                        if ext == ".h5":
-                            df = pandas.read_feather(photon_db_other)
-                        else:
-                            df = pandas.read_hdf(photon_db_other, mode='r')
+                    except KeyboardInterrupt as e:
+                        print("Process {} was reading".format(os.getpid()), photon_db, "in bbox ({0:0.2f},{1:0.2f},{2:0.2f},{3:0.2f})".format(*bbox_bounds))
+                        raise e
+                    # except FileNotFoundError:
+                    #     # If the file is not found, try to find the other one. One of them should be in here.
+                    #     if ext == ".h5":
+                    #         df = pandas.read_feather(photon_db_other)
+                    #     else:
+                    #         df = pandas.read_hdf(photon_db_other, mode='r')
 
-                # Select only photons within the bounding box, that are land (class_code==1) or canopy (==2,3) photons
-                df_subset = df[df.longitude.between(bbox_bounds[0], bbox_bounds[2], inclusive="left") & \
-                               df.latitude.between(bbox_bounds[1], bbox_bounds[3], inclusive="left") & \
-                               df.class_code.between(1,3, inclusive="both")]
+                # Only bother subsetting the dataframe if there are any photons in it.
+                if len(df.index) == 0:
+                    df_subset = df
+                else:
+                    # Select only photons within the bounding box, that are land (class_code==1) or canopy (==2,3) photons
+                    df_subset = df[df.longitude.between(bbox_bounds[0], bbox_bounds[2], inclusive="left") & \
+                                   df.latitude.between(bbox_bounds[1], bbox_bounds[3], inclusive="left") & \
+                                   df.class_code.between(1,3, inclusive="both")]
+
                 photon_dfs[i] = df_subset
 
                 df_is_read = True
@@ -790,30 +818,41 @@ class ICESat2_Database:
     def read_photon_tile(self, tilename):
         """Read a photon tile. If the tilename doesn't exist, return None."""
         # Check to make sure this is actually an HDF5 file we're reading.
-        ext = os.path.splitext(tilename)[1].lower()
-        assert ext in (".h5",".feather")
+        base, ext = os.path.splitext(tilename)
+        assert ext.lower() in (".h5",".feather")
         # Read it here and return it. Pretty simple.
 
         # To make the HDF5 and Feather formats basically interchangeable, first look for the one.
         # Then if you can't find it, look for the other.
-        if ext == ".h5":
-            try:
-                return pandas.read_hdf(tilename, mode='r')
-            except FileNotFoundError:
-                feather_name = os.path.splitext(tilename)[0] + ".feather"
-                if os.path.exists(feather_name):
-                    return pandas.read_feather(tilename)
-                else:
-                    return None
-        else:
-            try:
-                return pandas.read_feather(tilename)
-            except FileNotFoundError:
-                h5_name = os.path.splitext(tilename)[0] + ".h5"
-                if os.path.exists(h5_name):
-                    return pandas.read_hdf(tilename, mode='r')
-                else:
-                    return None
+        # Try the feather file first.
+        feather_name = base + ".feather"
+        if os.path.exists(feather_name):
+            return pandas.read_feather(feather_name)
+        h5_name = base + ".h5"
+        if os.path.exists(h5_name):
+            return pandas.read_hdf(h5_name, mode='r')
+
+        # If neither of those work, return None if the file is not found.
+        return None
+
+        # if ext == ".h5":
+        #     try:
+        #         return pandas.read_hdf(tilename, mode='r')
+        #     except FileNotFoundError:
+        #         feather_name = os.path.splitext(tilename)[0] + ".feather"
+        #         if os.path.exists(feather_name):
+        #             return pandas.read_feather(tilename)
+        #         else:
+        #             return None
+        # else:
+        #     try:
+        #         return pandas.read_feather(tilename)
+        #     except FileNotFoundError:
+        #         h5_name = os.path.splitext(tilename)[0] + ".h5"
+        #         if os.path.exists(h5_name):
+        #             return pandas.read_hdf(tilename, mode='r')
+        #         else:
+        #             return None
 
     def get_tiling_progress_mapname(self):
         """Output a map of the tiling progress so far.
@@ -836,8 +875,154 @@ class ICESat2_Database:
         """
         # TODO: Finish.
 
+    ### The next 4 methods all have to do with "subsetting" the ICESat-2 granule photon databases into smaller chunks
+    # to help optimize the generation of ICESat-2 photon_tiles. Near the pole-hole in Antartica, the subsetting of
+    # all these granule tiles takes FOREVER, and it was really becoming a beast. Here we split them up, and use the
+    # give_granule_subset_name() to give a subset name for a given location, making it easy for code above to look for a
+    # subset file rather than the full granule file. The "subset_remaining_granules" method immediately below has default
+    # parameters to subset all the granules that lie within the bounds of Antarctica that we haven't yet completed tiles for.
+    # Previous definition, for doing east-side
+    # def subset_remaining_granules(self, lon_min=-136, lon_max=180, lat_min=-90, lat_max=-86, lon_deg_chunksize=2, icesat2_region_num=11):
+    # Below: Last for for east-side bottom-row only.
+    # TODO: After runnign this form -138 to -136 to cover the gap left by the error of not capping the bin boundaries,
+    #    then re-run it with lon_min at -180 and mask out all if i<3180. Change the "proc 4" if-statement to do that.
+    def subset_remaining_granules(self, lon_min=-180, lon_max=-136, lat_min=-90, lat_max=-88, lon_deg_chunksize=2, icesat2_region_num=11):
+        """Take the remaining granules that are in the icesat2_granules_subset_directory that match a certain region number, and subset them into chucks by longitude.
+        This will make subsetting them much easier down the line."""
+        bin_boundaries = numpy.arange(lon_min, lon_max + (lon_deg_chunksize*0.5), lon_deg_chunksize)
+
+        granule_dir = self.etopo_config._abspath(self.etopo_config.icesat2_granules_directory)
+        granule_fnames = os.listdir(granule_dir)
+        if icesat2_region_num is not None:
+            granule_fnames = [fn for fn in granule_fnames if int(re.search("(?<=ATL03_(\d){14}_(\d){6})(\d){2}(?=_005_01_photons)", fn).group()) == icesat2_region_num]
+
+        granule_fnames = [os.path.join(granule_dir, fn) for fn in granule_fnames]
+
+        external_drive = self.etopo_config._abspath(self.etopo_config.icesat2_granules_directory_alternate)
+
+        for i,gfn in enumerate(granule_fnames):
+            # TODO: REMOVE THIS LATER. JUST SKIPPING ALREADY_DONE PORTIONS.
+            # if i<1744 or i>3000: # Forward, proc 1 (0-3000)
+            # if i<=3000 or i>4200: # Forward, proc 2 (3000-4200)
+            # if i<=4200: # Forward, proc 3 DONE! (4200 thru end, finished)
+            # if i<552 or i>1700:
+            # if i<3223 or i>4300: # proc 3-4, doing westward pole-bit work (at the bottom of W Antarctica)
+            # if i<4300:
+            # if i>3430: # For moving granules over to the external directory.
+            #     continue
+
+            ################
+            # TODO: Comment this out. I'm just putting this in here temoprarily to move remaining granules to the external drive.
+            # shutil.move(gfn, external_drive)
+            # print("{0}/{1} {2} moved.".format(i+1, len(granule_fnames), os.path.basename(gfn)))
+            # continue
+            ################
+
+            n_written = self.subset_individual_granule(gfn, bin_boundaries, lat_min=lat_min, lat_max=lat_max, lon_deg_chunksize=lon_deg_chunksize)
+
+            print("{0}/{1}".format(i+1, len(granule_fnames)), os.path.basename(gfn), "->", n_written, "subset files.")
+            # subset_names = self.list_of_granule_subset_names(gfn, bins_left, lon_deg_chunksize)
+            # for s_name in subset_names:
+            #     print("   " + os.path.basename(s_name))
+
+    def subset_individual_granule(self, granule_name, bin_boundaries, lat_min=-90, lat_max=-86, lon_deg_chunksize=2):
+        """Take an individual icesat-2 granule, divide it up into all its counterparts, save them to subset files."""
+        outfiles = self.list_of_granule_subset_names(granule_name, bin_boundaries, lon_deg_chunksize=lon_deg_chunksize)
+        # If all the subset files already exist, just exit.
+        if numpy.all([os.path.exists(of) for of in outfiles]):
+            return 0
+        assert os.path.splitext(granule_name)[1] == ".feather"
+        df = pandas.read_feather(granule_name)
+        lons = df.longitude
+        max_lon = lons.max()
+        min_lon = lons.min()
+
+        # Quick check, in the instance where we're only looking at one bin, if the photons all fall outside the bounds
+        # of that bin, then just move on and don't consider this one.
+        if len(bin_boundaries) == 2 and ((bin_boundaries[0] > max_lon) or (bin_boundaries[1] < min_lon)):
+            return 0
+        # Subtract 1 to put the first bin at index 0, everything to the left as index -1. This will ensure the for statement
+        # below misses the first bin (everything left of the minimum longitude).
+        photon_bin_nums = numpy.digitize(lons, bin_boundaries) - 1
+        # print(numpy.max(photon_bin_nums), len(bins_left), len(outfiles))
+        # print("photon_bin_nums", photon_bin_nums)
+        # print("bins_left", bins_left)
+        # print("outfiles", [os.path.basename(of) for of in outfiles])
+        max_bin_num = numpy.max(photon_bin_nums)
+        assert max_bin_num <= len(bin_boundaries) == (len(outfiles)+1)
+        num_written = 0
+
+        # print(os.path.basename(granule_name), len(photon_bin_nums), "photons.")
+        # Omit the last "photon_bin_num" bin, we're just using that as a cutoff beyond the "max."
+        for (bin_id, left_lon, right_lon, of) in zip(numpy.arange(0, max_bin_num), bin_boundaries[:-1], bin_boundaries[1:], outfiles):
+            # If it already exists, just skip it.
+            if os.path.exists(of):
+                continue
+            # If absolutely none of the photons falls within this bin boundary, just skip.
+            if (left_lon > max_lon) or (right_lon < min_lon):
+                continue
+
+            # First just subset by the bin_ids (longitude).
+            subset_mask = photon_bin_nums == bin_id
+            # If there's no photons in this longitude segment, skip it.
+            if not numpy.any(subset_mask):
+                continue
+
+            # Cut off all points between lat-min and lat-max.
+            if lat_min is not None:
+                lats = df.latitude
+                if lat_max is None:
+                    subset_mask = subset_mask & (lats >= lat_min)
+                else:
+                    subset_mask = subset_mask & lats.between(lat_min, lat_max, inclusive="left")
+            elif lat_max is not None:
+                lats = df.latitude
+                subset_mask = subset_mask & (lats < lat_max)
+            # If there's no photons in this longitude segment after filtering out latitudes, skip it.
+            if not numpy.any(subset_mask):
+                continue
+
+            # Subset the photons according to the bounding  box.
+            df_subset = df[subset_mask]
+            df_subset.reset_index().to_feather(of)
+            num_written += 1
+            # print("  " + os.path.basename(of), "written.", len(df_subset), "photons.")
+
+        return num_written
+
+    def list_of_granule_subset_names(self, granule_name, bin_boundaries, lon_deg_chunksize=2, fmt=".feather"):
+        """For a given ICESat-2 granule name, return all the granule subset names associated with it."""
+        return [self.give_granule_subset_name(granule_name, lon, lon_deg_chunksize=lon_deg_chunksize, fmt=fmt) for lon in bin_boundaries[:-1]]
+
+    def give_granule_subset_name(self, granule_name, longitude, lon_deg_chunksize=2, fmt=".feather"):
+        """Given an ICESat-2 granule name, return the names of the granule_subset file that should correspond to it."""
+        fname = os.path.basename(granule_name)
+        base, ext = os.path.splitext(fname)
+        dirname_out = self.etopo_config._abspath(self.etopo_config.icesat2_granules_subset_directory)
+
+        bin_left = int(numpy.floor(longitude / lon_deg_chunksize) * lon_deg_chunksize)
+        bin_right = int(bin_left + lon_deg_chunksize)
+
+        # Append a lon_min and lon_max to the filename.
+        basename_out = base + "_{1}{0:03d}_{3}{2:03d}".format(abs(bin_left),
+                                                              "W" if (bin_left < 0) else "E",
+                                                              abs(bin_right),
+                                                              "W" if (bin_right < 0) else "E")
+        return os.path.join(dirname_out, basename_out + fmt)
+
 if __name__ == "__main__":
     is2db = ICESat2_Database()
-    is2db.create_new_geopackage()
+    dbname = "ATL03_20210202085415_06161011_005_01_photons.h5"
+    db_sub = is2db.look_for_local_icesat2_photon_db(dbname, look_for_subset_at_longitude=-73.5)
+    print(db_sub)
+    db_sub_should_be = is2db.give_granule_subset_name(dbname, longitude=-73.5)
+    print(db_sub_should_be)
+
+    # Restart this to get the moving going again.
+    # is2db.subset_remaining_granules()
+
+
+
+    # is2db.create_new_geopackage()
     # phd = is2db.get_photon_database((27, 22.5, 27.75, 23))
     # print(phd)
