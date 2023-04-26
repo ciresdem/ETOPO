@@ -123,6 +123,6 @@ class BlueTopo_Downloader(download_dataset.DatasetDownloader_BaseClass):
 
 if __name__ == "__main__":
     BT = BlueTopo_Downloader()
-    BT.create_list_of_links()
+    # BT.create_list_of_links()
 
-    BT.download_files(N_subprocs=5)
+    BT.download_files(N_subprocs=2)

@@ -73,7 +73,8 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 
             # THESE ARE TILES WHERE GMRT LEGIT HAS NO DATA. Don't bother with these.
             tile = os.path.basename(gmrt_tile_fname)
-            if  (tile.find("N00E015") > -1) or \
+            if  resolution_s == 15 and \
+                ((tile.find("N00E015") > -1) or \
                 (tile.find("S15E015") > -1) or \
                 (tile.find("N30E090") > -1) or \
                 (tile.find("N45E105") > -1) or \
@@ -90,7 +91,7 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                 (tile.find("S90E090") > -1) or \
                 (tile.find("S90E105") > -1) or \
                 (tile.find("S90E120") > -1) or \
-                (tile.find("S90E135") > -1):
+                (tile.find("S90E135") > -1)):
                 if verbose:
                     print("{0}/{1} {2} contains no GMRT data and has been excluded.".format(i+1, len(etopo_gdf), os.path.basename(tile)))
                 continue
@@ -126,7 +127,7 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                                "-O", os.path.splitext(gmrt_tile_fname)[0],
                                "-f",
                                "-F", "GTiff",
-                               "gmrt:layer=topo-mask:fmt=netcdf:res=max"]
+                               "gmrt:layer=topo-mask:fmt=geotiff:res=max"]
 
             if not os.path.exists(gmrt_tile_fname):
                 # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -415,8 +416,8 @@ if __name__ == "__main__":
     # Create the tiles.
     gmrt = source_dataset_GMRT()
     # gmrt.translate_15s_bad_regions_to_1s()
+    gmrt.create_tiles(resolution_s=1, overwrite=False)
     gmrt.clean_bad_gmrt_values(resolution_s=1)
-    # gmrt.create_tiles(resolution_s=1, overwrite=True)
     # Get rid of any empty tiles.
     # # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)
