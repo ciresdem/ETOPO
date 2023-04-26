@@ -84,6 +84,15 @@ class ETOPO_source_dataset:
         # The Coordinte Reference System of this dataset. NOTE: All files within the dataset
         # should have the same coordainte reference system.
 
+
+    def get_source_datafiles_dir(self, resolution_s=1):
+        """Get the tile directory for the source datafiles."""
+        if resolution_s is not None and hasattr(self.config, "source_datafiles_directory_{0}s".format(resolution_s)):
+            return self.config._abspath(getattr(self.config, "source_datafiles_directory_{0}s".format(resolution_s)))
+        else:
+            return self.config._abspath(self.config.source_datafiles_directory)
+
+
     def is_active(self):
         """A switch to see if thais dataset is yet being used."""
         # Switch to 'True' when the .ini is filled out and this is ready to go.
