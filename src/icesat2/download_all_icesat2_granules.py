@@ -36,6 +36,7 @@ import icesat2.icesat2_photon_database as icesat2_photon_database
 import etopo.generate_empty_grids
 import utils.progress_bar
 import utils.sizeof_format
+import utils.parallel_funcs
 
 # ICESAT2_DIR = os.path.join(my_config.etopo_cudem_cache_directory, ".cudem_cache")
 ICESAT2_DIR = my_config.icesat2_granules_directory
@@ -700,9 +701,10 @@ def generate_all_photon_tiles(map_interval = 25,
     try:
         for (xmin, ymin) in zip(xvals.flatten(), yvals.flatten()):
 
-            # For now, speed things up. We already know everything from -78 S to +78 N is finished, just skip ahead.
+            # For now, speed things up. We already know everything from -85 S to 90 N is finished, just skip ahead.
             # TODO: Delete later when finished, or when rebuilding the database.
-            if -78 <= ymin <= 78:
+            if not (ymin == 58 or ymin == -88):
+            # if ymin >= -85:
                 continue
 
             # A flag to see if any tiles have been actually generated in this box.
@@ -848,10 +850,150 @@ def generate_all_photon_tiles(map_interval = 25,
 
         raise e
 
+def convert_h5_to_feather(h5name, remove_h5=True, verbose=True):
+    """Convert an .h5 database to a feather database.
 
-# def _create_single_tile(tilename, bounds):
-#     """A multiprocessing target for generate_all_photon_tiles(), to create a single
-#     photon tile in a sub-process, and run it."""
+    Feather has much faster read performance."""
+    df = pandas.read_hdf(h5name)
+    feather_name = os.path.splitext(h5name)[0] + ".feather"
+    df.to_feather(feather_name)
+    if verbose:
+        print("Created", feather_name)
+    if remove_h5:
+        os.remove(h5name)
+    if verbose:
+        print("Removed", h5name)
+    return feather_name
+
+
+def inspect_photon_tiles_dir():
+    """Count up the number of each type of file in the photon_tiles directory."""
+    dirname = my_config._abspath(my_config.icesat2_photon_tiles_directory)
+    fnames = sorted(os.listdir(dirname))
+
+    h5_regex = r'photon_tile_[NS](\d{2})\.(\d{2})_[EW](\d{3})\.(\d{2})_[NS](\d{2})\.(\d{2})_[EW](\d{3})\.(\d{2})\.h5\Z'
+    feather_regex = h5_regex.replace(".h5",".feather")
+
+    num_h5 = 0
+    num_feather = 0
+    num_non_matching = 0
+    for fn in fnames:
+        if re.search(h5_regex, fn) is not None:
+            num_h5 += 1
+        elif re.search(feather_regex, fn) is not None:
+            num_feather += 1
+        else:
+            num_non_matching += 1
+            print(fn)
+
+    print()
+    print(num_h5, ".h5 files.")
+    print(num_feather, ".feather files.")
+    print(num_non_matching, "non-matching files.")
+    print(num_h5+num_feather, ".h5 and .feather files combined.")
+
+def clean_up_icesat2_photon_tile_database_and_directory():
+    """Go through the entire photon_tiles directory and the database. Check:
+    1) For duplicate files (.h5 and .feather). If both databases are valid, remove the .h5
+    2) Invalid or corrupt database files. Remove the file and rebuild it.
+    3) Empty database files, with zero records. Remove the file and remove the entry from the database.
+    4) .h5 files. Go ahead and convert to feather. Update the database accordingly."""
+
+    # tile_dirname = my_config._abspath(my_config.icesat2_photon_tiles_directory)
+    # fnames = sorted(os.listdir(tile_dirname))
+    # Get rid of the one EMPTY_TILE.h5 from the list. We don't need to consider this one.
+    # fnames = [fn for fn in fnames if fn != "ATL03_EMPTY_TILE.h5"]
+
+    is2db = icesat2_photon_database.ICESat2_Database()
+    gdf = is2db.get_gdf()
+    N = len(gdf)
+    prev_str = ""
+    for idx, row in gdf.iterrows():
+
+        # (1) First, check to see if we have duplicate entries.
+        num_files_matching = 0
+        if os.path.exists(row.filename):
+            num_files_matching += 1
+        if os.path.exists(row.filename.replace(".h5", ".feather")):
+            num_files_matching += 1
+
+        if num_files_matching == 0:
+            print("FILE NOT FOUND", row.filename)
+        elif num_files_matching == 2:
+            os.remove(row.filename)
+            print(" " * len(prev_str) + "\r")
+            print("Removed", row.filename)
+            # df1 = pandas.read_hdf(row.filename)
+            # df2 = pandas.read_feather(row.filename.replace(".h5", ".feather"))
+            # If the two dataframe are equal to each other, just remove the .h5
+            # if df1.equals(df2):
+            #     os.remove(row.filename)
+            #     print(" " * len(prev_str) + "\r")
+            #     print("Removed", row.filename)
+            # else:
+            #
+            #     print(" " * len(prev_str) + "\r")
+            #     print("DATAFRAMES UNEQUAL:")
+            #     print("  " + row.filename)
+            #     print(df1)
+            #     print("  " + row.filename.replace(".h5",".feather"))
+            #     print(df2)
+
+        # (2) Look for corrupt or invalid database files. Delete them if so.
+        ph_df = is2db.read_photon_tile(row.filename)
+        if len(ph_df) != row.numphotons:
+            print(" " * len(prev_str) + "\r")
+            print("MISMATCH", row.filename)
+            print(" database:", row.numphotons)
+            print(" file:", len(ph_df))
+
+        prev_str = utils.progress_bar.ProgressBar(idx+1, N, suffix="{0}/{1}".format(idx+1, N))
+
+def convert_h5_to_feather_parallel(numprocs=10):
+    """Convert remaining h5 files to feather files."""
+    is2db = icesat2_photon_database.ICESat2_Database()
+    gdf = is2db.get_gdf()
+
+    print("Compiling list of .h5's to convert.")
+    gdf["h5_exists"] = gdf.apply(lambda row: os.path.exists(row.filename), axis=1)
+
+    print(" ", "{0:,}".format(numpy.count_nonzero(gdf.h5_exists)), "h5 files exist.")
+    print(" ", "{0:,}".format(numpy.count_nonzero(~gdf.h5_exists)), "feather files exist.")
+
+    h5_files = gdf.filename[gdf.h5_exists].to_list()
+    feather_files = [os.path.splitext(h5)[0] + ".feather" for h5 in h5_files]
+    args = [[h5] for h5 in h5_files]
+
+    utils.parallel_funcs.process_parallel(convert_SINGLE_h5_to_feather,
+                                          args,
+                                          kwargs_list={'overwrite': True,
+                                                       'remove_h5_when_done': True},
+                                          outfiles = feather_files,
+                                          overwrite_outfiles=True,
+                                          max_nprocs= numprocs,
+                                          abbreviate_outfile_names_in_stdout=True,
+                                          delete_partially_done_files=True)
+
+def convert_SINGLE_h5_to_feather(h5name, overwrite=False, remove_h5_when_done=True):
+    base, ext = os.path.splitext(h5name)
+    assert ext.lower() == ".h5"
+    feather_name = base + ".feather"
+    if os.path.exists(feather_name):
+        if overwrite:
+            os.remove(feather_name)
+        else:
+            return
+
+    df = pandas.read_hdf(h5name)
+    df.reset_index(drop=True, inplace=True)
+    df.to_feather(feather_name)
+
+    assert os.path.exists(feather_name)
+
+    if remove_h5_when_done:
+        os.remove(h5name)
+    return
+
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Utility for downloading and pre-processing the whole fucking world of ICESat-2 photon data. Right now set to do the whole year 2021 (Jan 1-Dec 30).")
@@ -864,6 +1006,9 @@ def define_and_parse_args():
     # parser.add_argument("--move_icesat2_files", "-m", action="store_true", default=False, help="Move all the icesat-2 granuels and photon_databases from the old .cudem_cache directory into the data/icesat2/granules directory.")
     parser.add_argument("--delete_redundant_granules", "-d", action="store_true", default=False, help="Delete ICESat-2 granules where a _photon.h5 database already exists. Free up some disk space.")
     parser.add_argument("--generate_all_photon_tiles", "-gat", action="store_true", default=False, help="Generate all the 0.25-degree photon tiles using the ICESat2 photon database code.")
+    parser.add_argument("--inspect", action="store_true", default=False, help="Inspect the contents of the photon_tiles directory.")
+    parser.add_argument("--clean", action="store_true", default=False, help="Clean up and validate the photon_tiles database and directory.")
+    parser.add_argument("--convert_h5_to_feather", "-ch5", action="store_true", default="False", help="Convert all existing .h5 database files to .feather files for faster reads.")
     parser.add_argument("--overwrite", '-o', action="store_true", default=False, help="Overwrite existing files.")
     parser.add_argument("--quiet", '-q', action="store_true", default=False, help="Run in quiet mode.")
 
@@ -887,7 +1032,16 @@ if __name__ == "__main__":
     #     if args.delete_redundant_granules:
     #         delete_granules_where_photon_databases_exist()
 
-    if args.generate_all_photon_tiles:
+    if args.inspect:
+        inspect_photon_tiles_dir()
+
+    elif args.clean:
+        clean_up_icesat2_photon_tile_database_and_directory()
+
+    elif args.convert_h5_to_feather:
+        convert_h5_to_feather_parallel(numprocs=args.numprocs)
+
+    elif args.generate_all_photon_tiles:
         generate_all_photon_tiles(map_interval = args.map_interval,
                                   overwrite = args.overwrite,
                                   numprocs = args.numprocs,
