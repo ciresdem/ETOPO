@@ -66,7 +66,10 @@ class DatasetGeopackage:
             return self.gdf
 
         elif os.path.exists(filename):
-            self.gdf = geopandas.read_file(filename, layer=self.default_layer_name)
+            try:
+                self.gdf = geopandas.read_file(filename, layer=self.default_layer_name)
+            except ValueError:
+                self.gdf = geopandas.read_file(filename)
             self.current_gdf_filename = filename
             if verbose:
                 print(filename, "read.")
@@ -158,6 +161,7 @@ class DatasetGeopackage:
                 dset_crs = crs
             else:
                 dset_epsg = pyproj.CRS.from_string(dset_crs).to_epsg()
+                # print(fname, crs, polygon)
                 dem_epsg = pyproj.CRS.from_string(crs).to_epsg()
                 # Get the CRS of each file, make sure they match the others (all files should have same CRS)
                 # Some of the CUDEM tiles have different EPSG's even though they're both in NAD83 horizontal datums.
@@ -404,7 +408,9 @@ if __name__ == "__main__":
     # sys.exit(0)
 
     ET1 = ETOPO_Geopackage(1)
-    # gdf = ET1.get_gdf(crm_only_if_1s=True)
+    gdf = ET1.get_gdf(crm_only_if_1s=True)
+    print(len(gdf), "CRM features.")
+    print(gdf)
     # fname = os.path.splitext(ET1.filename)[0] + "_CRM_only.gpkg"
     # gdf.to_file(fname, driver="GPKG")
     # print(fname, "written.")
