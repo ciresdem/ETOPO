@@ -62,9 +62,7 @@ def create_empty_tiles(directory,
                        verbose=True,
                        compression_options=["COMPRESS=DEFLATE", "PREDICTOR=2"],
                        also_write_geopackage=True):
-    """Create a set of new empty tiles at either 15 or 1s resolutions.
-
-    For 1s, create for land-tiles-only, using a list based on Copernicus tiles."""
+    """Create a set of new empty tiles at either 15 or 1s resolutions."""
 
     # Check to see that our input datatype is accepted.
     # First check to make sure our two lookup dictionaries coincide.
@@ -324,51 +322,51 @@ def create_list_of_tile_tuples(resolution=15,
     Add 1 to each number to get the (norternmost_latitude, easternmost_longitude) bbox coordinates."""
     assert resolution in (1, 15, 30, 60)
 
-    if resolution == 1:
-        # Import the Copernicus source dataset, and get the datafiles directory from it.
-        import datasets.CopernicusDEM.source_dataset_CopernicusDEM as copernicus
-        copds = copernicus.source_dataset_CopernicusDEM()
-        copernicus_dir = os.path.abspath(
-            os.path.join(os.path.split(copds.config._configfile)[0], copds.config.source_datafiles_directory))
+    # if resolution == 1:
+    #     # Import the Copernicus source dataset, and get the datafiles directory from it.
+    #     import datasets.CopernicusDEM.source_dataset_CopernicusDEM as copernicus
+    #     copds = copernicus.source_dataset_CopernicusDEM()
+    #     copernicus_dir = os.path.abspath(
+    #         os.path.join(os.path.split(copds.config._configfile)[0], copds.config.source_datafiles_directory))
+    #
+    #     fnames = [f for f in os.listdir(copernicus_dir) if
+    #               re.search("Copernicus_DSM_COG_10_(\w{3})_00_(\w{4})_00_DEM.tif\Z",
+    #                         f) != None]  # os.path.splitext(f)[-1] == ".tif"]
+    #     # fnames.sort()
+    #
+    #     dem_tuples = [None] * len(fnames)
+    #
+    #     if verbose:
+    #         print("{0:,} 1° DEM tiles over land.".format(len(dem_tuples)))
+    #     for i, fname in enumerate(fnames):
+    #         # Make sure the file name is formatted exactly how we're expecting.
+    #         assert len(fname) == len("Copernicus_DSM_COG_10_N70_00_E020_00_DEM.tif")
+    #         assert fname.find("Copernicus_DSM_COG_10_") == 0
+    #         assert fname[22] in ("N", "S")
+    #         lat_sign = 1 if fname[22] == "N" else -1
+    #         assert fname[29] in ("E", "W")
+    #         lon_sign = 1 if fname[29] == "E" else -1
+    #
+    #         dem_tuples[i] = (int(fname[23:25]) * lat_sign,
+    #                          int(fname[30:33]) * lon_sign)
+    #
+    #     # Since Copernicus annoyingly omits the 25 tiles over Azerbaijan, include them here.
+    #     azerbaijan_bboxes = get_azerbaijan_1deg_bboxes()
+    #     azerbaijan_tuples = [(bbox[1], bbox[0]) for bbox in azerbaijan_bboxes]
+    #     dem_tuples.extend(azerbaijan_tuples)
+    #     # Also get the 1-deg CRM boxes over the Gulf of Mexico and US Coast
+    #     gulf_and_east_coast_bboxes = get_gulf_1deg_bboxes()
+    #     gulf_and_east_coast_tuples = [(bbox[1], bbox[0]) for bbox in gulf_and_east_coast_bboxes]
+    #     dem_tuples.extend(gulf_and_east_coast_tuples)
+    #     # Sort them out, for good measure.
+    #     dem_tuples.sort()
+    #
+    #     if verbose:
+    #         print("{0:,} 1° DEM tiles over land (including Azerbaijan and Armenia).".format(len(dem_tuples)))
 
-        fnames = [f for f in os.listdir(copernicus_dir) if
-                  re.search("Copernicus_DSM_COG_10_(\w{3})_00_(\w{4})_00_DEM.tif\Z",
-                            f) != None]  # os.path.splitext(f)[-1] == ".tif"]
-        # fnames.sort()
-
-        dem_tuples = [None] * len(fnames)
-
-        if verbose:
-            print("{0:,} 1° DEM tiles over land.".format(len(dem_tuples)))
-        for i, fname in enumerate(fnames):
-            # Make sure the file name is formatted exactly how we're expecting.
-            assert len(fname) == len("Copernicus_DSM_COG_10_N70_00_E020_00_DEM.tif")
-            assert fname.find("Copernicus_DSM_COG_10_") == 0
-            assert fname[22] in ("N", "S")
-            lat_sign = 1 if fname[22] == "N" else -1
-            assert fname[29] in ("E", "W")
-            lon_sign = 1 if fname[29] == "E" else -1
-
-            dem_tuples[i] = (int(fname[23:25]) * lat_sign,
-                             int(fname[30:33]) * lon_sign)
-
-        # Since Copernicus annoyingly omits the 25 tiles over Azerbaijan, include them here.
-        azerbaijan_bboxes = get_azerbaijan_1deg_bboxes()
-        azerbaijan_tuples = [(bbox[1], bbox[0]) for bbox in azerbaijan_bboxes]
-        dem_tuples.extend(azerbaijan_tuples)
-        # Also get the 1-deg CRM boxes over the Gulf of Mexico and US Coast
-        gulf_and_east_coast_bboxes = get_gulf_1deg_bboxes()
-        gulf_and_east_coast_tuples = [(bbox[1], bbox[0]) for bbox in gulf_and_east_coast_bboxes]
-        dem_tuples.extend(gulf_and_east_coast_tuples)
-        # Sort them out, for good measure.
-        dem_tuples.sort()
-
-        if verbose:
-            print("{0:,} 1° DEM tiles over land (including Azerbaijan and Armenia).".format(len(dem_tuples)))
-
-    elif resolution == 15:
-        dem_lons = numpy.arange(-180, 180, 15, dtype=int)
-        dem_lats = numpy.arange(-90, 90, 15, dtype=int)
+    if resolution == 15 or resolution == 1:
+        dem_lons = numpy.arange(-180, 180, resolution, dtype=int)
+        dem_lats = numpy.arange(-90, 90, resolution, dtype=int)
         lons_list, lats_list = numpy.meshgrid(dem_lons, dem_lats)
         lons_list = lons_list.flatten()
         lats_list = lats_list.flatten()
@@ -379,7 +377,7 @@ def create_list_of_tile_tuples(resolution=15,
         dem_tuples = [(-90, -180), ]
 
     else:
-        raise ValueError("Unhandles ETOPO resolution: {0}".format(resolution))
+        raise NotImplementedError("Unhandled ETOPO resolution: {0}s".format(resolution))
 
     return dem_tuples
 
@@ -427,8 +425,8 @@ if __name__ == "__main__":
 
     # # create_1s_all_tiles_gpkg()
     # Create the 30s global grid.
-    create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "30s"),
-                       tile_width_deg=360,
-                       resolution_s=30,
+    create_empty_tiles(os.path.join(my_config.etopo_empty_tiles_directory, "1s"),
+                       tile_width_deg=1,
+                       resolution_s=1,
                        ndv=my_config.etopo_ndv,
                        also_write_geopackage=True)
