@@ -175,6 +175,25 @@ class ETOPO_Generator:
             all_txt[(fieldname_span[1] + equal_span[1] + value_span[1]):]
 
 
+    def write_ranks_and_ids_csv_summary(self, orig_csv_name, df, verbose=True):
+        """Given the dataframe of CSV ranks_and_ids values, and the name of the original file, write a "_summary" file."""
+        base, ext = os.path.splitext(orig_csv_name)
+        summary_csv_name = base + "_summary" + ext
+
+        # Get rid of inactive layers.
+        df_subset = df[df.is_active]
+        # Sort layers by ranking_score
+        df_sorted = df_subset.sort_values("ranking_score")
+
+        if os.path.exists(summary_csv_name):
+            os.remove(summary_csv_name)
+
+        df_sorted.to_csv(summary_csv_name, index=False)
+        if verbose:
+            print("\n" + os.path.basename(summary_csv_name), "written with {0} entries.".format(len(df_sorted)))
+
+        return df_sorted
+
     def write_ranks_and_ids_from_csv(self, save_old = True, verbose=True):
         """Write out any changes to the "ranks_and_ids" csv back to the respective
         config.ini files of the objects. This speeds up editing significantly.
@@ -221,6 +240,8 @@ class ETOPO_Generator:
                 f.write(c_txt)
                 if verbose:
                     print(os.path.split(configfile)[1], "written.")
+
+        self.write_ranks_and_ids_csv_summary(csv_name, df, verbose=verbose)
 
         return
 
@@ -270,7 +291,9 @@ class ETOPO_Generator:
         csv_name = self.etopo_config._abspath(self.etopo_config.etopo_dataset_ranks_and_ids_csv)
         df.to_csv(csv_name, index=False)
         if verbose:
-            print("\n" + os.path.split(csv_name)[1], "written with {0} entries.".format(len(df)))
+            print("\n" + os.path.basename(csv_name), "written with {0} entries.".format(len(df)))
+
+        self.write_ranks_and_ids_csv_summary(csv_name, df, verbose=verbose)
 
         return df
 
@@ -334,6 +357,11 @@ class ETOPO_Generator:
             etopo_gdf = gdf
         config_obj = self.etopo_config
         etopo_crs = etopo_gdf.crs
+
+        # print(len(etopo_gdf))
+        # print(etopo_gdf)
+        # print(etopo_gdf.columns)
+        # foobar
 
         # 0. Get the ETOPO datalist folder, in the "1s" or "15s" or "60s" directory
         datalist_folder = os.path.join(config_obj._abspath(config_obj.etopo_datalist_directory),
@@ -509,17 +537,18 @@ class ETOPO_Generator:
         assert len(nowstr) == 10
         return base + "_" + nowstr + ext
 
-    def generate_all_etopo_tiles(self, resolution=1,
-                                       numprocs=utils.parallel_funcs.physical_cpu_count(),
-                                       add_datestamp_to_files = False,
-                                       crm_only_if_1s = True,
-                                       bed = False,
-                                       subdir = None,
-                                       tile_id = None,
-                                       tempdir_prefix = "temp",
-                                       overwrite=False,
-                                       verbose=True):
-        """Geenerate all of the ETOPO tiles at a given resolution."""
+    def generate_all_etopo_tiles(self,
+                                 resolution=1,
+                                 numprocs=utils.parallel_funcs.physical_cpu_count(),
+                                 add_datestamp_to_files = False,
+                                 crm_only_if_1s = True,
+                                 bed = False,
+                                 subdir = None,
+                                 tile_id = None,
+                                 tempdir_prefix = "temp",
+                                 overwrite=False,
+                                 verbose=True):
+        """Generate all of the ETOPO tiles at a given resolution."""
         # Get the ETOPO_geopackage object, with the datalist filenames in it
         # (if they're not in there already, they may be)
         etopo_gdf = dataset_geopackage.ETOPO_Geopackage(resolution).add_dlist_paths_to_gdf(
@@ -615,7 +644,7 @@ class ETOPO_Generator:
                                                    # If we're only generating one tile and have 'verbose' set, then keep
                                                    # the output on. Else, off, to avoid the parallel-stdout mess.
                                                    kwargs = {'verbose': True if (tile_id and verbose) else False,
-                                                             'algorithm': 'average'})
+                                                             'algorithm': 'auto'})
                                                              # 'algorithm': 'bilinear' if resolution==1 else 'average'})
                 else:
                     # If we're at coarser resolution, juse create_etopo_global_tile to just resample into a bigger grid.
@@ -1015,7 +1044,7 @@ class ETOPO_Generator:
                                    etopo_ndv,
                                    etopo_cache_dir,
                                    temp_dir_for_cwd,
-                                   algorithm = "bilinear",
+                                   algorithm = "auto",
                                    verbose = True):
         """Use waffles to generate an ETOPO tiles from a datalist.
 
@@ -1070,7 +1099,7 @@ class ETOPO_Generator:
         # -k
         # -f # If using on non-WGS84 datasets
         # -P EPSG:4326
-        # -S bilinear
+        # -S auto
         # -D /home/mmacferrin/Research/DATA/ETOPO/scratch_data/
         # -O /home/mmacferrin/Research/DATA/ETOPO/data/finished_tiles/1s/ETOPO_2022_v1_1s_N18W067
         # /home/mmacferrin/Research/DATA/ETOPO/data/etopo_sources.datalist"""
