@@ -56,6 +56,9 @@ vdd_lookup_dict = {
     # Earth Gravitational Model 1984 (not currently implemented.) NOTE: Can use/resample the EGM84 global grid and do it myself if we want.
     "msl": 5174,  # Mean Sea Level
     "wgs84(g1150)": 7660,
+    "cgvd2013(cgg2013)": 6647,
+    "cgvd2013": 6647,
+    "cgvd2013(cgg2013a)": 9245
 }
 
 vdd_descriptions_dict = {
@@ -72,6 +75,9 @@ vdd_descriptions_dict = {
     "egm84": "Earth Gravitational Model of 1984, vertical heights. EPSG: 5798 (not currently implemented)",
     "msl": "Mean Sea Level. EPSG: 5174",
     "wgs84(g1150)": "WGS 84 vertical datum, using G1150 iteration. EPSG: 7660",
+    "cgvd2013(cgg2013)": "Canadian vertical datum.",
+    "cgvd2013": "Canadian vertical datum",
+    "cgvd2013(cgg2013a)": "Canadian vetical datum"
 }
 
 # A list of all supported vdatum names and values in this module. Useful for other
@@ -182,6 +188,7 @@ def define_args():
                         help="Recurse through the directory to find matching files (default: only look in the local directory).")
     parser.add_argument("--overwrite", "-ov", default=False, action="store_true",
                         help="Overwrite output files. Default: Skip generating output file if it already exists.")
+    parser.add_argument("--nprocs", default=1, help="Number of parallel processes to use. Default 1 (serial execution).")
     parser.add_argument("input_DEM_or_directory", nargs='?', default=None,
                         help="Input DEM file or a directory of DEM files. If a single existing file is given, -input_file_filter is ignored and the file is read, and the converted file is written either to -output_filename location (if given), or is put in the -output_directory with the -output_suffix applied to the filename. If a directory is given, -input_file_filter is applied to identify input files, and the outputs are written to the -output_filter (if given) with the string denoted in ")
 
@@ -242,6 +249,8 @@ if __name__ == "__main__":
 
             output_filename = os.path.join(output_folder,
                                            basename + (args.output_suffix if args.output_suffix else "") + ext)
+
+            # TODO: Implement parallel processing here.
 
             if os.path.exists(output_filename):
                 if args.overwrite:
