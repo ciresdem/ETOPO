@@ -67,6 +67,12 @@ class source_dataset_CUDEM_derived_bathy(etopo_source_dataset.ETOPO_source_datas
         # print("\n".join([str(args) + " " + str(kwargs) for args, kwargs in zip(args_lists, kwargs_list)]))
         # foobar
 
+        # for args, kwargs in zip(args_lists, kwargs_list):
+        #     # print(args, kwargs)
+        #     self.create_single_tile(*args, **kwargs)
+        #
+        # return
+
         utils.parallel_funcs.process_parallel(self.create_single_tile,
                                               args_lists,
                                               overwrite_outfiles=overwrite,
