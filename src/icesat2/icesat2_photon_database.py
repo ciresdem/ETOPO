@@ -13,6 +13,7 @@ import shapely.geometry
 import shutil
 import tables
 import time
+import itertools
 
 #####################################
 # Suppress the annoying pandas.FutureWarning warnings caused by library version conflicts.
@@ -372,7 +373,13 @@ class ICESat2_Database:
         for i,(idx, df_row) in enumerate(df_tiles_subset.iterrows()):
             fname = df_row['filename']
             # If the file already exists, read it and get the data.
-            if os.path.exists(fname):
+            # Look for either the .feather or the .h5 file.
+            if os.path.exists(fname) or os.path.exists(os.path.splitext(fname)[0]+".feather") or os.path.exists(os.path.splitext(fname)[0]+".h5"):
+                if os.path.exists(os.path.splitext(fname)[0]+".feather"):
+                    fname = os.path.splitext(fname)[0]+".feather"
+                elif os.path.exists(os.path.splitext(fname)[0]+".h5"):
+                    fname = os.path.splitext(fname)[0]+".h5"
+
                 if verbose:
                     print("\t{0}/{1} Reading".format(i+1, len(df_tiles_subset)), os.path.split(fname)[1], "...", end="")
                 dataframes_list[i] = self.read_photon_tile(fname)
@@ -860,7 +867,7 @@ class ICESat2_Database:
         """
         return os.path.abspath(os.path.splitext(self.gpkg_fname)[0] + "_progress_map.png")
 
-    def update_and_fix_photon_database(self):
+    def update_and_fix_photon_database(self, start_i=0, end_i=None, verbose=True):
         """Sometimes the download_all_icesat2_granules.py -- photon_tiling process
         creates files without updating the database correctly.
 
@@ -869,10 +876,73 @@ class ICESat2_Database:
             1) That all entries with "is_populated" actually have valid files associated with them.
             2) That each of those files has the correct number of photons in it, matching up with "numphotons"
             3) That all database files with valid data are included in the database.
+            4) If featherize, change .h5 files to .feather files.
 
         It will fix any errors it finds. If files are corrupted, it will delete them and zero-out the
         entry in the database so they can be rebuilt.
         """
+        gdf = self.get_gdf(verbose=verbose)
+        # print(gdf.columns)
+        # print(numpy.count_nonzero(gdf.is_populated), "populated.")
+        # print(numpy.count_nonzero(~gdf.is_populated), "not populated.")
+
+        num_corrected = 0
+        num_zero = 0
+
+        bar_str = ""
+        for idx, row in itertools.islice(gdf.iterrows(), start_i, end_i if ((end_i is not None) and (end_i < len(gdf))) else None):
+            i = int(idx)
+            # if i < start_i:
+            #     continue
+            # elif (end_i is not None) and (i > end_i):
+            #     break
+            # # print(row.filename)
+            # if idx==10:
+            #     break
+            fname = row.filename
+            feather_name = os.path.splitext(fname)[0] + ".feather"
+            # h5_name = os.path.splitext(fname)[0] + ".h5"
+
+            assert os.path.exists(feather_name)
+            df = pandas.read_feather(feather_name)
+            # print(df.columns)
+            if len(df) != row.numphotons:
+                print("\r" + (" "*len(bar_str)) + "\r", end="")
+                print("Row", idx, "needs fixing.", len(df), row.numphotons)
+                gdf.loc[idx, 'numphotons'] = len(df)
+                gdf.loc[idx, 'numphotons_canopy'] = numpy.count_nonzero(df['class_code'].between(2, 3, inclusize="both"))
+                gdf.loc[idx, 'numphotons_ground'] = numpy.count_nonzero(df['class_code'] == 1)
+                assert gdf.loc[idx, 'numphotons'] == (gdf.loc[idx, 'numphotons_canopy'] + gdf.loc[idx, 'numphotons_ground'])
+
+                num_corrected += 1
+
+            if len(df) == 0:
+                num_zero += 1
+
+            # print("\r" + (" "*len(bar_str)) + "\r", end="")
+            # print(os.path.basename(feather_name), len(df), "photons.")
+
+            # Print out a status line every 500th tile.
+            if verbose and ((i == 0) or ((i % 500) == 499)):
+                print("\r" + (" "*len(bar_str)) + "\r", end="")
+                print("{0}/{1}".format(i+1, len(gdf)), os.path.basename(feather_name), len(df), "photons.")
+
+            if verbose:
+                bar_str = utils.progress_bar.ProgressBar(i+1, len(gdf), suffix="{0}/{1}".format(i+1, len(gdf)))
+
+            # if idx==250:
+            #     break
+
+        print("\r" + (" " * len(bar_str)) + "\r", end="")
+        print(num_corrected, "mismatched entries.", num_zero, "zero-photon entries.")
+
+        if num_corrected > 0:
+            self.save_geopackage(gdf=gdf, verbose=verbose)
+        return
+
+    def delete_zero_entry_tiles(self):
+        """Find tiles that have zero photons in them. Delete those tiles, and their entries from the database.
+        NOTE: This should only be done after "update_and_fix_photon_database()" has been run."""
         # TODO: Finish.
 
     ### The next 4 methods all have to do with "subsetting" the ICESat-2 granule photon databases into smaller chunks
@@ -1012,11 +1082,25 @@ class ICESat2_Database:
 
 if __name__ == "__main__":
     is2db = ICESat2_Database()
-    dbname = "ATL03_20210202085415_06161011_005_01_photons.h5"
-    db_sub = is2db.look_for_local_icesat2_photon_db(dbname, look_for_subset_at_longitude=-73.5)
-    print(db_sub)
-    db_sub_should_be = is2db.give_granule_subset_name(dbname, longitude=-73.5)
-    print(db_sub_should_be)
+
+    # is2db.update_and_fix_photon_database()
+
+    # is2db.update_and_fix_photon_database(start_i=14200, end_i=14000+(50500*1))           # P1
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*1), end_i=14000+(50500*2)) # P2
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*2), end_i=14000+(50500*3)) # P3
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*3), end_i=14000+(50500*4)) # P4
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*4), end_i=14000+(50500*5)) # P5
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*5), end_i=14000+(50500*6)) # P6
+    # is2db.update_and_fix_photon_database(start_i=14000+(50500*6), end_i=14000+(50500*7)) # P7
+    is2db.update_and_fix_photon_database(start_i=368_823, end_i=None)                    # P8
+
+
+
+    # dbname = "ATL03_20210202085415_06161011_005_01_photons.h5"
+    # db_sub = is2db.look_for_local_icesat2_photon_db(dbname, look_for_subset_at_longitude=-73.5)
+    # print(db_sub)
+    # db_sub_should_be = is2db.give_granule_subset_name(dbname, longitude=-73.5)
+    # print(db_sub_should_be)
 
     # Restart this to get the moving going again.
     # is2db.subset_remaining_granules()

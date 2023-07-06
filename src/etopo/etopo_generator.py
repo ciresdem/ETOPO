@@ -1398,7 +1398,7 @@ def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Generate the tiles. All proprocessing must be done on source datasets first, including cleansing and/or vertical datum transformations.")
     parser.add_argument("-resolution", "-r", default=(15,1,60,30), nargs="*", help="Grid resolution. Can add up to 4, choices of: 1 15 30 60. Will be exectued in the order given. Default: 15 1 60 30.")
     parser.add_argument("-numprocs", "-np", type=int, default=utils.parallel_funcs.physical_cpu_count(), help="Number of processes to run at once. Default: max number of physical cores available to the machine.")
-    parser.add_argument("-subdir", type=str, default="", help="Put all new tiles into a subdir.")
+    parser.add_argument("-subdir", type=str, default="", help="Put all new tiles into a subdir. If the string 'today' is given, a subdir will be selected with the YYYY.MM.DD of today's date.")
     parser.add_argument("-tempdir_prefix", type=str, default="temp" + str(os.getpid()) + "_", help="A prefix to use for temporary directories. Specify if running more than one process to keep them from interfering with each other using the same set of temp directories. Default 'temp'.")
     parser.add_argument("-tile_id", default=None, help="Do only one tile. Specify the seven-character NYYEXXX tile_id to use.")
     parser.add_argument("--all_tiles", "-all", default=False, action="store_true", help="Generate all the tiles, all resolutions, both .tif and .nc, surface and bed.")
@@ -1413,6 +1413,7 @@ def define_and_parse_args():
     parser.add_argument("--remove_inf", default=False, action="store_true", help="Remove all .inf files from finished_tiles directory.")
     parser.add_argument("--move_to_subdir", default=False, action="store_true", help="Just move the created tiles into a sub-directory. '-subdir' must be specified.")
     parser.add_argument("--weights_to_sids", "-w2s", default=False, action="store_true", help="Convert floating-point 'weights' files to byte 'sid' files.")
+    parser.add_argument("--skip_datalists", "-sd", default=False, action="store_true", help="Skip recreating the datalists (just use whatever was there already).")
     parser.add_argument("--overwrite", "-o", default=False, action="store_true", help="Overwrite all existing files.")
     parser.add_argument("--quiet", "-q", default=False, action="store_true", help="Run in quiet mode.")
     return parser.parse_args()
@@ -1423,6 +1424,8 @@ if __name__ == "__main__":
 
     if args.subdir == "":
         args.subdir = None
+    elif args.subdir.lower() == "today":
+        args.subdir = datetime.datetime.today().strftime("%Y.%m.%d")
 
     args.resolution = [int(res) for res in args.resolution]
 
@@ -1532,7 +1535,14 @@ if __name__ == "__main__":
                                             tile_id=args.tile_id,
                                             numprocs=args.numprocs,
                                             tempdir_prefix = args.tempdir_prefix,
+                                            skip_datalists = args.skip_datalists,
                                             verbose=not args.quiet)
+
+                weights_to_sids(res,
+                                subdir=args.subdir,
+                                bed=args.bed,
+                                overwrite=args.overwrite,
+                                verbose=not args.quiet)
 
                 if args.to_netcdf:
                     EG.convert_to_netcdf(res,

@@ -176,6 +176,7 @@ def create_coastline_mask(input_dem,
                           include_gmrt = False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
                           mask_out_buildings = False,
                           mask_out_urban = False,
+                          mask_out_nhd = True,
                           use_osm_planet = False,
                           output_file=None,
                           run_in_tempdir=False,
@@ -229,6 +230,7 @@ def create_coastline_mask(input_dem,
                    "-M","coastline:polygonize=False" + \
                        (":want_gmrt=True" if include_gmrt else "") + \
                        (":want_lakes=True" if mask_out_lakes else "") + \
+                       (":want_nhd=" + str(mask_out_nhd)) + \
                        (":want_buildings=True" if mask_out_buildings else "") + \
                        (":want_osm_planet=True" if use_osm_planet else "") + \
                        (":want_wsf=True" if mask_out_urban else ""),
@@ -253,6 +255,7 @@ def create_coastline_mask(input_dem,
                   "stderr": subprocess.DEVNULL}
     # Put the data files generated in this processin the same directory as the output file.
     # This will be the home working directory of the process.
+    tempdir = None
     if run_in_tempdir:
         tempdir = os.path.join(etopo_config._abspath(etopo_config.etopo_cudem_cache_directory), "temp" + str(os.getpid()))
         if not os.path.exists(tempdir):
@@ -266,7 +269,10 @@ def create_coastline_mask(input_dem,
         final_output_path = os.path.join(output_filepath_base + ".tif")
     else:
         final_output_path = output_filepath_base
-    assert os.path.exists(final_output_path)
+
+    if not os.path.exists(final_output_path) and verbose:
+        print(os.path.basename(final_output_path), "NOT written.")
+    # assert os.path.exists(final_output_path)
 
     if run_in_tempdir:
         rm_cmd = ["rm", "-rf", tempdir]

@@ -3,6 +3,7 @@
 """Source code for the GMRT ETOPO source dataset class."""
 
 import os
+import sys
 import numpy
 import subprocess
 import re
@@ -300,6 +301,76 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
 
 
+    def remove_bad_polygons(self, resolution_s=1):
+        """Some of the bad values aren't great to mask out with boxes, polygons work better.
+        Read the bad_polygons_{0}s directory, find all rasterized .tif files, each of which have a location_id tag
+        ([NS]DD[EW]DDD, such as "N61W066". For each of those masks, the value inside the polygon to be filtered out is
+        1.0. ALl other values are zero. Just assign NDV to those values and re-save the tile."""
+        bad_polygons_dir = self.config._abspath(self.config.gmrt_bad_polygons_dir.format(resolution_s))
+        assert os.path.exists(bad_polygons_dir)
+        bad_polygons_list_of_tifs = [os.path.join(bad_polygons_dir, fn) for fn in os.listdir(bad_polygons_dir)
+                                     if (os.path.splitext(fn)[1].lower() == ".tif")]
+        gdf = self.get_geodataframe(resolution_s=resolution_s)
+        tilenames = gdf.filename.to_list()
+
+        for mask_out_tif in bad_polygons_list_of_tifs:
+            # Get the location ID from the mask filename.
+            try:
+                tile_id = re.search(r"[NSns](\d{2})[EWew](\d{3})", mask_out_tif).group().upper()
+            except AttributeError:
+                print("Could not retrieve tile_id from mask file", os.path.basename(mask_out_tif), file=sys.stderr)
+                continue
+
+            # Find the right tile that goes with this.
+            matching_tilenames = [fn for fn in tilenames if re.search(tile_id, os.path.basename(fn)) != None]
+            # There should be only 1 tile with that ID
+            if len(matching_tilenames) != 1:
+                print("   ", len(matching_tilenames), "tiles matched with Tile ID", tile_id + ":",
+                      [os.path.basename(fn) for fn in matching_tilenames])
+                print("    We're like The Highlander here: There can be only one. Moving on.")
+                continue
+
+            tilename = matching_tilenames[0]
+
+            print(os.path.basename(mask_out_tif))
+            # Get the mask array from the geotiff.
+            mask_ds = gdal.Open(mask_out_tif, gdal.GA_ReadOnly)
+            mask_array = mask_ds.GetRasterBand(1).ReadAsArray().astype(bool)
+
+            if not numpy.any(mask_array):
+                print("    No valid data in mask_array. Moving on.")
+                continue
+            mask_ds = None
+
+            # Read the data from the tile, in update mode.
+            tile_ds = gdal.Open(tilename, gdal.GA_Update)
+            tile_band = tile_ds.GetRasterBand(1)
+            tile_array = tile_band.ReadAsArray()
+            tile_ndv = tile_band.GetNoDataValue()
+
+            # Check to see if there are any valid data values in that mask (this will be False if it's already
+            # been done, just move along).
+            masked_values = tile_array[mask_array]
+            if numpy.all(masked_values == tile_ndv):
+                print("    No valid data in tile to mask out within polygon. Moving on.")
+                continue
+
+            # Mask out the values from the mask, with NDV
+            tile_array[mask_array] = tile_ndv
+            tile_band.WriteArray(tile_array)
+            tile_ds.FlushCache()
+            # Recopmute statistics.
+            tile_band.GetStatistics(0, 1)
+
+            # Save the output back to disk (again), after stats have been written.
+            tile_ds.FlushCache()
+            tile_band = None
+            tile_ds = None
+
+            print("    Masked out", numpy.count_nonzero(masked_values != tile_ndv), "cells from within polygon.")
+
+        return
+
     def translate_15s_bad_regions_to_1s(self, verbose=True):
         """We had come up with "GMRT_bad_tile_values_15s.csv" to eliminate regions in the GMRT tiles that had bad data.
         We new need to translate those same regions into the 1s tile coordinates.
@@ -416,8 +487,11 @@ if __name__ == "__main__":
     # Create the tiles.
     gmrt = source_dataset_GMRT()
     # gmrt.translate_15s_bad_regions_to_1s()
-    gmrt.create_tiles(resolution_s=1, overwrite=False)
-    gmrt.clean_bad_gmrt_values(resolution_s=1)
+    # gmrt.create_tiles(resolution_s=1, overwrite=False)
+
+    # gmrt.clean_bad_gmrt_values(resolution_s=1)
+    gmrt.remove_bad_polygons(resolution_s=1)
+
     # Get rid of any empty tiles.
     # # gmrt.delete_empty_tiles(resolution_s=15)
     # gmrt.delete_empty_tiles(resolution_s=1)

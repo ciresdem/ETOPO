@@ -66,7 +66,9 @@ class BlueTopo_Downloader(download_dataset.DatasetDownloader_BaseClass):
         # return the list of tiles to download.
         df = self.read_latest_tile_scheme_gpkg(verbose=verbose)
 
+        # Get the links to all teh geotiff tiles, as well as the XMLs.
         urls_series = [url for url in df['GeoTIFF_Link'].tolist() if url is not None]
+        urls_series = urls_series + [url for url in df['RAT_Link'].tolist() if url is not None]
 
         if write_to_file:
             urls_fname = self.url_list
@@ -117,12 +119,13 @@ class BlueTopo_Downloader(download_dataset.DatasetDownloader_BaseClass):
         #         f.write("\n".join(url_list_total))
         #     print(self.url_list, "written with", len(url_list_total), "tile URLs.")
 
-    def download(self,N_subprocs=5):
+    def download(self, N_subprocs=5, include_speed_strings=True, check_sizes_of_existing_files=True):
         wget_args = "-np -r -nH -L -e robots=off --no-check-certificate --cut-dirs=3"
-        self.download_files(N_subprocs=N_subprocs, include_speed_strings=True, wget_extra_args=wget_args)
+        self.download_files(N_subprocs=N_subprocs, include_speed_strings=include_speed_strings,
+                            check_sizes_of_existing_files=check_sizes_of_existing_files, wget_extra_args=wget_args)
 
 if __name__ == "__main__":
     BT = BlueTopo_Downloader()
     # BT.create_list_of_links()
 
-    BT.download_files(N_subprocs=2)
+    BT.download(N_subprocs=2, include_speed_strings=False, check_sizes_of_existing_files=False)

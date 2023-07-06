@@ -6,7 +6,7 @@ import numpy
 import zip_files
 
 
-def test_algorithms(filename, keep_zipfiles=False):
+def test_algorithms(filename, keep_outputs=False):
     """Test the zip compression algorithms on a single file."""
     algorithm_names = (['deflate'] * 10) + (['bz2'] * 9) + ['lzma']
     algo_levels = list(range(10)) + list(range(1, 10)) + [0]
@@ -43,7 +43,7 @@ def test_algorithms(filename, keep_zipfiles=False):
         print("{0:>2d}. {1:>7s} L{2:d} {3:>5.2f}% compression.".format(i + 1, an, al,
                                                                        ((orig_size - asz) / orig_size) * 100.))
 
-    if not keep_zipfiles:
+    if not keep_outputs:
         for zname in znames:
             os.remove(zname)
 
@@ -55,11 +55,11 @@ def define_and_parse_args():
         description="Test all the compression algorithms for a file, see what levels we get." +
                     " Tests 'deflate' (0-9), 'bzip2' (1-9), and 'lzma'. By default, this overwrites any zipfiles created.")
     parser.add_argument("FILE_NAME", help="The file upon which to test the compression algorithms.")
-    parser.add_argument("--keep_zipfiles", "-k", default=False, action="store_true",
+    parser.add_argument("--keep_outputs", "-k", default=False, action="store_true",
                         help="Keep all the zipfiles generated. Default: Delete them when done.")
     return parser.parse_args()
 
 
 if "__main__" == __name__:
     args = define_and_parse_args()
-    test_algorithms(args.FILE_NAME, keep_zipfiles=args.keep_zipfiles)
+    test_algorithms(args.FILE_NAME, keep_outputs=args.keep_outputs)

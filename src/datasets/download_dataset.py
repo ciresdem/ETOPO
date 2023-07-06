@@ -103,8 +103,9 @@ class DatasetDownloader_BaseClass:
             fsize_small = fsize_small.strip("(),")
             fsize_remote = int(fsize_remote)
 
-
-        return exitstatus, fsize_remote, fsize_small
+            return exitstatus, fsize_remote, fsize_small
+        else:
+            return exitstatus, None, None
 
     # NOTE: Before running this function, you should go into the sub-directory for the individual dataset and
     # use the create_list_of_links() function in there.
@@ -150,11 +151,7 @@ class DatasetDownloader_BaseClass:
             url_dirs = urllib.parse.urlparse(url).path.strip("/").split("/")
             subdirs = url_dirs[num_dirs_to_cut:]
 
-            local_filepath = os.path.join(data_dir, *subdirs)
-
-            # # THIS IS WRONG, THIS IS NOT HOW THE FILES ARE SAVED. LOOK IN SUBDIRS.
-            # filename = os.path.split(url)[1]
-            # local_filepath = os.path.join(data_dir, filename)
+            local_filepath = os.path.join(data_dir, *subdirs, url_dirs[-1])
 
             # First check to see if the file already exists (did we already download it?)
             if os.path.exists(local_filepath):

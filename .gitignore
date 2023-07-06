@@ -181,3 +181,6 @@ tides:s*.inf
 gmrt:layer=*.inf
 /src/icesat2/validate_dem_TEMP.py
 /compress_tool.zip
+/data/.~lock.ETOPO_dataset_ranks_and_ids_summary.csv\#
+/data/finished_tiles/1s/2023.06.14/CRMs_2023.06.14_1.zip
+/data/finished_tiles/1s/2023.06.14/CRMs_2023.06.14_2.zip

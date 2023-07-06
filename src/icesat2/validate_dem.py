@@ -581,7 +581,7 @@ def validate_dem_parallel(dem_name,
     # Assert that the both the dem vertical datum and the output vertical datum are valid values.
     if type(dem_vertical_datum) == str:
         dem_vertical_datum = dem_vertical_datum.strip().lower()
-    assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
+    # assert dem_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS
     if type(output_vertical_datum) == str:
         output_vertical_datum = output_vertical_datum.strip().lower()
     assert output_vertical_datum in convert_vdatum.SUPPORTED_VDATUMS

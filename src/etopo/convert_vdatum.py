@@ -113,7 +113,10 @@ def vertical_datum_lookup(vd_name):
     try:
         return int(vd_name)
     except ValueError:
-        return vdd_lookup_dict[vd_name.lower().strip()]
+        try:
+            return vdd_lookup_dict[vd_name.lower().strip()]
+        except KeyError:
+            return vd_name.lower().strip()
 
 
 def convert_vdatum(input_dem,
@@ -141,7 +144,7 @@ def convert_vdatum(input_dem,
         shutil.copyfile(input_dem, output_dem)
         return 0
 
-    command_template = "vertical_datum_convert.py -i {0:d} -o {1:d} -D {2:s} --keep-cache {3:s} {4:s}"
+    command_template = "vertical_datum_convert.py -i {0} -o {1} -D {2:s} --keep-cache {3:s} {4:s}"
     command = command_template.format(input_vertical_datum,
                                       output_vertical_datum,
                                       my_config.etopo_cudem_cache_directory,

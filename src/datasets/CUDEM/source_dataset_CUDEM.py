@@ -3,10 +3,14 @@
 """Source code for the CUDEM ETOPO source dataset class."""
 
 import os
+import shutil
+
 import numpy
-from osgeo import gdal
+from osgeo import gdal, ogr
 import geopandas
 import random
+import subprocess
+import time
 
 THIS_DIR = os.path.split(__file__)[0]
 
@@ -175,6 +179,127 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
         print("Done.")
         return
 
+    def remove_river_from_N39W077(self, overwrite=False):
+        """The tile N39W077, in a river at the end of Chesapeake Bay, creates an artifact in the CRM 1s tiles where
+        the river just 'cuts off' at a corner as it leaves the CUDEM tile and enters the USGS TNM layers. The CUDEMs
+        use a default bathy "flat" elevation in the river, which (after converting to EGM2008) give all of those elevations
+        a slight-negative value between -1 and 0, upstream from a dam in the river. If we remove all those pixels upstream
+        from the dam, then it will get rid of that artifact and replace it with "surface" values from USGS TNM, and just
+        have a wall at the location of the dam, which is acceptable (because it is, actually, a physical wall there)."""
+        river_polygon_shp = self.config._abspath(self.config.n39x75_w076x25_river_polygon_shp)
+        print(river_polygon_shp, os.path.exists(river_polygon_shp))
+
+        filenames = self.get_geodataframe().filename.to_list()
+        input_raster_paths = [fn for fn in filenames if fn.find("n39x75_w076x25") > -1]
+        # print(input_raster_path)
+        assert len(input_raster_paths) == 1
+        input_raster_path = input_raster_paths[0]
+
+        # Open input raster
+        input_raster = gdal.Open(input_raster_path, gdal.GA_ReadOnly)
+        # input_band = input_raster.GetRasterBand(1)
+
+        mask_raster_path = os.path.join(os.path.splitext(river_polygon_shp)[0] + "_polygon_mask.tif")
+
+        if not os.path.exists(mask_raster_path) or overwrite:
+            input_gt = input_raster.GetGeoTransform()
+            xmin, xres, _, ymax, _, yres = input_gt
+            xsize, ysize = input_raster.RasterXSize, input_raster.RasterYSize
+            xmax = xmin + (xres * xsize)
+            ymin = ymax + (yres * ysize)
+
+            gdal_cmd = ['gdal_rasterize',
+                        '-burn', '1',
+                        '-a_nodata', '0',
+                        '-te', repr(xmin), repr(ymin), repr(xmax), repr(ymax),
+                        '-tr', repr(xres), repr(abs(yres)),
+                        '-co', "COMPRESS=DEFLATE",
+                        river_polygon_shp, mask_raster_path]
+
+            print(" ".join(gdal_cmd))
+            subprocess.run(gdal_cmd)
+            # Read the shapefile
+            # shapefile = ogr.Open(river_polygon_shp)
+            # layer = shapefile.GetLayer()
+            #
+            # # Create output raster
+            # output_driver = gdal.GetDriverByName('GTiff')
+            # mask_raster = output_driver.Create(output_raster_path, input_raster.RasterXSize, input_raster.RasterYSize, 1,
+            #                                      gdal.GDT_Byte, options=['COMPRESS=DEFLATE'])
+            # mask_raster.SetProjection(input_raster.GetProjection())
+            # mask_raster.SetGeoTransform(input_raster.GetGeoTransform())
+            #
+            # # Set output band
+            # output_band = mask_raster.GetRasterBand(1)
+            # output_band.WriteArray(nupmy.zeros([input_raster.RasterYSize, input_raster.RasterXSize], dtype=numpy.uint8))
+            # output_band.SetNoDataValue(0)
+            # output_band.FlushCache()
+            #
+            # # Rasterize polygon
+            # gdal.RasterizeLayer(mask_raster, [1], layer, burn_values=[1])
+            # mask_raster.FlushCache()
+
+            # Trim to extent
+            # gdal.Warp(output_raster_path, output_raster, format='GTiff', cutlineDSName=river_polygon_shp, cropToCutline=True,
+            #           options=['COMPRESS=DEFLATE'])
+
+            # Clean up
+            # input_raster = None
+            # mask_raster = None
+            # shapefile = None
+
+            print("Rasterization and trimming completed successfully.")
+
+        temp_output_dem = os.path.splitext(input_raster_path)[0] + "_MASKED_TEMP.tif"
+        orig_dem_file = os.path.splitext(input_raster_path)[0] + "_ORIGINAL.tif"
+        if os.path.exists(orig_dem_file):
+            print("Original already exists. Will not overwrite (to preserve original copy). Exiting.")
+            return
+
+        # Create a copy of the file into the temp destination.
+        shutil.copyfile(input_raster_path, temp_output_dem)
+        print(temp_output_dem, "created.")
+
+        # Open and read the data, in update mode.
+        dem_ds = gdal.Open(temp_output_dem, gdal.GA_Update)
+        dem_band = dem_ds.GetRasterBand(1)
+        dem_array = dem_band.ReadAsArray()
+        # Mask out all values between -1 and 0 (in this case, the river values)
+        dem_mask_btw_n1_0 = (dem_array >= -1) & (dem_array < 0)
+        dem_ndv = dem_band.GetNoDataValue()
+
+        # Open and read the polygon mask data
+        mask_ds = gdal.Open(mask_raster_path, gdal.GA_ReadOnly)
+        mask_array = mask_ds.GetRasterBand(1).ReadAsArray().astype(bool)
+        mask_ds = None
+
+        # Combine the polygon mask and the elevation mask to get our river cells to mask out.
+        river_mask = dem_mask_btw_n1_0 & mask_array
+
+        # Mask out the river cells, put it in the output band.
+        dem_array[river_mask] = dem_ndv
+        dem_band.WriteArray(dem_array)
+
+        # Write the changes to disk. Pause for a fraction of a second to make sure they're written out.
+        # (Gawd, gdal is wonky this way.)
+        dem_ds.FlushCache()
+        dem_ds = None
+        dem_band = None
+        time.sleep(0.1)
+
+        print(os.path.basename(temp_output_dem), "written with masked values.")
+
+        # Move the files around to put the masked version now in the original filename, and save the original file name.
+        print(os.path.basename(input_raster_path), "->", os.path.basename(orig_dem_file))
+        shutil.move(input_raster_path, orig_dem_file)
+        print(os.path.basename(temp_output_dem), "->", os.path.basename(input_raster_path))
+        shutil.move(temp_output_dem, input_raster_path)
+
+        return
+
+
+
+
 def get_cudem_original_vdatum_from_file_path(file_path):
     """Quick little uility for getting the original vetical datum from the folder or filename of the CUDEM tile."""
     vertical_datum_lookup = {"/AmericanSamoa/": "asvd02",
@@ -199,7 +324,9 @@ def get_cudem_original_vdatum_from_file_path(file_path):
 if __name__ == "__main__":
     # gdf = source_dataset_CUDEM().get_geodataframe()
     cudem = source_dataset_CUDEM()
-    cudem.convert_vdatum()
+    # cudem.convert_vdatum()
+
+    cudem.remove_river_from_N39W077(overwrite=False)
     # cudem.measure_navd88_vs_egm2008_elevs()
     # cudem.reproject_tiles_from_nad83(overwrite=False)
     # cudem.delete_empty_tiles(check_start=0, recreate_if_deleted=True)
