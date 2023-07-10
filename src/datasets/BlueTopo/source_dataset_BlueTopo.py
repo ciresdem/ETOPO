@@ -5,11 +5,15 @@
 import os
 from osgeo import gdal
 import numpy
+import math
 import re
 import shutil
 import pyproj
 import subprocess
 import pandas
+import geopandas
+import shapely.ops
+import fiona
 import xml.etree.ElementTree as ET
 
 THIS_DIR = os.path.split(__file__)[0]
@@ -247,15 +251,15 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         return ["{0} {1} {2}".format(fname, DTYPE_CODE, self.get_tile_size_from_fname(fname, weight)) \
                 for fname in list_of_overlapping_files]
 
-    def reproject_tiles(self,
-                        infile_regex = r"BlueTopo_\w{8}_\d{8}\.tiff\Z",
-                        suffix_mask = "_masked",
-                        suffix="_epsg4326",
-                        suffix_vertical="_egm2008",
-                        n_subprocs = 15,
-                        overwrite = False,
-                        verbose=True,
-                        subproc_verbose=False):
+    def preprocess_tiles(self,
+                         infile_regex = r"BlueTopo_\w{8}_\d{8}\.tiff\Z",
+                         suffix_mask = "_masked",
+                         suffix="_epsg4326",
+                         suffix_vertical="_egm2008",
+                         n_subprocs=15,
+                         overwrite=False,
+                         reset_geodataframe=True,
+                         verbose=True):
         """Project all the tiles into WGS84/latlon coordinates.
 
         The fucked-up NAD83 / UTM zone XXN is fucking with waffles. Converting them is the easiest answer now.
@@ -278,7 +282,7 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
 
         args = list(zip(self_args, input_tilenames, mask_temp_fnames, horz_trans_fnames, output_fnames))
         kwargs = {"overwrite": overwrite,
-                  "verbose": subproc_verbose}
+                  "verbose": (verbose and (n_subprocs == 1))}
 
         tempdirs = [os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "scratch_data", "temp{0:04d}".format(i))) for i in range(len(input_tilenames))]
 
@@ -326,16 +330,19 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         #             print(" ".join(gdal_cmd), "\n")
         #             print(process.stdout)
 
+        if reset_geodataframe:
+            self.reset_geopackage(verbose=verbose)
+
         return
 
 
     def transform_single_tile(self, input_name, mask_name_TEMP, horiz_transform_name_TEMP, output_name, overwrite=False, verbose=True):
-        # 1 arc-second is ~30.8 m at the equator.
+        # 1 arc-second is ~30.8 m at the equator. This will slightly over-sample at higher latitudes but that's okay.
         # The 0.3 tiles (level 3) are 16 m, 0.4 are 8 m, 0.5 are 4 m
-        res_lookup_dict = {0.3: 16 / (30.8 * 60 * 60),
-                           0.4: 8 / (30.8 * 60 * 60),
-                           0.5: 4 / (30.8 * 60 * 60),
-                           0.6: 2 / (30.8 * 60 * 60)}
+        res_lookup_dict = {0.03: 16 / (30.8 * 60 * 60),
+                           0.04: 8 / (30.8 * 60 * 60),
+                           0.05: 4 / (30.8 * 60 * 60),
+                           0.06: 2 / (30.8 * 60 * 60)}
 
         # Some of these files aren't using a proper UTM zone (nor are they in NAVD88). Ignore them for now.
         if self.get_file_epsg(input_name) is None:
@@ -351,7 +358,10 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
             os.remove(mask_name_TEMP)
 
         # First, maks out bad (interpolated, tinned) values.
-        self.remove_interpolated_values_from_tile(input_name, mask_name_TEMP, also_remove_gmrt = True, verbose=verbose)
+        self.remove_interpolated_values_from_tile(input_name, mask_name_TEMP, also_remove_gmrt=True, verbose=verbose)
+
+        # Second, mask out single isolated values from the tiles.
+        self.filter_out_single_points(filename=mask_name_TEMP, min_contiguous_points=3, verbose=verbose)
 
         if os.path.exists(horiz_transform_name_TEMP):
             os.remove(horiz_transform_name_TEMP)
@@ -374,13 +384,22 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         if not os.path.exists(horiz_transform_name_TEMP):
             return
 
-        # Then, transform that file vertically.
-        convert_vdatum.convert_vdatum(horiz_transform_name_TEMP,
-                                      output_name,
-                                      input_vertical_datum="navd88",
-                                      output_vertical_datum="egm2008",
-                                      cwd=None,
-                                      verbose=verbose)
+        # A few of the tiles do not have good horizontal datum information, and also use MSL heights rather than NAVD88.
+        # In those cases, just copy the file over and don't bother trying to convert the vertical datum.
+        ds = gdal.Open(input_name, gdal.GA_ReadOnly)
+        projstr = ds.GetProjection()
+        if projstr.lower().find("+ msl height") > -1 or (projstr == ""):
+            shutil.move(horiz_transform_name_TEMP, output_name)
+
+        else:
+            assert projstr.lower().find("+ navd88") > -1
+            # Then, transform that file vertically.
+            convert_vdatum.convert_vdatum(horiz_transform_name_TEMP,
+                                          output_name,
+                                          input_vertical_datum="navd88",
+                                          output_vertical_datum="egm2008",
+                                          cwd=None,
+                                          verbose=verbose)
 
         # Remove temporary tiles.
         if os.path.exists(mask_name_TEMP):
@@ -401,19 +420,26 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         for fn in fnames:
             tile_id = re.search(r'(?<=BlueTopo_B)\w{7}(?=_\d{8}\.tiff)', fn).group()
             datenum = int(re.search(r'(?<=BlueTopo_B\w{7}_)\d{8}(?=\.tiff)', fn).group())
+
             # If no tile has yet been seen with this tile_ID, add it to the dictionary with its current date.
             if tile_id not in tile_id_dict.keys():
                 tile_id_dict[tile_id] = datenum
             # If another tile has been seen and this date is less than the existing one, then delete this tile.
             elif tile_id_dict[tile_id] > datenum:
                 new_tile_name = "BlueTopo_B{0}_{1}.tiff".format(tile_id, tile_id_dict[tile_id])
-                print("Remove old tile", fn, "for new", new_tile_name)
+                xml_name = os.path.join(f_dir, fn + ".aux.xml")
+                print("Remove old tile", fn, ("(and xml) " if os.path.exists(xml_name) else "") + "for new", new_tile_name)
                 os.remove(os.path.join(f_dir, fn))
+                if os.path.exists(xml_name):
+                    os.remove(xml_name)
             # If the new tile is newer than the existing one, get rid of the existing ID and update with the new one.
             elif tile_id_dict[tile_id] < datenum:
                 old_tile_name = "BlueTopo_B{0}_{1}.tiff".format(tile_id, tile_id_dict[tile_id])
-                print("Remove old tile", old_tile_name, "for new", fn)
+                old_xml_name = os.path.join(f_dir, old_tile_name + ".aux.xml")
+                print("Remove old tile", old_tile_name, ("(and xml) " if os.path.exists(old_xml_name) else "") + "for new", fn)
                 os.remove(os.path.join(f_dir, old_tile_name))
+                if os.path.exists(old_xml_name):
+                    os.remove(old_xml_name)
                 # Then update the dictionary with the new tile.
                 tile_id_dict[tile_id] = datenum
             else:
@@ -453,21 +479,31 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         fieldnames = []
         datarows = []
         field_dtypes = []
-        for child in root[2][1]:
-            if child.tag == "FieldDefn":
-                assert child[0].tag == "Name"
-                fieldnames.append( child[0].text )
+        got_gdal_table = False
+        for child1 in root[2]:
+            if child1.tag != "GDALRasterAttributeTable":
+                continue
 
-                assert child[1].tag == "Type"
-                field_dtypes.append( dtypes_dict[child[1].text] )
+            for child2 in child1:
+                if child2.tag == "FieldDefn":
+                    assert child2[0].tag == "Name"
+                    fieldnames.append( child2[0].text )
 
-            elif child.tag == "Row":
-                assert len(child[:]) == len(fieldnames) == len(field_dtypes)
-                # Each row should have the same number of children as all the fieldnames we just read in.
-                datarows.append([dtype(subchild.text) for (subchild, dtype) in zip(child[:], field_dtypes)])
+                    assert child2[1].tag == "Type"
+                    field_dtypes.append( dtypes_dict[child2[1].text] )
 
-            else:
-                raise ValueError("Uknown tag {0} in XML: {1}".format(child.tag, os.path.basename(xml_file)))
+                elif child2.tag == "Row":
+                    assert len(child2[:]) == len(fieldnames) == len(field_dtypes)
+                    # Each row should have the same number of children as all the fieldnames we just read in.
+                    datarows.append([dtype(subchild.text) for (subchild, dtype) in zip(child2[:], field_dtypes)])
+
+                else:
+                    raise ValueError("Uknown tag {0} in XML: {1}".format(child2.tag, os.path.basename(xml_file)))
+
+            got_gdal_table = True
+
+        if not got_gdal_table:
+            raise ValueError("Did not find 'GDALRasterAttributeTable' in XML:", os.path.basename(xml_file))
 
         # Get the xml FieldDefn's to define the table columsn, and Row's to define the data. Put into a DataFrame.
         # The data is in rows. Put it into columns.
@@ -482,7 +518,11 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         return df
 
     @staticmethod
-    def remove_interpolated_values_from_tile(tilename_in, tilename_out, also_remove_gmrt = True, overwrite = True, verbose=True):
+    def remove_interpolated_values_from_tile(tilename_in,
+                                             tilename_out,
+                                             also_remove_gmrt=True,
+                                             overwrite=True,
+                                             verbose=True):
         """Remove all data in which the source dataset is "interpolated" from a BlueTopo tile. Save to tilename_out.
 
         tilename_in: An input (original) BlueTopo tile, with 3 bands: Elevation, Uncertainty, Contributor
@@ -538,7 +578,10 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
             for gmrt_sid_number in gmrt_sids:
                 b3_zero_mask = b3_zero_mask | (b3_array == gmrt_sid_number)
 
-        # print("{0:,} zero pixels in {1} ({2:0.1f}%)".format(numpy.count_nonzero(b3_zero_mask), os.path.basename(tilename_in), numpy.count_nonzero(b3_zero_mask) * 100. / b3_zero_mask.size))
+        if verbose:
+            print("{0:,} pixels filtered out in {1} ({2:0.1f}%)".format(numpy.count_nonzero(b3_zero_mask),
+                                                                os.path.basename(tilename_in),
+                                                                numpy.count_nonzero(b3_zero_mask) * 100. / b3_zero_mask.size))
 
         # If there *are* no interpolated values, then our job is done here. Move along.
         if numpy.count_nonzero(b3_zero_mask) == 0:
@@ -557,7 +600,7 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         b1_array[b3_zero_mask] = b1_ndv
         b1.WriteArray(b1_array)
         # Re-compute the statistics of the band
-        b1.ComputeStatistics(0)
+        b1.GetStatistics(0, 1)
         # Write the band back out to disk.
         b1.FlushCache()
 
@@ -566,7 +609,7 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         ds_dst = None
 
         if verbose:
-            print(tilename_out, "written")
+            print(os.path.basename(tilename_out), "written")
 
         return
 
@@ -595,7 +638,7 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         new_weight = orig_weight + (tile_size / 100.0)
         return new_weight
 
-    def filter_out_single_points(self, min_contiguous_points = 3):
+    def filter_out_single_points(self, filename=None, min_contiguous_points=3, verbose=True):
         """The BlueTopo tiles, after filtering out tinning interpolations, have a lot of "singular" points, such as lead-
         line measurements, that create artifacts when laid over other layers. Here, we will create masks of all points that are connected by
         no more than 'min_contiguous_points' points (default, 3 points or less) that are otherwise surrounded by empty space.
@@ -607,30 +650,41 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
         adjacent pixels to see how many *they're* connected to. It will likely provide wrong answers if min_contiguous_pixels is set
         to anything larger than 3. It will work for 3, 2, or 1 adjacent pixel. Since we are only using it for 1 or 2, this works.
         """
-        tilenames = self.get_geodataframe().filename.to_list()
+        if filename is None:
+            tilenames = self.get_geodataframe().filename.to_list()
         # print(len(tilenames), "BlueTopo tiles.")
 
+        else:
+            tilenames = [filename]
+
         for i, tilename in enumerate(tilenames):
-            print("{0}/{1}".format(i+1, len(tilenames)), os.path.basename(tilename), end=", ")
+            if verbose:
+                print(("{0}/{1} ".format(i + 1, len(tilenames)) if (len(tilenames) > 1) else "")
+                      + os.path.basename(tilename), end=", ")
             ds = gdal.Open(tilename, gdal.GA_Update)
             band = ds.GetRasterBand(1)
             band_data = band.ReadAsArray()
             ndv = band.GetNoDataValue()
-            data_valid_mask = (band_data != ndv)
+            data_valid_mask = (~numpy.isnan(band_data)) if math.isnan(ndv) else (band_data != ndv)
 
-            print("{0:0.2f}% valid data".format(numpy.count_nonzero(data_valid_mask) * 100 / band_data.size))
+            if verbose:
+                print("{0:0.2f}% valid data".format(numpy.count_nonzero(data_valid_mask) * 100 / band_data.size))
             # print("   ", data.shape, "ndv:", ndv)
             # print([d[1000:1020] for d in numpy.where(data_valid_mask)])
 
             # Get the name of the mask path
-            assert os.path.basename(tilename).find("_masked_epsg4326_egm2008") > -1
-            output_mask_path = os.path.join(os.path.dirname(tilename),
-                                            os.path.basename(tilename).replace("_masked_epsg4326_egm2008",
-                                                                               "_isolated_pixel_mask"))
+            if os.path.basename(tilename).find("_masked_epsg4326_egm2008") > -1:
+                output_mask_path = os.path.join(os.path.dirname(tilename),
+                                                os.path.basename(tilename).replace("_masked_epsg4326_egm2008",
+                                                                                   "_isolated_pixel_mask"))
+            else:
+                base, ext = os.path.splitext(tilename)
+                output_mask_path = os.path.join(base + "_isolated_pixel_mask" + ext)
 
 
             if os.path.exists(output_mask_path):
-                print("   ", "Reading", os.path.basename(output_mask_path))
+                if verbose:
+                    print("   ", "Reading", os.path.basename(output_mask_path))
                 mask_raster = gdal.Open(output_mask_path, gdal.GA_ReadOnly)
                 mask_band = mask_raster.GetRasterBand(1)
                 mask_isolated = mask_band.ReadAsArray()
@@ -692,30 +746,239 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
 
                 # Set nodata value for the output raster band
                 output_band.SetNoDataValue(0)
+                output_band.GetStatistics(0, 1)
 
                 # Close the input and output rasters
                 mask_raster = None
 
-                print("   ", os.path.basename(output_mask_path), "created.")
+                if verbose:
+                    print("   ", os.path.basename(output_mask_path), "created.")
 
-            print("    {0} isolated pixels.".format(numpy.count_nonzero(mask_isolated)))
+            if verbose:
+                print("    {0:,} isolated pixels.".format(numpy.count_nonzero(mask_isolated)))
 
             # Now, filter out isolated pixels.
             if numpy.count_nonzero(band_data.flatten()[mask_isolated.flatten()] != ndv) == 0:
-                print("    Isolated cells have already been filtered out. No changes made.")
+                if verbose:
+                    print("    Isolated cells have already been filtered out. No changes made.")
             else:
                 band_data[mask_isolated] = ndv
                 band.WriteArray(band_data)
-                print("   ", os.path.basename(tilename), "written back to disk.")
+                band.GetStatistics(0, 1)
+                if verbose:
+                    print("   ", os.path.basename(tilename), "written back to disk.")
 
             band = None
             ds = None
 
-            # Okay, now filter out the data points.
-
             # break
 
         return
+
+    def identify_bt_tiffs_without_xmls(self,
+                                       infile_regex = r"BlueTopo_\w{8}_\d{8}\.tiff\Z",):
+        """Some of the BlueTopo tiffs do NOT have associated XMLs. Find them and list them out."""
+        input_tilenames = utils.traverse_directory.list_files(
+            self.config._abspath(self.config.source_datafiles_directory),
+            regex_match=infile_regex)
+
+        xml_names = [fname + ".aux.xml" for fname in input_tilenames]
+        for fname, xmlname in zip(input_tilenames, xml_names):
+            if os.path.exists(xmlname):
+                print(os.path.basename(fname), ".aux.xml exists.")
+            else:
+                print(os.path.basename(fname), os.path.basename(xmlname), "DOESN'T EXIST.")
+
+    def remove_bad_polygons(self, verbose=True):
+        """Some of the bad values aren't great to mask out with boxes, polygons work better.
+        Read the bad_polygons directory, find all .gpkg files there, read the polygons within.
+        For each polygon, find which BlueTopo tiles it intersects. Rasterize the polygon to the extent of
+        those tiles, and put in the "rasterized" subdir. Then, mask out those rasters for each corresponding BlueTopo
+        tile."""
+        bad_polygons_dir = self.config._abspath(self.config.bluetopo_bad_polygons_dir)
+
+        assert os.path.exists(bad_polygons_dir)
+        bad_polygons_list_of_gpkgs = [os.path.join(bad_polygons_dir, fn) for fn in os.listdir(bad_polygons_dir)
+                                      if (os.path.splitext(fn)[1].lower() == ".gpkg")]
+        geopkg_obj = self.get_geopkg_object()
+        gdf = self.get_geodataframe()
+
+        tilenames = gdf.filename.to_list()
+
+        rasterized_poly_dir = self.config._abspath(self.config.bluetopo_bad_polygons_rasterized_dir)
+        # Clear out the rasterized poly dir completely.
+        files_in_raster_dir = os.listdir(rasterized_poly_dir)
+
+        if len(files_in_raster_dir) > 0:
+            if verbose:
+                print("Removing", len(files_in_raster_dir), "files from \"rasterized\" dir.")
+            for fn in files_in_raster_dir:
+                os.remove(os.path.join(rasterized_poly_dir, fn))
+
+        rasters_created = []
+
+        for poly_gpkg in bad_polygons_list_of_gpkgs:
+            poly_gdf = geopandas.read_file(poly_gpkg)
+            layer_names = fiona.listlayers(poly_gpkg)
+            assert len(layer_names) == 1
+            layername = layer_names[0]
+
+            # Merge all the polygons in this file into one multi-polygon.
+            united_polygon = shapely.ops.unary_union(poly_gdf.geometry.tolist())
+            intersecting_tilenames = geopkg_obj.subset_by_polygon(united_polygon, poly_gdf.crs, verbose=verbose)
+
+            if verbose:
+                print(os.path.basename(poly_gpkg), "read with", len(poly_gdf), "features, intersecting", len(intersecting_tilenames), "tiles.")
+
+            for itilename in intersecting_tilenames.filename.tolist():
+                if verbose:
+                    print("\t", os.path.basename(itilename))
+
+                # For each tile this polygon interacts with, rasterize it to the extent of that tile.
+                poly_raster_name = os.path.join(rasterized_poly_dir, os.path.splitext(os.path.basename(itilename))[0] + "_POLY_0.tif")
+                # Since a tilename could overlap more than one polygon, make sure they have unique names.
+                # Start with _POLY_0.tif, iterate to _POLY_1.tif, etc, until you fine one that's unclaimed.
+                poly_raster_i = 0
+                while os.path.exists(poly_raster_name):
+                    poly_raster_i += 1
+                    poly_raster_name = poly_raster_name.replace("_POLY_{0}.tif".format(poly_raster_i - 1),
+                                                                "_POLY_{0}.tif".format(poly_raster_i))
+
+                # Get necessary info from the BlueTopo tile.
+                bt_tile_ds = gdal.Open(itilename, gdal.GA_ReadOnly)
+                bt_width, bt_height = bt_tile_ds.RasterXSize, bt_tile_ds.RasterYSize
+                bt_xmin, bt_xres, _, bt_ymax, _, bt_yres = bt_tile_ds.GetGeoTransform()
+                bt_xmax = bt_xmin + (bt_xres * bt_width)
+                bt_ymin = bt_ymax + (bt_yres * bt_height)
+                assert (bt_xmax > bt_xmin) & (bt_ymax > bt_ymin)
+                bt_proj = "EPSG:{0}".format(pyproj.CRS.from_string((bt_tile_ds.GetProjection())).to_epsg())
+
+                print("Will create", poly_raster_name)
+
+                gdal_rasterize_cmd = ["gdal_rasterize",
+                                      "-l", layername,
+                                      "-burn", "1",
+                                      "-of", "GTiff",
+                                      "-a_srs", bt_proj,
+                                      "-a_nodata", "0",
+                                      "-init", "0",
+                                      "-co", "COMPRESS=LZW",
+                                      "-co", "PREDICTOR=2",
+                                      "-te", repr(bt_xmin), repr(bt_ymin), repr(bt_xmax), repr(bt_ymax),
+                                      "-tr", repr(bt_xres), repr(abs(bt_yres)),
+                                      "-ot", "Byte",
+                                      poly_gpkg, poly_raster_name]
+
+                if verbose:
+                    print(" ".join(gdal_rasterize_cmd))
+                subprocess.run(gdal_rasterize_cmd, capture_output=not verbose)
+
+                if os.path.exists(poly_raster_name):
+                    rasters_created.append(poly_raster_name)
+                else:
+                    raise UserWarning("WARNING: Raster", os.path.basename(poly_raster_name), "not created.")
+
+                bt_tile_ds = None
+
+        # Now, loop through and mask out the polygonized rasters from the BlueTopo tiles.
+        for i, mask_raster in enumerate(rasters_created):
+            # Extract the TILEID_YYYYMMDD combo from the mask raster. This will match it up with the appropriate tile.
+            tile_id_str = re.search(r"BlueTopo_[A-Z0-9]{8}_\d{8}", mask_raster).group()
+            gdf_subset = gdf.loc[gdf.filename.str.contains(tile_id_str, case=True)]
+            assert len(gdf_subset) == 1
+            tile_fname = gdf_subset.filename.tolist()[0]
+            if verbose:
+                print("{0}/{1}".format(i+1, len(rasters_created)), os.path.basename(mask_raster))
+
+            tile_ds = gdal.Open(tile_fname, gdal.GA_Update)
+            tile_band = tile_ds.GetRasterBand(1)
+            tile_array = tile_band.ReadAsArray()
+            tile_ndv = tile_band.GetNoDataValue()
+
+            mask_ds = gdal.Open(mask_raster, gdal.GA_ReadOnly)
+            mask_array = mask_ds.GetRasterBand(1).ReadAsArray().astype(bool)
+
+            # Check to see if there are any valid data values in that mask (this will be False if it's already
+            # been done, just move along).
+            masked_values = tile_array[mask_array]
+            if numpy.all(masked_values == tile_ndv):
+                if verbose:
+                    print("    No valid data in tile to mask out within polygon. Moving on.")
+                continue
+
+            # Mask out the values from the mask, with NDV
+            tile_array[mask_array] = tile_ndv
+            tile_band.WriteArray(tile_array)
+            tile_ds.FlushCache()
+            # Recopmute statistics.
+            tile_band.GetStatistics(0, 1)
+
+            # Save the output back to disk (again), after stats have been written.
+            tile_ds.FlushCache()
+            tile_band = None
+            tile_ds = None
+
+            if verbose:
+                print("    Masked out {0:,} cells from within polygon.".format(numpy.count_nonzero(masked_values != tile_ndv)))
+
+        return
+
+        # OLD CODE FOR GMRT - TODO: DELETE WHEN DONE.
+        for mask_out_tif in bad_polygons_list_of_tifs:
+            # Get the location ID from the mask filename.
+            try:
+                tile_id = re.search(r"[NSns](\d{2})[EWew](\d{3})", mask_out_tif).group().upper()
+            except AttributeError:
+                print("Could not retrieve tile_id from mask file", os.path.basename(mask_out_tif), file=sys.stderr)
+                continue
+
+            # Find the right tile that goes with this.
+            matching_tilenames = [fn for fn in tilenames if re.search(tile_id, os.path.basename(fn)) != None]
+            # There should be only 1 tile with that ID
+            if len(matching_tilenames) != 1:
+                print("   ", len(matching_tilenames), "tiles matched with Tile ID", tile_id + ":",
+                      [os.path.basename(fn) for fn in matching_tilenames])
+                print("    We're like The Highlander here: There can be only one. Moving on.")
+                continue
+
+            tilename = matching_tilenames[0]
+
+            print(os.path.basename(mask_out_tif))
+            # Get the mask array from the geotiff.
+            mask_ds = gdal.Open(mask_out_tif, gdal.GA_ReadOnly)
+            mask_array = mask_ds.GetRasterBand(1).ReadAsArray().astype(bool)
+
+            if not numpy.any(mask_array):
+                print("    No valid data in mask_array. Moving on.")
+                continue
+            mask_ds = None
+
+            # Read the data from the tile, in update mode.
+            tile_ds = gdal.Open(tilename, gdal.GA_Update)
+            tile_band = tile_ds.GetRasterBand(1)
+            tile_array = tile_band.ReadAsArray()
+            tile_ndv = tile_band.GetNoDataValue()
+
+            # Check to see if there are any valid data values in that mask (this will be False if it's already
+            # been done, just move along).
+            masked_values = tile_array[mask_array]
+            if numpy.all(masked_values == tile_ndv):
+                print("    No valid data in tile to mask out within polygon. Moving on.")
+                continue
+
+            # Mask out the values from the mask, with NDV
+            tile_array[mask_array] = tile_ndv
+            tile_band.WriteArray(tile_array)
+            tile_ds.FlushCache()
+            # Recopmute statistics.
+            tile_band.GetStatistics(0, 1)
+
+            # Save the output back to disk (again), after stats have been written.
+            tile_ds.FlushCache()
+            tile_band = None
+            tile_ds = None
+
+            print("    Masked out", numpy.count_nonzero(masked_values != tile_ndv), "cells from within polygon.")
 
 
 # def get_updated_BlueTopo_tiles():
@@ -737,6 +1000,28 @@ class source_dataset_BlueTopo(etopo_source_dataset.ETOPO_source_dataset):
 if "__main__" == __name__:
     # print(bt.get_tile_size_from_fname("BlueTopo_US4LA1EN_20211018_egm2008.tiff", 0))
     bt = source_dataset_BlueTopo()
+    bt.reset_geopackage()
+    # bt.remove_bad_polygons()
+    # bt.get_geodataframe()
+    # bt.identify_bt_tiffs_without_xmls()
+
+    # bt.remove_redundant_BlueTopo_tiles()
+
+    # bt.preprocess_tiles(n_subprocs=18, reset_geodataframe=True)
+
+    ########################
+    # TESTING WITH ONE TILE.
+    # bt.remove_interpolated_values_from_tile("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BC26526R_20221122.tiff",
+    #                                         "/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26526R_20221122_masked_TEST5.tif",
+    #                                         also_remove_gmrt=True, verbose=True)
+    #
+    # shutil.copy("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26526R_20221122_masked_TEST5.tif",
+    #             "/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26526R_20221122_masked_TEST6.tif")
+    #
+    # # Second, mask out single isolated values from the tiles.
+    # bt.filter_out_single_points(filename="/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BC26526R_20221122_masked_TEST6.tif",
+    #                             min_contiguous_points=3, verbose=True)
+    ########################
 
     # bt_sid_table = bt.get_raster_table_from_bluetopo_xml('/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BC25L26L_20221130.tiff')
     # sid_table_gmrt = bt_sid_table[bt_sid_table["source_institution"].str.contains("(GMRT)", regex=False, na=False)]
@@ -744,9 +1029,7 @@ if "__main__" == __name__:
 
     # bt.filter_out_single_points()
 
-    # bt.reproject_tiles(n_subprocs=1, subproc_verbose=True)
 
-    # bt.remove_redundant_BlueTopo_tiles()
 
     # bt.remove_interpolated_values_from_tile("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BH4PQ58H_20230327.tiff",
     #                                         "/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/converted/BlueTopo_BH4PQ58H_20230327_masked.tif",
@@ -763,8 +1046,6 @@ if "__main__" == __name__:
     # bt.get_file_epsg("/home/mmacferrin/Research/DATA/DEMs/BlueTopo/data/BlueTopo/BlueTopo_BC26H26C_20220926.tiff")
     # )
     # foobar
-
-    # bt.reproject_tiles()
 
     # gdf = bt.get_geodataframe()
     # for fname in gdf.filename:
