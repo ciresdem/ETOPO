@@ -74,7 +74,7 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
 
             # THESE ARE TILES WHERE GMRT LEGIT HAS NO DATA. Don't bother with these.
             tile = os.path.basename(gmrt_tile_fname)
-            if  resolution_s == 15 and \
+            if resolution_s == 15 and \
                 ((tile.find("N00E015") > -1) or \
                 (tile.find("S15E015") > -1) or \
                 (tile.find("N30E090") > -1) or \
@@ -117,18 +117,29 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
             if ytop == 90:
                 ytop = 90 - (resolution_s / 3600)
 
+            # stacks_command = ["waffles", "-M", "stacks",
+            #                    "-w",
+            #                    # Note: we include a /-/0 elevation cutoff (only include values below 0) to exclude land from this dataset. We're only interested in ocean here.
+            #                    "-R", "{0}/{1}/{2}/{3}/-/0".format(xleft,xright,ybottom,ytop),
+            #                    "-E", "{0}s".format(resolution_s),
+            #                    "--t_srs", "EPSG:4326",
+            #                    "-D", etopo_gpkg.config.etopo_cudem_cache_directory,
+            #                    "-k",
+            #                    "-O", os.path.splitext(gmrt_tile_fname)[0],
+            #                    "-f",
+            #                    "-F", "GTiff",
+            #                    "gmrt:layer=topo-mask:fmt=geotiff:res=max"]
+            #
+            # Since updating to v2, we have a new stacks command interface. Use this instead.
             stacks_command = ["waffles", "-M", "stacks",
-                               "-w",
-                               # Note: we include a /-/0 elevation cutoff (only include values below 0) to exclude land from this dataset. We're only interested in ocean here.
-                               "-R", "{0}/{1}/{2}/{3}/-/0".format(xleft,xright,ybottom,ytop),
-                               "-E", "{0}s".format(resolution_s),
-                               "--t_srs", "EPSG:4326",
-                               "-D", etopo_gpkg.config.etopo_cudem_cache_directory,
-                               "-k",
-                               "-O", os.path.splitext(gmrt_tile_fname)[0],
-                               "-f",
-                               "-F", "GTiff",
-                               "gmrt:layer=topo-mask:fmt=geotiff:res=max"]
+                              "-E", f"{resolution_s}s",
+                              "-R", f"{xleft}/{xright}/{ybottom}/{ytop}",
+                              "-P", "EPSG:4326",
+                              "-D", etopo_gpkg.config.etopo_cudem_cache_directory,
+                              "-k",
+                              "-O", os.path.splitext(gmrt_tile_fname)[0],
+                              "-F", "GTiff",
+                              "gmrt,-101:swath_only=True,1"]
 
             if not os.path.exists(gmrt_tile_fname):
                 # p = subprocess.run(fetches_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -292,13 +303,7 @@ class source_dataset_GMRT(etopo_source_dataset.ETOPO_source_dataset):
                     print("{0}/{1} {2} unchanged.".format(i+1, len(gdf), os.path.split(row.filename)[1]))
 
         if any_files_deleted and update_gpkg:
-            gdf = None
-            gpkg_object = self.get_geopkg_object(verbose = verbose)
-            gpkg_fname = gpkg_object.get_gdf_filename(resolution_s = resolution_s)
-            os.remove(gpkg_fname)
-            gpkg_object.gdf = None
-            # The dataset_geopackage object will rebuild the gdf using the new files.
-            gdf = self.get_geodataframe(resolution_s = resolution_s, verbose=verbose)
+            self.reset_geopackage(resolution_s=resolution_s)
 
 
     def remove_bad_polygons(self, resolution_s=1):
@@ -486,11 +491,13 @@ def remove_xml_files(self, and_inf = True):
 if __name__ == "__main__":
     # Create the tiles.
     gmrt = source_dataset_GMRT()
+    # gmrt.get_geodataframe(resolution_s=1)
     # gmrt.translate_15s_bad_regions_to_1s()
     # gmrt.create_tiles(resolution_s=1, overwrite=False)
 
     # gmrt.clean_bad_gmrt_values(resolution_s=1)
-    gmrt.remove_bad_polygons(resolution_s=1)
+    # gmrt.remove_bad_polygons(resolution_s=1)
+    gmrt.reset_geopackage(resolution_s=1)
 
     # Get rid of any empty tiles.
     # # gmrt.delete_empty_tiles(resolution_s=15)
