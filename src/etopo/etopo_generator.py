@@ -494,7 +494,7 @@ class ETOPO_Generator:
                     # Copernicus and BedMachine.
 
                     if bed and omit_copernicus_if_bed_south and dset_obj.dataset_name == "CopernicusDEM":
-                        if re.search("S(\d{2})", os.path.split(etopo_fname)[1]) != None:
+                        if re.search(r"S(\d{2})", os.path.basename(etopo_fname)) is not None:
                             continue
 
                     this_dlist_entries = dset_obj.generate_tile_datalist_entries(etopo_poly,
@@ -546,6 +546,7 @@ class ETOPO_Generator:
                                  subdir = None,
                                  tile_id = None,
                                  tempdir_prefix = "temp",
+                                 skip_datalists = False,
                                  overwrite=False,
                                  verbose=True):
         """Generate all of the ETOPO tiles at a given resolution."""
@@ -568,16 +569,17 @@ class ETOPO_Generator:
         etopo_yres   = etopo_gdf['yres'].to_numpy()[sort_mask]
 
         # Look through all the dlists, (re-)generate if necessary.
-        if verbose:
-            print("Generating tile datalists:")
-        self.generate_etopo_tile_datalists(gdf=etopo_gdf,
-                                           resolution=resolution,
-                                           subdir=subdir,
-                                           tile_id=tile_id,
-                                           crm_only_if_1s = crm_only_if_1s,
-                                           etopo_tile_fname=None,
-                                           bed = bed,
-                                           verbose=verbose)
+        if not skip_datalists:
+            if verbose:
+                print("Generating tile datalists:")
+            self.generate_etopo_tile_datalists(gdf=etopo_gdf,
+                                               resolution=resolution,
+                                               subdir=subdir,
+                                               tile_id=tile_id,
+                                               crm_only_if_1s = crm_only_if_1s,
+                                               etopo_tile_fname=None,
+                                               bed = bed,
+                                               verbose=verbose)
 
         if verbose:
             print("Generating", len(etopo_tiles), "ETOPO tiles at", str(resolution) + "s resolution:")
@@ -894,7 +896,7 @@ class ETOPO_Generator:
             if verbose:
                 print("{0}/{1}".format(i+1, len(fnames)), fname)
 
-    def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: object = dict):
+    def fetch_etopo_source_datasets(self, active_only: bool = True, bed: bool = False, verbose: bool = True, return_type: type = dict):
         """Look through the /src/datasets/ directory, and get a list of the input datasets to use.
         This list will be saved to self.source_datasets, and will be instances of
         the datasets.source_dataset class, or sub-classes thereof.
