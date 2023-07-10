@@ -98,7 +98,7 @@ class ETOPO_source_dataset:
         # Switch to 'True' when the .ini is filled out and this is ready to go.
         return self.config.is_active
 
-    def get_geopkg_object(self, verbose=True):
+    def get_geopkg_object(self):
         """Get the dataset_geopackage.DatasetGeopackage object associated with this dataset.
         If it doesn't exist, create it.
         """
@@ -110,8 +110,21 @@ class ETOPO_source_dataset:
         """Retrieve the geodataframe of the tile outlines. The geometries are polygons.
         If the dataframe does not exist where it says, it will be created.
         """
-        geopkg = self.get_geopkg_object(verbose=verbose)
+        geopkg = self.get_geopkg_object()
         return geopkg.get_gdf(resolution_s=resolution_s, verbose=verbose)
+
+    def reset_geopackage(self, resolution_s=None, verbose=True):
+        """Delete the old geopackage and rebuild it anew."""
+        geopkg_obj = self.get_geopkg_object()
+        geopkg_fname = geopkg_obj.get_gdf_filename(resolution_s=resolution_s)
+        if os.path.exists(geopkg_fname):
+            if verbose:
+                print("Removing old", os.path.basename(geopkg_fname) + ".")
+                os.remove(geopkg_fname)
+                geopkg_obj.gdf = None
+
+        # Refetching the gdf, if it no longer exists, will rebuild the geodataframe.
+        return geopkg_obj.get_gdf(resolution_s=resolution_s, verbose=verbose)
 
     def get_crs(self, as_epsg=True):
         """Get the CRS or EPSG of the coordinate reference system associated with this dataset."""
@@ -172,7 +185,7 @@ class ETOPO_source_dataset:
 
         If return_fnames_only is True, just return a list of the filenames.
         Else, return the subset of the dataframe table."""
-        geopkg = self.get_geopkg_object(verbose=verbose)
+        geopkg = self.get_geopkg_object()
         subset = geopkg.subset_by_polygon(polygon, polygon_crs, resolution_s = resolution_s)
         if return_fnames_only:
             return subset["filename"].tolist()
