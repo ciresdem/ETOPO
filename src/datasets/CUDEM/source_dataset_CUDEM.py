@@ -324,9 +324,9 @@ def get_cudem_original_vdatum_from_file_path(file_path):
 if __name__ == "__main__":
     # gdf = source_dataset_CUDEM().get_geodataframe()
     cudem = source_dataset_CUDEM()
-    # cudem.convert_vdatum()
+    cudem.convert_vdatum()
 
-    cudem.remove_river_from_N39W077(overwrite=False)
+    # cudem.remove_river_from_N39W077(overwrite=False)
     # cudem.measure_navd88_vs_egm2008_elevs()
     # cudem.reproject_tiles_from_nad83(overwrite=False)
     # cudem.delete_empty_tiles(check_start=0, recreate_if_deleted=True)
