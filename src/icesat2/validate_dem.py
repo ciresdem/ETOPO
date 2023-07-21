@@ -39,6 +39,8 @@ import numpy
 import pandas
 import multiprocessing as mp
 import time
+import numexpr
+import pyproj
 
 etopo_config = utils.configfile.config()
 EMPTY_VAL = etopo_config.etopo_ndv
@@ -131,7 +133,7 @@ def collect_raw_photon_data(dem_bbox,
 
     return dataframe
 
-def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, connection,
+def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, connection, photon_limit=None,
                                measure_coverage=False, input_x=None, input_y=None, num_subdivisions=15):
     """A child process for running the DEM validation in parallel.
 
@@ -212,7 +214,7 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
     # If we're measuring the coverage of the photons, we need the latitudes and longitudes as well to get the
     # photon locations within a grid-cell.
     if measure_coverage:
-        assert (input_x is not None) and (input_x is not None)
+        assert (input_x is not None) and (input_y is not None)
 
         connection_success = False
         # counter = 0
@@ -283,12 +285,12 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
             r_med_diff = numpy.zeros((N,), dtype=float)
 
             if measure_coverage:
-                r_min_distance_to_center = numpy.zeros((N,), dtype=float)
+                # r_min_distance_to_center = numpy.zeros((N,), dtype=float)
                 r_coverage_frac = numpy.zeros((N,), dtype=float)
 
             for counter,(i,j) in enumerate(zip(dem_i_list, dem_j_list)):
-
-                ph_subset_mask = (photon_i == i) & (photon_j == j)
+                # Using numexpr.evaluate here is far more memory-and-time efficient than just doing it with the numpy arrays.
+                ph_subset_mask = numexpr.evaluate("(photon_i == i) & (photon_j == j)")
                 # Generate a small pandas dataframe from the subset
                 subset_df = pandas.DataFrame({'height': heights[ph_subset_mask],
                                               'ph_code': ph_codes[ph_subset_mask]})
@@ -313,27 +315,39 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
 
                     subset_df['subset_i'] = numpy.floor((subset_df.ycoord - cell_ymax) / cell_ystep).astype(int)
                     subset_df['subset_j'] = numpy.floor((subset_df.xcoord - cell_xmin) / cell_xstep).astype(int)
-                    assert numpy.all((subset_df.subset_i >= 0) & (subset_df.subset_i < num_subdivisions))
-                    assert numpy.all((subset_df.subset_j >= 0) & (subset_df.subset_j < num_subdivisions))
+                    # These are good assupmtions but the "numpy.all() command slows things down for big datasets, and
+                    # we've never needed it so it's probably unnecessary. So skip it.
+                    # assert numpy.all((subset_df.subset_i >= 0) & (subset_df.subset_i < num_subdivisions))
+                    # assert numpy.all((subset_df.subset_j >= 0) & (subset_df.subset_j < num_subdivisions))
 
-                    cell_xcenter = cell_xmin + ((cell_xmax - cell_xmin)/2)
-                    cell_ycenter = cell_ymin + ((cell_ymax - cell_ymin)/2)
+                    # NOTE: I had been calculating the minimum distance of the closest photon to the center of the grid-cell,
+                    # but this proves not to be a good measure of coverage. For efficiency's sake, omit it now.
+
+                    # cell_xcenter = cell_xmin + ((cell_xmax - cell_xmin) / 2)
+                    # cell_ycenter = cell_ymin + ((cell_ymax - cell_ymin) / 2)
+
                     # Calcluate minimum distance from cell center, i.e. distance of the "closest photon."
-                    cell_min_distance_from_center = numpy.power(numpy.power(subset_df.xcoord - cell_xcenter, 2) + \
-                                                                numpy.power(subset_df.ycoord - cell_ycenter, 2),
-                                                                0.5).min()
+                    # cell_min_distance_from_center = numpy.power(numpy.power(subset_df.xcoord - cell_xcenter, 2) + \
+                    #                                             numpy.power(subset_df.ycoord - cell_ycenter, 2),
+                    #                                             0.5).min()
+                    #
+                    # r_min_distance_to_center[counter] = cell_min_distance_from_center
 
-                    r_min_distance_to_center[counter] = cell_min_distance_from_center
-
-                    # By taking i * (number_of_rows) + j, we come up with unique single values for the cell this is in.
+                    # By taking i * (number_of_rows) + j, we come up with unique single values for the sub-cell this is in.
                     subset_df['subset_ij'] = (subset_df.subset_i * num_subdivisions) + subset_df.subset_j
-                    # Count how many unique subset-cells are covered and divide by the number of total subdivisions.
-                    cell_fraction_covered = len(subset_df.subset_ij.unique()) / (num_subdivisions**2)
+                    # Count how many unique subset-cells are covered and divide by the number of total sub-cells.
+                    cell_fraction_covered = len(subset_df.subset_ij.unique()) / (num_subdivisions ** 2)
                     r_coverage_frac[counter] = cell_fraction_covered
+
+                # After calculating the coverage, if we want to limit the number of photons we're dealing with total,
+                # do it here.
+                if photon_limit is not None and len(subset_df) > photon_limit:
+                    assert photon_limit >= 2
+                    subset_df = subset_df.sample(n=photon_limit)
 
                 r_numphotons[counter] = len(subset_df)
                 if len(subset_df) > 0:
-                    r_canopy_fraction[counter] = len(subset_df[subset_df.ph_code >= 2]) / len(subset_df)
+                    r_canopy_fraction[counter] = (subset_df.ph_code >= 2).sum() / len(subset_df)
                 else:
                     r_canopy_fraction[counter] = EMPTY_VAL
 
@@ -399,7 +413,7 @@ def validate_dem_child_process(input_heights, input_i, input_j, photon_codes, co
 
             if measure_coverage:
                 # Add columns for centrality measurements here.
-                results_df["min_dist_from_center"] = r_min_distance_to_center
+                # results_df["min_dist_from_center"] = r_min_distance_to_center
                 results_df["coverage_frac"] = r_coverage_frac
 
             connection.send(results_df)
@@ -424,7 +438,15 @@ def clean_procs_and_pipes(procs, pipes1, pipes2):
             p2.close()
     return
 
-def kick_off_new_child_process(height_array, i_array, j_array, code_array, measure_coverage=False, input_x=None, input_y=None, num_subdivisions=15):
+def kick_off_new_child_process(height_array,
+                               i_array,
+                               j_array,
+                               code_array,
+                               photon_limit=None,
+                               measure_coverage=False,
+                               input_x=None,
+                               input_y=None,
+                               num_subdivisions=15):
     """Start a new subprocess to handle and process data."""
     pipe_parent, pipe_child = mp.Pipe(duplex=True)
     proc = mp.Process(target=validate_dem_child_process,
@@ -436,6 +458,7 @@ def kick_off_new_child_process(height_array, i_array, j_array, code_array, measu
                       kwargs={"measure_coverage": measure_coverage,
                               "input_x": input_x,
                               "input_y": input_y,
+                              "photon_limit": photon_limit,
                               "num_subdivisions": num_subdivisions}
                       )
     proc.start()
@@ -443,32 +466,33 @@ def kick_off_new_child_process(height_array, i_array, j_array, code_array, measu
 
 
 def validate_dem_parallel(dem_name,
-                          photon_dataframe_name = None,
-                          use_icesat2_photon_database = True,
-                          icesat2_photon_database_obj = None,
-                          dem_vertical_datum = "egm2008",
-                          output_vertical_datum = "egm2008",
+                          photon_dataframe_name=None,
+                          use_icesat2_photon_database=True,
+                          icesat2_photon_database_obj=None,
+                          dem_vertical_datum="egm2008",
+                          output_vertical_datum="egm2008",
                           granule_ids=None,
-                          results_dataframe_file = None,
-                          icesat2_date_range = ["2021-01-01", "2021-12-31"],
-                          interim_data_dir = None,
+                          results_dataframe_file=None,
+                          icesat2_date_range=["2021-01-01", "2021-12-31"],
+                          interim_data_dir=None,
                           overwrite=False,
-                          delete_datafiles = False,
-                          mask_out_lakes = True,
-                          mask_out_buildings = True,
-                          use_osm_planet = False,
-                          mask_out_urban = False,
-                          include_gmrt_mask = False,
-                          write_result_tifs = True,
-                          write_summary_stats = True,
-                          skip_icesat2_download = True,
-                          include_photon_level_validation = False,
-                          plot_results = True,
-                          location_name = None,
-                          mark_empty_results = True,
-                          omit_bad_granules = True,
-                          measure_coverage = False,
-                          numprocs = parallel_funcs.physical_cpu_count(),
+                          delete_datafiles=False,
+                          mask_out_lakes=True,
+                          mask_out_buildings=True,
+                          use_osm_planet=False,
+                          mask_out_urban=False,
+                          include_gmrt_mask=False,
+                          write_result_tifs=True,
+                          write_summary_stats=True,
+                          skip_icesat2_download=True,
+                          include_photon_level_validation=False,
+                          plot_results=True,
+                          location_name=None,
+                          mark_empty_results=True,
+                          omit_bad_granules=True,
+                          measure_coverage=False,
+                          max_photons_per_cell=None,
+                          numprocs=parallel_funcs.physical_cpu_count(),
                           quiet=False):
     """The main function. Do it all here. But do it on more than one processor.
     TODO: Document all these method parameters. There are a bunch and they need better explanation.
@@ -514,7 +538,7 @@ def validate_dem_parallel(dem_name,
                     if not quiet:
                         print("done.")
 
-                write_summary_stats_file(results_dataframe, summary_stats_filename, verbose = not quiet)
+                write_summary_stats_file(results_dataframe, summary_stats_filename, verbose=not quiet)
 
             if write_result_tifs and not os.path.exists(result_tif_filename):
                 if dem_ds is None:
@@ -565,6 +589,12 @@ def validate_dem_parallel(dem_name,
                                                              use_osm_planet = use_osm_planet,
                                                              include_gmrt = include_gmrt_mask,
                                                              target_fname_or_dir = interim_data_dir)
+
+
+    # Test for compound CRSs. If it's that, just get the horizontal crs from it.
+    dem_crs_obj = pyproj.CRS.from_epsg(dem_epsg)
+    if dem_crs_obj.is_compound:
+        dem_epsg = dem_crs_obj.sub_crs_list[0].to_epsg()
 
     # The dem_array and the coastline_mask_array should have the same shape
     try:
@@ -678,13 +708,13 @@ def validate_dem_parallel(dem_name,
                 bbox_wgs84 = dem_bbox
 
             granules_list = nsidc_download.main(short_name=["ATL03","ATL08"],
-                                                      region=bbox_wgs84,
-                                                      local_dir=interim_data_dir,
-                                                      version=etopo_config.nsidc_atl_version,
-                                                      dates = icesat2_date_range,
-                                                      fname_python_regex="\.h5\Z",
-                                                      force=overwrite,
-                                                      quiet=quiet)
+                                                region=bbox_wgs84,
+                                                local_dir=interim_data_dir,
+                                                version=etopo_config.nsidc_atl_version,
+                                                dates = icesat2_date_range,
+                                                fname_python_regex="\.h5\Z",
+                                                force=overwrite,
+                                                quiet=quiet)
             # Just get the .h5 files from the query (skip the .xml's)
             atl03_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL03") > -1]
             atl08_granules_list = [fn for fn in granules_list if os.path.split(fn)[1].find("ATL08") > -1]
@@ -696,8 +726,10 @@ def validate_dem_parallel(dem_name,
                 common_granule_ids.append(atl03_gid)
 
         if len(common_granule_ids) < 0.5*len(atl03_granules_list):
-            raise UserWarning("ICESat-2 ATL03 granules IDs are less than 50% in common with ATL08 granule ids over bounding box {0}, {1} of {2} matching.".format(
-                              dem_bbox, len(common_granule_ids), len(atl03_granules_list)))
+            raise UserWarning("ICESat-2 ATL03 granules IDs are less than 50% in common with ATL08 granule ids over " + \
+                              "bounding box {0}, {1} of {2} matching.".format(dem_bbox,
+                                                                              len(common_granule_ids),
+                                                                              len(atl03_granules_list)))
 
         photon_df = None
     else:
@@ -715,38 +747,43 @@ def validate_dem_parallel(dem_name,
     else:
         is2_to_dem = None
 
-
     if photon_df is None:
         # Get the photon data from the dataframe.
         photon_df = collect_raw_photon_data(dem_bbox,
                                             photon_dataframe_name,
                                             granule_ids=common_granule_ids,
                                             overwrite=overwrite,
-                                            dem_bbox_converter = is2_to_dem,
-                                            verbose = not quiet)
+                                            dem_bbox_converter=is2_to_dem,
+                                            verbose=not quiet)
 
     if not quiet:
         print("{0:,}".format(len(photon_df)), "ICESat-2 photons present in photon dataframe.")
 
     # Filter out to keep only the highest-quality photons.
     # quality_ph == 0 ("nominal") and "conf_land" == 4 ("high") and/or "conf_land_ice" == 4 ("high")
-    photon_df = photon_df[(photon_df["quality_ph"] == 0) & \
-                          ((photon_df["conf_land"] == 4) | (photon_df["conf_land_ice"] == 4))]
+    # Using photon_df.eval() is far more efficient for complex expressions than a boolean python expression.
+    good_photon_mask = photon_df.eval("(quality_ph == 0) & ((conf_land == 4) | (conf_land_ice == 4))")
+    photon_df = photon_df[good_photon_mask].copy()
+
+    if len(photon_df) == 0:
+        if mark_empty_results:
+            # Just create an empty file to makre this dataset as done.
+            with open(empty_results_filename, 'w') as f:
+                f.close()
+            if not quiet:
+                print("Created", empty_results_filename, "to indicate no data was returned here.")
+        return None
 
     # If the DEM coordinate system isn't WGS84 lat/lon, convert the icesat-2
     # lat/lon data coordinates into the same CRS as the DEM
     if dem_epsg != 4326:
-
         lon_x = photon_df["longitude"]
         lat_y = photon_df["latitude"]
-        # print(numpy.min(lon_x), numpy.mean(lon_x), numpy.max(lon_x))
-        # print(numpy.min(lat_y), numpy.mean(lat_y), numpy.max(lat_y))
+        latlon_array = numpy.array([lon_x, lat_y]).transpose()
 
-        # print(is2_to_dem.TransformPoint())
-
-        points = is2_to_dem.TransformPoints( list(zip(lon_x, lat_y)) )
-        p_x = numpy.array([p[0] for p in points])
-        p_y = numpy.array([p[1] for p in points])
+        points = numpy.array(is2_to_dem.TransformPoints(latlon_array))
+        p_x = points[:, 0]
+        p_y = points[:, 1]
         photon_df["dem_x"] = p_x
         photon_df["dem_y"] = p_y
 
@@ -770,11 +807,23 @@ def validate_dem_parallel(dem_name,
     yend = ystart + (ystep * dem_array.shape[0])
 
     # Clip to the bounding box.
-    ph_bbox_mask = (ph_xcoords >= min(xstart, xend)) & \
-                   (ph_xcoords < max(xstart, xend)) & \
-                   (ph_ycoords > min(ystart, yend)) & \
-                   (ph_ycoords <= max(ystart, yend)) & \
-                   (photon_df["class_code"] >= 1)
+    minx = min(xstart, xend)
+    maxx = max(xstart, xend)
+    miny = min(ystart, yend)
+    maxy = max(ystart, yend)
+    df_class_code = photon_df["class_code"].to_numpy()
+    # Again, using a numexpr expression here is far more time-and-memory efficient than doing all these compound boolean
+    # operations on the numpy arrays in a Python expression.
+    ph_bbox_mask = numexpr.evaluate("(ph_xcoords >= minx) & " + \
+                                    "(ph_xcoords < maxx) & " + \
+                                    "(ph_ycoords > miny) & " + \
+                                    "(ph_ycoords <= maxy) & " + \
+                                    "(df_class_code >= 1)")
+        #            (ph_xcoords >= min(xstart, xend)) & \
+        #            (ph_xcoords < max(xstart, xend)) & \
+        #            (ph_ycoords > min(ystart, yend)) & \
+        #            (ph_ycoords <= max(ystart, yend)) & \
+        #            (photon_df["class_code"] >= 1)
 
     # Subset the dataframe to only provide pixels in-bounds for our DEM
     photon_df = photon_df[ph_bbox_mask].copy() # Create a copy so as not to be assinging to a slice of the full dataframe.
@@ -802,9 +851,10 @@ def validate_dem_parallel(dem_name,
 
             # If we found some bad photons in bad granules (bad granules!), mask them out.
             if (ph_bad_granule_mask is not None) and (numpy.count_nonzero(ph_bad_granule_mask) > 0):
-                photon_df = photon_df[~ph_bad_granule_mask].copy()
-                ph_xcoords = ph_xcoords[~ph_bad_granule_mask]
-                ph_ycoords = ph_ycoords[~ph_bad_granule_mask]
+                n_ph_bad_granules_mask = ~ph_bad_granulse_mask
+                photon_df = photon_df[n_ph_bad_granules_mask].copy()
+                ph_xcoords = ph_xcoords[n_ph_bad_granules_mask]
+                ph_ycoords = ph_ycoords[n_ph_bad_granules_mask]
 
 
     photon_df["i"] = numpy.floor((ph_ycoords - ystart) / ystep).astype(int)
@@ -819,7 +869,7 @@ def validate_dem_parallel(dem_name,
         dem_goodpixel_mask = (coastline_mask_array > 0) & (dem_array != dem_ndv)
 
     # Create an (i,j) multi-index into the array.
-    photon_df = photon_df.set_index(["i", "j"], drop=False).sort_index()
+    photon_df = photon_df.set_index(["i", "j"], drop=False) #.sort_index()
 
     # Make sure that we only look at cells that have at least 1 ground photon in them.
     ph_mask_ground_only = (photon_df["class_code"] == 1)
@@ -944,6 +994,9 @@ def validate_dem_parallel(dem_name,
             print("Done.\n")
 
     if not quiet:
+        if max_photons_per_cell is not None:
+            print("Limiting processing to {0} photons per grid cell.".format(max_photons_per_cell))
+
         print("Performing ICESat-2/DEM cell validation...")
 
     # Gather a list of all the little results mini-dataframes from all the sub-processes running.
@@ -1005,6 +1058,7 @@ def validate_dem_parallel(dem_name,
                 # Generate a new parallel subprocess to handle the data.
                 running_procs[i], open_pipes_parent[i], open_pipes_child[i] = \
                     kick_off_new_child_process(height_array, i_array, j_array, code_array,
+                                               photon_limit=max_photons_per_cell,
                                                measure_coverage=measure_coverage,
                                                input_x=x_array,
                                                input_y=y_array)
@@ -1032,7 +1086,7 @@ def validate_dem_parallel(dem_name,
             # while counter_finished < N:
             while num_chunks_finished < num_chunks_started:
                 # First, look for processes that have returned values.
-                for i,(proc, pipe, pipe_child) in enumerate(zip(running_procs, open_pipes_parent, open_pipes_child)):
+                for i, (proc, pipe, pipe_child) in enumerate(zip(running_procs, open_pipes_parent, open_pipes_child)):
 
                     if proc is None:
                         continue
@@ -1048,6 +1102,7 @@ def validate_dem_parallel(dem_name,
                         pipe_child.close()
                         # Kick off a shiny new process
                         proc, pipe, pipe_child = kick_off_new_child_process(height_array, i_array, j_array, code_array,
+                                                                            photon_limit=max_photons_per_cell,
                                                                             measure_coverage=measure_coverage,
                                                                             input_x=x_array,
                                                                             input_y=y_array)
@@ -1169,7 +1224,7 @@ def validate_dem_parallel(dem_name,
     if write_summary_stats:
         write_summary_stats_file(results_dataframe,
                                  summary_stats_filename,
-                                 verbose = not quiet)
+                                 verbose=not quiet)
 
     if write_result_tifs:
         if dem_ds is None:
