@@ -21,6 +21,7 @@ import rich.console
 import subprocess
 import argparse
 import pyproj
+import time
 
 ####################################3
 # Include the base /src/ directory of thie project, to add all the other modules.
@@ -171,13 +172,13 @@ def get_dataset_epsg(gdal_dataset, warn_if_not_present=True, horizontal_only=Fal
     # Combine all these ^^ together to return a complete coastline mask (possibly using stacks?)
 
 def create_coastline_mask(input_dem,
-                          return_bounds_step_epsg = False,
-                          mask_out_lakes = True,
-                          include_gmrt = False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
-                          mask_out_buildings = False,
-                          mask_out_urban = False,
-                          mask_out_nhd = True,
-                          use_osm_planet = False,
+                          return_bounds_step_epsg=False,
+                          mask_out_lakes=True,
+                          include_gmrt=False, # include_gmrt will include more minor outlying islands, many of which copernicus leaves out but GMRT includes
+                          mask_out_buildings=False,
+                          mask_out_urban=False,
+                          mask_out_nhd=True,
+                          use_osm_planet=False,
                           output_file=None,
                           run_in_tempdir=False,
                           horizontal_datum_only=True,
@@ -304,9 +305,10 @@ def get_coastline_mask_and_other_dem_data(dem_name,
                                           mask_out_buildings=False,
                                           mask_out_urban=False,
                                           use_osm_planet=True,
-                                          include_gmrt = True,
-                                          target_fname_or_dir = None,
+                                          include_gmrt=False,
+                                          target_fname_or_dir=None,
                                           run_in_tempdir=False,
+                                          return_coastline_array_only=False,
                                           verbose=True):
     """Get data from the DEM and a generated/opened coastline mask.
 
@@ -324,47 +326,63 @@ def get_coastline_mask_and_other_dem_data(dem_name,
     else:
         coastline_mask_file = target_fname_or_dir
 
-    dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
-    dem_array = dem_ds.ReadAsArray()
+    if not return_coastline_array_only:
+        dem_ds = gdal.Open(dem_name, gdal.GA_ReadOnly)
+        dem_array = dem_ds.ReadAsArray()
 
     coastline_ds = None
 
     # Get a coastline mask (here from Copernicus). If the file exists, use it.
     # If not, generate it.
-    if not os.path.exists(coastline_mask_file):
+    # Occasionally this operation fails because of remote errors from the WSL server. If that's the case, try several times.
+    attempt = 1
+    max_attempts = 10
+    while attempt <= max_attempts:
+        if not os.path.exists(coastline_mask_file):
+            if verbose:
+                print("Creating", coastline_mask_file)
+            coastline_mask_file_out = create_coastline_mask(dem_name,
+                                                            mask_out_lakes=mask_out_lakes,
+                                                            mask_out_nhd=mask_out_lakes,
+                                                            mask_out_buildings=mask_out_buildings,
+                                                            mask_out_urban=mask_out_urban,
+                                                            use_osm_planet=use_osm_planet,
+                                                            include_gmrt=include_gmrt,
+                                                            return_bounds_step_epsg=False,
+                                                            output_file=coastline_mask_file,
+                                                            run_in_tempdir=run_in_tempdir,
+                                                            verbose=verbose)
+
+            try:
+                assert coastline_mask_file == coastline_mask_file_out
+            except AssertionError as e:
+                print("coastline_mask_file:", coastline_mask_file, "\ncoastline_mask_file_out:", coastline_mask_file_out)
+                raise e
+
         if verbose:
-            print("Creating", coastline_mask_file)
-        coastline_mask_file_out = create_coastline_mask(dem_name,
-                                                        mask_out_lakes = mask_out_lakes,
-                                                        mask_out_buildings = mask_out_buildings,
-                                                        mask_out_urban=mask_out_urban,
-                                                        use_osm_planet=use_osm_planet,
-                                                        include_gmrt = include_gmrt,
-                                                        return_bounds_step_epsg=False,
-                                                        output_file=coastline_mask_file,
-                                                        run_in_tempdir=run_in_tempdir,
-                                                        verbose=verbose)
+            print("Reading", coastline_mask_file + "...", end="")
+        coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
+        if coastline_ds is None:
+            print("UNSUCCESSFUL. Sleeping 1 minute to try again.")
+            attempt += 1
+            time.sleep(60)
+            continue
+        if verbose:
+            print("Done.")
 
-        try:
-            assert coastline_mask_file == coastline_mask_file_out
-        except AssertionError as e:
-            print("coastline_mask_file:", coastline_mask_file, "\ncoastline_mask_file_out:", coastline_mask_file_out)
-            raise e
+        if not return_coastline_array_only:
+            dem_bbox, dem_step_xy = get_bounding_box_and_step(dem_ds)
+            dem_epsg = get_dataset_epsg(dem_ds)
 
-    if verbose:
-        print("Reading", coastline_mask_file + "...", end="")
-    coastline_ds = gdal.Open(coastline_mask_file, gdal.GA_ReadOnly)
-    if verbose:
-        print("Done.")
+        coastline_mask_array = coastline_ds.GetRasterBand(1).ReadAsArray()
+        coastline_ds = None
 
-    dem_bbox, dem_step_xy = get_bounding_box_and_step(dem_ds)
-    dem_epsg = get_dataset_epsg(dem_ds)
+        if return_coastline_array_only:
+            return coastline_mask_array
+        else:
+            return dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, coastline_mask_file, coastline_mask_array
 
-    coastline_mask_array = coastline_ds.GetRasterBand(1).ReadAsArray()
-    coastline_ds = None
-
-    return dem_ds, dem_array, dem_bbox, dem_epsg, dem_step_xy, coastline_mask_file, coastline_mask_array
-
+    raise FileNotFoundError("Could not generate", os.path.basename(coastline_mask_file_out))
 
 def read_and_parse_args():
     parser = argparse.ArgumentParser(

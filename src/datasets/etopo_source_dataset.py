@@ -281,13 +281,13 @@ class ETOPO_source_dataset:
 
         return ["{0} {1} {2}".format(fname, DTYPE_CODE, weight) for fname in list_of_overlapping_files]
 
-    def convert_vdatum(self, output_folder = None,
+    def convert_vdatum(self, output_folder=None,
                              output_vdatum="egm2008",
-                             update_gpkg = True,
-                             resolution_s = None,
-                             overwrite = False,
-                             numprocs = utils.parallel_funcs.physical_cpu_count(),
-                             verbose = True):
+                             update_gpkg=True,
+                             resolution_s=None,
+                             overwrite=False,
+                             numprocs=utils.parallel_funcs.physical_cpu_count(),
+                             verbose=True):
         """Convert all the tiles in the dataset to a consistent vertical datum.
 
         If they are already set to the listed vdatum (or equivalent), leave them.

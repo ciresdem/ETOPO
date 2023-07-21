@@ -5,6 +5,8 @@
 
 import os
 import importlib
+from typing import List
+
 import shapely.geometry
 import subprocess
 import multiprocessing
@@ -48,10 +50,6 @@ import etopo.map_finished_tiles_to_release_directory
 etopo_config = utils.configfile.config()
 
 class ETOPO_Generator:
-    # Tile naming conventions. ETOPO_2022_v1_N15E175.tif, e.g.
-    fname_template_tif = r"ETOPO_2022_v1_{0:d}s_{1:s}{2:02d}{3:s}{4:03d}.tif"
-    fname_template_netcdf = r"ETOPO_2022_v1_{0:d}s_{1:s}{2:02d}{3:s}{4:03d}.nc"
-
     # The base directory of the project is two levels up. Retrieve the absolute path to it on this machine.
     # This file resides in [project_basedir]/src/etopo
     project_basedir = os.path.abspath(os.path.join(os.path.split(__file__)[0], "..", ".."))
@@ -65,6 +63,12 @@ class ETOPO_Generator:
     etopo_gpkg_1s  = etopo_config.etopo_tile_geopackage_1s
     etopo_gpkg_15s = etopo_config.etopo_tile_geopackage_15s
     etopo_gpkg_60s = etopo_config.etopo_tile_geopackage_60s
+
+    # Tile naming conventions. ETOPO_2022_v1_N15E175.tif, e.g.
+    fname_template_15s_tif = etopo_config.etopo_15_filename_template_tif
+    fname_template_15s_netcdf = etopo_config.etopo_15_filename_template_netcdf
+
+    fname_template_1s_tif = etopo_config.crm_1deg_filename_template
 
     def __init__(self):
         """Read the configuration file, get the info about our grid locations."""
@@ -92,20 +96,29 @@ class ETOPO_Generator:
                 assert os.path.exists(os.path.split(resdir)[0])
                 os.mkdir(resdir)
 
+            # TODO: Refactor this code to natively use the templates for each resolution. Right now it'll default to...
+            # TODO: ...the 15s template and then translate it later.
+            #
+            # tif_template = ETOPO_Generator.fname_template_1s_tif if resolution_s == 1 else ETOPO_Generator.fname_template_15s_tif
+            tif_template = ETOPO_Generator.fname_template_15s_tif
+            netcdf_template = None
+
             # In this case, the "tile_width_deg" is the same as the "resolution_s".
             # The 1-deg tiles are 1s resolution, 15-deg tiles are 15s resolution.
             # Makes each tile a 3600x3600 file.
             etopo.generate_empty_grids.create_empty_tiles(resdir,
-                                                    fname_template_tif=ETOPO_Generator.fname_template_tif,
-                                                    fname_template_netcdf=None, # TODO: Fill this in once the Netcdf outputs are finalized.
-                                                    tile_width_deg=(360 if (res in (30,60)) else res),
-                                                    resolution_s=res,
-                                                    also_write_geopackage=True,
-                                                    ndv = ETOPO_Generator.etopo_config.etopo_ndv,
-                                                    verbose=verbose)
+                                                          fname_template_tif=tif_template,
+                                                          fname_template_netcdf=netcdf_template,
+                                                          tile_width_deg=(360 if (res in (30,60)) else res),
+                                                          resolution_s=res,
+                                                          also_write_geopackage=True,
+                                                          ndv = ETOPO_Generator.etopo_config.etopo_ndv,
+                                                          verbose=verbose)
 
     def replace_config_value(self, all_txt, configfilename, fieldname, replacement_value):
-        """Quick little helper function to replace the text of a value with another value in a configfile text string."""
+        """Quick little helper function to replace the text of a value with another value in a configfile text string.
+
+        Used by write_ranks_and_ids_from_csv."""
         # Find the fieldname with either whitespace, newline, or \A (start of string) in front of it.
         # First find the fieldname
 
@@ -352,7 +365,7 @@ class ETOPO_Generator:
         # Retrieve the dataset_geopackage object for this ETOPO grid.
         if gdf is None:
             etopo_geopkg_obj = dataset_geopackage.ETOPO_Geopackage(resolution)
-            etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s = crm_only_if_1s, bed=bed, verbose=verbose)
+            etopo_gdf = etopo_geopkg_obj.get_gdf(crm_only_if_1s=crm_only_if_1s, bed=bed, verbose=verbose)
         else:
             etopo_gdf = gdf
         config_obj = self.etopo_config
@@ -369,7 +382,7 @@ class ETOPO_Generator:
 
         resolution = int(resolution)
 
-        if resolution in (30,60):
+        if resolution in (30, 60):
             # If the resolution is 30 or 60, just use all the ETOPO 15s tiles to generate the 60s
             # global tile.
             etopo_15s_gpkg = dataset_geopackage.ETOPO_Geopackage(15)
@@ -1108,7 +1121,7 @@ class ETOPO_Generator:
         # ^ Except, use the source_tile_datalist created here for that entry.
 
     @staticmethod
-    def convert_to_netcdf(resolution_s=[1,15,30,60],
+    def convert_to_netcdf(resolution_s=(1, 15, 30, 60),
                           subdir=None,
                           recurse=True,
                           overwrite=False,
@@ -1131,11 +1144,12 @@ class ETOPO_Generator:
                                                  verbose=verbose)
         return
 
+
 def remove_all_inf_files(verbose=True):
     """Remove all .inf files from the results directories created by waffles."""
     base_dir = etopo_config._abspath(etopo_config.etopo_finished_tiles_directory)
     inf_files = utils.traverse_directory.list_files(base_dir,
-                                                    regex_match="\.inf\Z",
+                                                    regex_match=r"\.inf\Z",
                                                     include_base_directory=True)
     for inf in inf_files:
         os.remove(inf)
@@ -1143,6 +1157,7 @@ def remove_all_inf_files(verbose=True):
     if verbose:
         print(len(inf_files), ".inf files deleted.")
     return
+
 
 def get_yx_slices(dest_gt, src_gt, src_xsize, src_ysize):
     """Given the geotransform of a large dataset that fully includes the bounds of a smaller dataset, on the same
@@ -1171,7 +1186,7 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
         srcdir = os.path.join(srcdir, subdir)
 
     input_files = sorted([os.path.join(srcdir, fn) for fn in os.listdir(srcdir) if \
-                   (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") == -1)])
+                   (re.search(r"ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") == -1)])
 
     dlist_fname = os.path.join(etopo_config.etopo_datalist_directory ,"60s", "TEMP_15_sec_tiles.datalist")
     dlist_weights_fname = os.path.splitext(dlist_fname)[0] + "_weights.datalist"
@@ -1180,10 +1195,10 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
         dlist_weights_fname = os.path.splitext(dlist_fname)[0] + "_weights.datalist"
 
         bed_files = [os.path.join(srcdir, fn) for fn in os.listdir(srcdir) \
-                   if (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)] \
-                    + \
-                    [os.path.join(srcdir, "bed", fn) for fn in os.listdir(os.path.join(srcdir, "bed")) \
-                     if (re.search("ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)]
+                     if (re.search(r"ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)] \
+                     + \
+                     [os.path.join(srcdir, "bed", fn) for fn in os.listdir(os.path.join(srcdir, "bed")) \
+                     if (re.search(r"ETOPO_2022_v1_15s([\w\.]+)(\.\d{2})\.tif\Z", fn) is not None) and (fn.find("_bed") >= 0)]
 
         # Make a dict with the NYYWXXX identifiers as the key, and the filename as the value.
         # Then we can copy in the bed tiles, read out the values, and it should work.
@@ -1196,9 +1211,9 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
         print(len(input_files), "source tiles.")
 
     # Now, get the weights so we can include those too.
-    weights_files = [None] * len(input_files)
+    weights_files: list[None] = [None] * len(input_files)
     # Weights could be an identical file with an "_w" on it, and/or the same thing in a "weights" subdir.
-    for i,fname in enumerate(input_files):
+    for i, fname in enumerate(input_files):
         base, ext = os.path.splitext(fname)
         dname, base = os.path.split(base)
         weights_name_1 = os.path.join(dname, base + "_w" + ext)
@@ -1297,7 +1312,6 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
         if verbose:
             print(dest_filename, "" if os.path.exists(dest_filename) else "NOT", "written.")
 
-
     # empty_datalist_fname = os.path.splitext(dlist_fname)[0] + "_empty.datalist"
     # empty_datalist_weights_fname = os.path.splitext(dlist_weights_fname)[0] + "_empty.datalist"
 
@@ -1316,7 +1330,7 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
     #     if verbose:
     #         print(" ".join(waffles_args))
 
-        # subprocess.run(waffles_args, capture_output=not verbose)
+    #     subprocess.run(waffles_args, capture_output=not verbose)
 
     if not os.path.exists(dest_tile_fname) and verbose:
         print("ERROR:", dest_tile_name, "NOT created.")
@@ -1325,13 +1339,112 @@ def create_15s_global_tile(bed = False, subdir=None, verbose=True):
 
     return
 
+
+def translate_1s_etopo_tilenames_to_crm_template(subdir=None,
+                                                 verbose=True):
+    """Translate ETOPO_1s_v1_NXXWXXX.tif filenames into the crm ncei1_nYYxYY_wXXXxXX_YYYY_vZ.tif template.
+
+    This is a temporary function. I need to refactor the code to get it to do this natively when creating the files,
+    but right now it's easier to create them as-is and then change the names after-the-fact. So that's what I'm doing here."""
+    etopo_tile_regex = r"ETOPO_2022_v1_1s_[NS](\d{2})[EW](\d{3})(_\d{4}\.\d{2}\.\d{2})?(_sid)?.tif\Z"
+    crm_outfile_template=etopo_config.crm_1deg_filename_template
+
+    tile_directory = os.path.join(etopo_config._abspath(etopo_config.etopo_finished_tiles_directory),
+                                  "1s")
+    if subdir is not None:
+        tile_directory = os.path.join(tile_directory, subdir)
+
+    tile_list = utils.traverse_directory.list_files(tile_directory, etopo_tile_regex)
+
+    year = datetime.datetime.now().year
+    version_num = 1 # TODO: Add logic to adjust this as new versions come out.
+
+    if verbose:
+        print("== Translating", len(tile_list), "files to CRM naming structure. ==")
+
+    for i, tname in enumerate(tile_list):
+        # Get the lat-lon of the SW corner from the TILEID.
+        etopo_tile_basename = os.path.basename(tname)
+        tile_id = re.search(r"(?<=ETOPO_2022_v1_1s_)[NS]\d{2}[EW]\d{3}", etopo_tile_basename).group()
+        lat_sw = (1 if tile_id[0] == "N" else -1) * int(tile_id[1:3])
+        lon_sw = (1 if tile_id[3] == "E" else -1) * int(tile_id[4:7])
+        lat_nw = lat_sw + 1
+        lon_nw = lon_sw
+
+        assert -90 < lat_nw <= 90
+        assert -180 <= lon_nw < 180
+
+        tbasename_out = crm_outfile_template.format("n" if lat_nw >= 0 else "s",
+                                                    abs(lat_nw),
+                                                    "e" if lon_nw >= 0 else "w",
+                                                    abs(lon_nw),
+                                                    year,
+                                                    version_num)
+
+        # If the filename includes a date, include it in the output.
+        date_regex = r"_\d{4}\.\d{2}\.\d{2}"
+        re_result = re.search(date_regex, etopo_tile_basename)
+        if re_result is not None:
+            date_str = re_result.group()
+            base, ext = os.path.splitext(tbasename_out)
+            tbasename_out = base + date_str + ext
+
+        if etopo_tile_basename.find("_sid.tif") > -1:
+            base, ext = os.path.splitext(tbasename_out)
+            tbasename_out = base + "_sid" + ext
+
+        tname_out = os.path.join(os.path.dirname(tname), tbasename_out)
+
+        if verbose:
+            print(etopo_tile_basename, "->", tbasename_out)
+        shutil.move(tname, tname_out)
+        # print("  ", tname_out)
+
+
+def remove_extraneous_files_from_outputs(resolution_s=15,
+                                         subdir=None,
+                                         file_regex=r"((_[uw]\.tif)|(\.aux\.xml)|(\.inf))\Z",
+                                         also_remove_empty_dirs=True,
+                                         verbose=True):
+    """Right now the scripts output the tiles and SID tags, and also some extraneous _u and also keeps the _w weights files.
+    If we wish to get rid of those, call this function to remove them.
+
+    Also, by default, get rid of all .aux.xml and .inf files.
+
+    It will also remove empty sub-directories if specified, but only in the base directory. Does not (yet) recurse.
+    (I could add recursion later but don't need it right now so I'm not bothering for now.)"""
+    # TODO: FINISH
+    tile_directory = os.path.join(etopo_config._abspath(etopo_config.etopo_finished_tiles_directory),
+                                  "{0:d}s".format(resolution_s))
+    if subdir:
+        tile_directory = os.path.join(tile_directory, subdir)
+
+    # First, find all files matching the patterns.
+    files_to_remove = utils.traverse_directory.list_files(tile_directory, regex_match=file_regex)
+    if len(files_to_remove) > 0:
+        if verbose:
+            print("Removing", len(files_to_remove), "extraneous files.")
+        for fname in files_to_remove:
+            # print(fname)
+            os.remove(fname)
+
+    if also_remove_empty_dirs:
+        fnames_in_dir = [os.path.join(tile_directory, fn) for fn in os.listdir(tile_directory)]
+        for fn in fnames_in_dir:
+            if os.path.isdir(fn) and (len(os.listdir(fn)) == 0):
+                if verbose:
+                    print("Removing empty dir '{0}'.".format(os.path.basename(fn)))
+                # print(fn)
+                os.rmdir(fn)
+
+
 def weights_to_sids(resolution_s,
-                    subdir = None,
+                    subdir=None,
                     bed=False,
-                    relative_dest_dir = "sid",
-                    tile_id = None,
-                    src_regex = "_w\.tif\Z",
-                    overwrite = False,
+                    relative_dest_dir="sid",
+                    tile_id=None,
+                    src_regex=r"_w\.tif\Z",
+                    overwrite=False,
                     verbose=True):
     """Get all the weights files from a, and convert them to GDALByte integer arrays, and save as "_sid.tif" rather than _w.tif"
 
@@ -1398,7 +1511,7 @@ def weights_to_sids(resolution_s,
 
 def define_and_parse_args():
     parser = argparse.ArgumentParser(description="Generate the tiles. All proprocessing must be done on source datasets first, including cleansing and/or vertical datum transformations.")
-    parser.add_argument("-resolution", "-r", default=(15,1,60,30), nargs="*", help="Grid resolution. Can add up to 4, choices of: 1 15 30 60. Will be exectued in the order given. Default: 15 1 60 30.")
+    parser.add_argument("-resolution", "-r", default=(15, 1, 60, 30), nargs="*", help="Grid resolution. Can add up to 4, choices of: 1 15 30 60. Will be exectued in the order given. Default: 15 1 60 30.")
     parser.add_argument("-numprocs", "-np", type=int, default=utils.parallel_funcs.physical_cpu_count(), help="Number of processes to run at once. Default: max number of physical cores available to the machine.")
     parser.add_argument("-subdir", type=str, default="", help="Put all new tiles into a subdir. If the string 'today' is given, a subdir will be selected with the YYYY.MM.DD of today's date.")
     parser.add_argument("-tempdir_prefix", type=str, default="temp" + str(os.getpid()) + "_", help="A prefix to use for temporary directories. Specify if running more than one process to keep them from interfering with each other using the same set of temp directories. Default 'temp'.")
@@ -1421,6 +1534,10 @@ def define_and_parse_args():
     return parser.parse_args()
 
 if __name__ == "__main__":
+
+    # translate_1s_etopo_tilenames_to_crm_template(subdir="2023.07.09")
+    # remove_extraneous_files_from_outputs(resolution_s=1, subdir="2023.07.09")
+    # foobar
 
     args = define_and_parse_args()
 
@@ -1472,7 +1589,6 @@ if __name__ == "__main__":
                                  overwrite=args.overwrite,
                                  verbose=not args.quiet)
 
-
     elif args.all_tiles:
         EG = ETOPO_Generator()
         for res in args.resolution:
@@ -1505,14 +1621,14 @@ if __name__ == "__main__":
                                  overwrite=args.overwrite,
                                  verbose=not args.quiet)
 
-        # If we're only producing the 1s versions, don't re-generate the output directory. Otherwise if we're generating tiles
-        # at 15, 30, and/or 60s resolution, re-create the output directory with those tiles.
+        # If we're only producing the 1s versions, don't re-generate the output directory. Otherwise, if we're
+        # generating tiles at 15, 30, and/or 60s resolution, re-create the output directory with those tiles.
         if not ((len(args.resolution) == 1) and (args.resolution[0] == 1)):
-            etopo.map_finished_tiles_to_release_directory.generate_output_directory_and_files(src_subdir = args.subdir,
-                                                                                              delete_old = True,
-                                                                                              skip_pdfs = True,
-                                                                                              print_only = False,
-                                                                                              summarize = not args.quiet)
+            etopo.map_finished_tiles_to_release_directory.generate_output_directory_and_files(src_subdir=args.subdir,
+                                                                                              delete_old=True,
+                                                                                              skip_pdfs=True,
+                                                                                              print_only=False,
+                                                                                              summarize=not args.quiet)
 
     else:
         EG = ETOPO_Generator()
@@ -1525,8 +1641,8 @@ if __name__ == "__main__":
                                                  crm_only_if_1s=True,
                                                  subdir=args.subdir,
                                                  tile_id=args.tile_id,
-                                                 bed = args.bed,
-                                                 verbose = not args.quiet)
+                                                 bed=args.bed,
+                                                 verbose=not args.quiet)
             else:
                 EG.generate_all_etopo_tiles(resolution=res,
                                             add_datestamp_to_files = args.datestamp,
@@ -1536,8 +1652,8 @@ if __name__ == "__main__":
                                             subdir=args.subdir,
                                             tile_id=args.tile_id,
                                             numprocs=args.numprocs,
-                                            tempdir_prefix = args.tempdir_prefix,
-                                            skip_datalists = args.skip_datalists,
+                                            tempdir_prefix=args.tempdir_prefix,
+                                            skip_datalists=args.skip_datalists,
                                             verbose=not args.quiet)
 
                 weights_to_sids(res,
@@ -1546,6 +1662,9 @@ if __name__ == "__main__":
                                 overwrite=args.overwrite,
                                 verbose=not args.quiet)
 
+                if res == 1:
+                    translate_1s_etopo_tilenames_to_crm_template(subdir=args.subdir, verbose=not args.quiet)
+
                 if args.to_netcdf:
                     EG.convert_to_netcdf(res,
                                          subdir=args.subdir,
@@ -1553,5 +1672,6 @@ if __name__ == "__main__":
                                          overwrite=args.overwrite,
                                          verbose=not args.quiet)
 
-        remove_all_inf_files(verbose = not args.quiet)
+                remove_extraneous_files_from_outputs(resolution_s=res, subdir=args.subdir, verbose=not args.quiet)
+        # remove_all_inf_files(verbose = not args.quiet)
 
