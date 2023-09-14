@@ -23,4 +23,4 @@ class source_dataset_SLR(etopo_source_dataset.ETOPO_source_dataset):
         super(source_dataset_SLR, self).__init__("SLR", configfile)
         
 if __name__ == "__main__":
-    pass
+    gdf = source_dataset_SLR().get_geodataframe()
