@@ -1,0 +1,31 @@
+# Use the bash md5sum command to check a collection of files. Useful for data ingest, to make sure no files got corrupted during the upload/ingest process.
+
+$ md5sum *.nc > etopo_15s_surface_sid.sums
+$ head etopo_15s_surface_sid.sums
+111566518a0c170c2cbf81f00adf6bba  ETOPO_2022_v1_15s_N00E000_surface_sid.nc
+7889a37f58fb69f7dd476018206eb582  ETOPO_2022_v1_15s_N00E015_surface_sid.nc
+4119d3165b4dc4e2e5524edef080d78c  ETOPO_2022_v1_15s_N00E030_surface_sid.nc
+3dc97605e4ba7279b7491d0c4f0b404c  ETOPO_2022_v1_15s_N00E045_surface_sid.nc
+af12b94ed424c4fb3399133a430039ce  ETOPO_2022_v1_15s_N00E060_surface_sid.nc
+25fed0726dbef04ea11fcc74c2375f9c  ETOPO_2022_v1_15s_N00E075_surface_sid.nc
+131c02261a3df81e319b5d8fb98fff00  ETOPO_2022_v1_15s_N00E090_surface_sid.nc
+7fdae492fb97300268b76ae2ad8e5758  ETOPO_2022_v1_15s_N00E105_surface_sid.nc
+f93445205c3cdf67fef341c84b04d86f  ETOPO_2022_v1_15s_N00E120_surface_sid.nc
+4145b8dd117aaf70f4ff9ef6b305c7e1  ETOPO_2022_v1_15s_N00E135_surface_sid.nc
+
+Then after a transfer you can check that the files haven't changed by doing :
+
+$ md5sum --check etopo_15s_surface_sid.sums
+ETOPO_2022_v1_15s_N00E000_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E015_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E030_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E045_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E060_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E075_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E090_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E105_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E120_surface_sid.nc: OK
+ETOPO_2022_v1_15s_N00E135_surface_sid.nc: OK
+...
+
+The above would report 'FAILED' instead of 'OK' if a file's md5sum differed...
