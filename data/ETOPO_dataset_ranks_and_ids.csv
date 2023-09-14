@@ -6,7 +6,7 @@ BedMachine,BedMachine,0,0,WGS84,4979,False
 BedMachine_Bed,BedMachine Bed,0,0,egm2008,3855,False
 BedMachine_Surface,BedMachine Surface,0,0,egm2008,3855,False
 BlueTopo,BlueTopo,7,7,EGM2008,3855,True
-CUDEM,CUDEM,12,12,EGM2008,3855,True
+CUDEM,CUDEM,12,12,NAVD88,5703,True
 CUDEM_CONUS,CUDEM Continental US,0,0,NAVD88,5703,False
 CUDEM_derived_bathy,CUDEM-derived bathymetry,2,2,EGM2008,3855,True
 CoastalDEM,CoastalDEM,0,0,,0,False
@@ -24,6 +24,7 @@ NASADEM,NASA DEM,0,0,EGM96,5773,False
 NOAA_estuarine,NOAA Regional archived (non-tiled) DEMs,3,3,egm2008,3855,True
 NOAA_regional,NOAA Regional archived (non-tiled) DEMs,4,4,egm2008,3855,True
 REMA,REMA,0,0,WGS84,4979,False
+SLR,NOAA SLR,13,13,EGM2008,3855,True
 ShallowBathyEverywhere,Shallow Bathy Everywhere,6,6,egm2008,3855,True
 TanDEMX,TanDEMX,0,0,WGS_84(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150)(G1150),7660,False
 USGS_TNM,"USGS National Map, 3-Dep tiles",10,10,EGM2008,3855,True

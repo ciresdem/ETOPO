@@ -165,16 +165,20 @@ class source_dataset_CUDEM(etopo_source_dataset.ETOPO_source_dataset):
             print("{0} of {1} tiles found containinng NDVs.".format(ndv_tiles_count, len(gdf)))
 
     def check_if_all_tiles_are_converted(self):
-        """Do a quick traverse through the directory to make sure each CUDEM tile has a _egm2008_epsg4326.tif equivalent."""
+        """Do a quick traverse through the directory to make sure each CUDEM tile has a _egm2008.tif equivalent."""
         basedir = self.config.source_datafiles_directory
-        fnames_list = utils.traverse_directory.list_files(basedir, regex_match="ncei([\w\-\.]+)_v\d\.tif\Z", include_base_directory=True)
+        fnames_list = utils.traverse_directory.list_files(basedir,
+                                                          regex_match=r"ncei([\w\-\.]+)v\d(_bathy)*\.tif\Z",
+                                                          include_base_directory=True)
+
+        # print(fnames_list)
 
         for fname in fnames_list:
-            fname_converted_1 = os.path.splitext(fname_converted)[0] + "_egm2008.tif"
+            fname_converted_1 = os.path.splitext(fname)[0] + "_egm2008.tif"
             fname_converted_2 = os.path.join(os.path.dirname(fname_converted_1), "converted", os.path.basename(fname_converted_1))
 
             if not (os.path.exists(fname_converted_1) or os.path.exists(fname_converted_2)):
-                print(fname, "does NOT have an accompanying _egm2008_epsg4326 file.")
+                print(fname, "does NOT have an accompanying _egm2008 file.")
 
         print("Done.")
         return
@@ -324,7 +328,8 @@ def get_cudem_original_vdatum_from_file_path(file_path):
 if __name__ == "__main__":
     # gdf = source_dataset_CUDEM().get_geodataframe()
     cudem = source_dataset_CUDEM()
-    cudem.convert_vdatum()
+    cudem.get_geodataframe()
+    # cudem.convert_vdatum()
 
     # cudem.remove_river_from_N39W077(overwrite=False)
     # cudem.measure_navd88_vs_egm2008_elevs()
