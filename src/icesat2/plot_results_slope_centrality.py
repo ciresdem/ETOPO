@@ -67,7 +67,7 @@ def get_slopes(df, files_dirname):
 
     return df
 
-def plot_errors_against_slope_centrality(results_h5_or_list,
+def plot_errors_against_slope_centrality(results_h5_or_list_or_df,
                         output_figure_name,
                         empty_val = my_config.etopo_ndv,
                         coverage_cutoff_pct = 40,
@@ -75,14 +75,16 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
                         dpi=600,
                         exclude_ice_sheets = False,
                         verbose=True):
-    total_results_h5 = os.path.join(os.path.dirname(output_figure_name), "total_results.h5")
-    if os.path.exists(total_results_h5):
-        data = pandas.read_hdf(total_results_h5)
-        if verbose:
-            print(os.path.basename(total_results_h5), "read.")
-    else:
 
-        data = icesat2.plot_validation_results.get_data_from_h5_or_list(results_h5_or_list,
+    if isinstance(results_h5_or_list_or_df, pandas.DataFrame):
+        data = results_h5_or_list_or_df
+    elif type(results_h5_or_list_or_df) is str and os.path.exists(results_h5_or_list_or_df):
+        data = pandas.read_hdf(results_h5_or_list_or_df)
+        if verbose:
+            print(os.path.basename(results_h5_or_list_or_df), "read.")
+    else:
+        assert icesat2.plot_validation_results.is_iterable(results_h5_or_list_or_df)
+        data = icesat2.plot_validation_results.get_data_from_h5_or_list(results_h5_or_list_or_df,
                                                                         empty_val = empty_val,
                                                                         include_filenames=True,
                                                                         verbose=verbose)
@@ -100,13 +102,14 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
                           ((lat >= 68) & (lon > -75) & (lon < -12)))]
 
 
-        data.to_hdf(total_results_h5, "results_all")
+        # Note: this is broken right now but we don't need it. Fix later if needed.
+        data.to_hdf(total_results_h5, "icesat2")
 
         if verbose:
             print(os.path.basename(total_results_h5), "written.")
 
-    print(data.columns)
-    print(data)
+    # print(data.columns)
+    # print(data)
 
     meandiff        = data['diff_mean']
     # numphotons      = data['numphotons']
@@ -115,12 +118,14 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
     # dem_elev        = data["dem_elev"]
     # mean_elev       = data["mean"]
     # dist_from_center= data["min_dist_from_center"]
-    coverage_frac   = data["coverage_frac"]
+    coverage_frac   = numpy.round(data["coverage_frac"], decimals=3)
     # slope           = data["slope"]
 
 
-    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=dpi, figsize=(8, 5))
-    low, hi = numpy.percentile(meandiff, [2.5,97.5])
+    # fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2,2, dpi=dpi, figsize=(8, 5))
+    # Here, same as above, but omit plot 2. Keep the axN names in place to not have to re-change all the labels below.
+    fig, (ax1, ax3, ax4) = plt.subplots(1,3, dpi=dpi, figsize=(10, 2.75))
+    low, hi = numpy.percentile(meandiff, [2.5, 97.5])
     ax1.hist(meandiff, bins=100, range=(low, hi))
     ax1.set_ylabel("% of data cells")
     ax1.set_xlabel("Elevation difference (m)")
@@ -145,25 +150,25 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
     txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
 
     coverage_pct = coverage_frac * 100
-    alpha = 0.5 * max(0.0025, min(4, (math.log10(100)/math.log10(len(meandiff)))))
-    ax2.scatter(coverage_pct, meandiff, marker='o', lw=0, s=0.5, alpha=alpha)
-    ax2.set_xlabel("Cell coverage (%)")
-    ax2.set_ylabel("Error (m)")
-
-    # There definitely seems to be a relationship between errors and % coverage of each pixel. Plot it over this.
+    # alpha = 0.5 * max(0.0025, min(4, (math.log10(100) / math.log10(len(meandiff)))))
+    # ax2.scatter(coverage_pct, meandiff, marker='o', lw=0, s=0.5, alpha=alpha)
+    # ax2.set_xlabel("Cell coverage (%)")
+    # ax2.set_ylabel("Error (m)")
+    #
+    # # There definitely seems to be a relationship between errors and % coverage of each pixel. Plot it over this.
     unique_coverages = numpy.unique(coverage_pct)
-    coverage_lo = numpy.zeros((len(unique_coverages),))
-    coverage_hi = numpy.zeros((len(unique_coverages),))
+    # coverage_lo = numpy.zeros((len(unique_coverages),))
+    # coverage_hi = numpy.zeros((len(unique_coverages),))
     coverage_rmse = numpy.zeros(len(unique_coverages,))
     coverage_counts = numpy.zeros(len(unique_coverages,))
-    for i,c in enumerate(unique_coverages):
+    for i, c in enumerate(unique_coverages):
         cmask = (coverage_pct == c)
         diff_subset = meandiff[cmask]
-        coverage_lo[i], coverage_hi[i] = numpy.percentile(diff_subset, (2,98))
+        # coverage_lo[i], coverage_hi[i] = numpy.percentile(diff_subset, (2,98))
         coverage_rmse[i] = numpy.sqrt(numpy.mean(diff_subset ** 2))
         coverage_counts[i] = diff_subset.size
-
-    ax2.fill_between(unique_coverages, coverage_lo, coverage_hi, alpha=0.3, color="maroon")
+    #
+    # ax2.fill_between(unique_coverages, coverage_lo, coverage_hi, alpha=0.3, color="maroon")
 
     # Figure 3, plot against slope
     # ax3.scatter(slope, meandiff, marker="o", lw=0, s=0.5, alpha=alpha)
@@ -197,14 +202,14 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
     center = numpy.mean(meandiff_good)
     std = numpy.std(meandiff_good)
     ax4.axvline(x=center, color="darkred", linewidth=0.75)
-    ax4.axvline(x=center+std, color="darkred", linestyle="--", linewidth=0.5)
-    ax4.axvline(x=center-std, color="darkred", linestyle="--", linewidth=0.5)
+    ax4.axvline(x=center + std, color="darkred", linestyle="--", linewidth=0.5)
+    ax4.axvline(x=center - std, color="darkred", linestyle="--", linewidth=0.5)
 
     # Detect whether the mean line is closer to the left or the right (we'll put the text box on the other side)
     text_left = not ((center - low) < (hi - center))
 
     txt = ax4.text(0.03, 0.95,
-                   "Only data with\n$\geq${0} % coverage".format(coverage_cutoff_pct),
+                   "Only data with\n" + r"$\geq${0} % coverage".format(coverage_cutoff_pct),
                    ha="left", va="top",
                    fontsize="small",
                    transform=ax4.transAxes)
@@ -212,13 +217,12 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
 
     txt = ax4.text(0.03 if text_left else 0.97,
                    0.70,
-                   "{0:.2f} $\pm$ {1:.2f} m".format(center, std),
+                   r"{0:.2f} $\pm$ {1:.2f} m".format(center, std),
                    ha="left" if text_left else "right",
                    va="top",
                    fontsize="small",
                    transform=ax4.transAxes)
     txt.set_bbox(dict(facecolor="white", alpha=0.7, edgecolor="white", boxstyle="square,pad=0"))
-
 
     fig.tight_layout()
 
@@ -233,12 +237,21 @@ def plot_errors_against_slope_centrality(results_h5_or_list,
     print(len(meandiff_good), "subset cells.")
 
 if __name__ == "__main__":
-    dirname = "/home/mmacferrin/Research/DATA/ETOPO/data/validation_results/15s/2022.09.29"
-    h5_list = sorted([os.path.join(dirname, fn) for fn in os.listdir(dirname) if re.search("_results.h5", fn) is not None])
-    outdir = os.path.join(dirname, "plots")
+    # dirname = "/home/mmacferrin/Research/DATA/ETOPO/data/validation_results/15s/2022.09.29"
+    # h5_list = sorted([os.path.join(dirname, fn) for fn in os.listdir(dirname) if re.search("_results.h5", fn) is not None])
+    # outdir = os.path.join(dirname, "plots")
+    validation_dir = os.path.join(my_config.etopo_validation_results_directory.format(15), "2022.09.29")
+    total_h5 = os.path.join(validation_dir, "plots", "total_results.h5")
+    outdir = os.path.dirname(total_h5)
+
+    # If we're not creating the total_results.h5 file above, just read it.
+    print("Reading", os.path.basename(total_h5), "...", end=" ", flush=True)
+    total_df = pandas.read_hdf(total_h5)
+    print("Done.")
 
     # print("reading", h5_list[0])
-    plot_errors_against_slope_centrality(h5_list,
-                                         os.path.join(outdir, "coverage_results.png"),
-                                         coverage_cutoff_pct=47,
-                                         exclude_ice_sheets=True) #, fig_title=os.path.basename(h5_list[0]))
+    for pct in (40,41,42,43,44,45,46,47):
+        plot_errors_against_slope_centrality(total_df,
+                                             os.path.join(outdir, f"coverage_results_gte{pct}_plot.png"),
+                                             coverage_cutoff_pct=pct,
+                                             exclude_ice_sheets=False) #, fig_title=os.path.basename(h5_list[0]))

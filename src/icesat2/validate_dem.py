@@ -851,7 +851,7 @@ def validate_dem_parallel(dem_name,
 
             # If we found some bad photons in bad granules (bad granules!), mask them out.
             if (ph_bad_granule_mask is not None) and (numpy.count_nonzero(ph_bad_granule_mask) > 0):
-                n_ph_bad_granules_mask = ~ph_bad_granulse_mask
+                n_ph_bad_granules_mask = ~ph_bad_granule_mask
                 photon_df = photon_df[n_ph_bad_granules_mask].copy()
                 ph_xcoords = ph_xcoords[n_ph_bad_granules_mask]
                 ph_ycoords = ph_ycoords[n_ph_bad_granules_mask]

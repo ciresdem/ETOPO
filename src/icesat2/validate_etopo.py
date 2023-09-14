@@ -11,6 +11,7 @@ import shutil
 import shapely.geometry
 import pandas
 import geopandas
+import datetime
 
 #####################################################
 # Code snippet to import the base directory into
@@ -68,12 +69,16 @@ def validate_etopo(resolution_s=15,
                                    15: 15, -30: 15,
                                    30: 15, -45: 15,
                                    45: 12, -60: 12,
-                                   60: 8,  -75: 8,
-                                   75: 5,  -90: 5}
+                                   60: 7,  -75: 7,
+                                   75: 5,  -90: 6}
 
     # Shuffle the tiles if we're randomizing this.
     if randomize:
         random.shuffle(etopo_fnames)
+    else:
+        # If we're not randomizing, then reorder them from the equator outward.
+        etopo_fnames.sort(key=lambda fn: int(re.search(r"(?<=[NS])\d{2}(?=[EW]\d{3})", fn).group()) - \
+                                         (14 if (re.search(r"(?<=_)[NS](?=\d{2}[EW]\d{3})", fn).group() == "S") else 0))
 
     if subdir:
         src_dirname = os.path.join(os.path.dirname(etopo_fnames[0].replace("/empty_tiles/", "/finished_tiles/")), subdir)
@@ -137,7 +142,11 @@ def validate_etopo(resolution_s=15,
             else:
                 k_subset = [k for k in k_lists if not is_finished(subset_tilenames[k],
                                                                   resolution_s=resolution_s,
-                                                                  subdir=subdir)][:10]
+                                                                  subdir=subdir)]
+                # If we're doing random subsets, just do 10 at a time then move on to the next.
+                # But if we're not randomizing, then do them all in that tile.
+                if randomize:
+                    k_subset = k_subset[:10]
             subset_tilenames = [subset_tilenames[k] for k in k_subset]
             xoffs = [xoffs[k] for k in k_subset]
             yoffs = [yoffs[k] for k in k_subset]
@@ -368,9 +377,10 @@ def print_progress(resolution_s=15,
                 numtiles_finished_results += 1
             numtiles_total += 1
 
-    print("{0:,} ({1:0.2f}%) of {2:,} completed:\n".format(numtiles_finished_empty + numtiles_finished_results,
-                                                           (numtiles_finished_empty + numtiles_finished_results) * 100 / numtiles_total,
-                                                           numtiles_total),
+    print("{0:,} ({1:0.2f}%) of {2:,} completed at {3}:\n".format(numtiles_finished_empty + numtiles_finished_results,
+                                        (numtiles_finished_empty + numtiles_finished_results) * 100 / numtiles_total,
+                                        numtiles_total,
+                                        datetime.datetime.now()),
           "    {0:,} ({1:0.2f}%) empty,\n".format(numtiles_finished_empty,
                                                   numtiles_finished_empty * 100 / numtiles_total),
           "    {0:,} ({1:0.2f}%) results,\n".format(numtiles_finished_results,

@@ -42,7 +42,9 @@ class ICESat2_Database:
     from ICESat-2 granules that overlap each tile."""
 
     def __init__(self, tile_resolution_deg = 0.25):
-        """tile_resolutin_deg should be some even fraction of 1. I.e. 1, or 0.5, or 0.25, or 0.1, etc."""
+        """tile_resolutin_deg should be some even fraction of 1. I.e. 1, or 0.5, or 0.25, or 0.1, etc.
+
+        The current geodatabase consists of 0.25 degree tiles, 417,760 of them covering the planet's land surface."""
         self.etopo_config = utils.configfile.config()
         self.gpkg_fname = self.etopo_config.icesat2_photon_geopackage
         self.tiles_directory = self.etopo_config.icesat2_photon_tiles_directory
