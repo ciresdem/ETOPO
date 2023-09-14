@@ -6,6 +6,7 @@ import re
 import subprocess
 import argparse
 import time
+from osgeo import gdal
 
 #####################################################
 # Code snippet to import the base directory into
@@ -17,6 +18,7 @@ import_parent_dir.import_src_dir_via_pythonpath()
 
 import utils.traverse_directory as traverse_directory
 import utils.progress_bar as progress_bar
+import etopo.coastline_mask
 
 def check_for_gmt():
     """Check to make sure the command-line utility 'gmt' (general mapping tools) is installed on this machine."""
@@ -39,6 +41,9 @@ def gtiff_to_netcdf(dir_or_file_name: str,
                     gtif_regex: str = r'\.tif\Z',
                     omit_regex: str = r'\Z\A',
                     dest_subdir: str = '',
+                    sids: bool = True,
+                    vdatum_name: str = "EGM2008",
+                    vdatum_epsg: int = 3855,
                     overwrite: bool = False,
                     verbose: bool = True) -> int:
     """Take all the geotiff files in a directory, convert them to netcdf. Return the number of files converted.
@@ -88,18 +93,53 @@ def gtiff_to_netcdf(dir_or_file_name: str,
                 num_written += 1
                 continue
 
-        if driver_name=="gmt":
+        if driver_name == "gmt":
             gmt_cmd = ["gmt", "grdconvert",
                        fname, "-G" + outfile_name]
+            if verbose:
+                print(" ".join(gmt_cmd))
+
             subprocess.run(gmt_cmd, capture_output=True)
 
-        elif driver_name=="gdal":
-            outfile_base, outfile_ext = os.path.splitext(outfile_name)
+            if sids:
+                ncatted_sn_cmd = ["ncatted",
+                                  "-a", "long_name,sid,o,c,sid",
+                                  "-a", "standard_name,sid,a,c,source_id",
+                                  "-h",
+                                  outfile_basename]
+            else:
+                ncatted_sn_cmd = ["ncatted",
+                                  "-a", "units,z,a,c,meters",
+                                  "-a", "positive,z,a,c,up",
+                                  "-a", "standard_name,z,a,c,height",
+                                  "-a", "vert_crs_name,z,a,c," + vdatum_name,
+                                  "-a", "vert_crs_epsg,z,a,c,EPSG:" + str(vdatum_epsg),
+                                  "-h", # -h makes sure not to append the history, so we don't see this whole command in there.
+                                  outfile_basename]
+
+            if verbose:
+                print(" ".join(ncatted_sn_cmd))
+
+            subprocess.run(ncatted_sn_cmd, cwd=outfile_dir, capture_output=not verbose)
+
+        elif driver_name == "gdal":
+            # outfile_base, outfile_ext = os.path.splitext(outfile_name)
+
+            ds = gdal.Open(fname, gdal.GA_ReadOnly)
+            bbox, step = etopo.coastline_mask.get_bounding_box_and_step(ds)
+            outfile_basename = os.path.basename(outfile_name)
+
+            data_min, data_max, data_mean, data_std = ds.GetRasterBand(1).GetStatistics(0, 1)
 
             gdal_cmd = ["gdal_translate",
                         "-of", "NetCDF",
+                        "-co", "COMPRESS=DEFLATE",
+                        "-co", "ZLEVEL=5",
                         "-a_srs", "EPSG:4326", # NetCDFs don't support compound vertical+horizontal translations, so just use the horizontal.
+                        "-a_ullr", str(bbox[0]), str(bbox[3]), str(bbox[2]), str(bbox[1]),
                         fname, outfile_name]
+            if verbose:
+                print(" ".join(gdal_cmd))
             subprocess.run(gdal_cmd, capture_output=True)
 
             time.sleep(0.01)
@@ -111,7 +151,7 @@ def gtiff_to_netcdf(dir_or_file_name: str,
             # Then, we execute some nc commands to edit the file header.
             # 1. Rename the band to "z" rather than "Band1".
             ncrename_cmd = ["ncrename", outfile_basename,
-                            "-v", "Band1,z"]
+                            "-v", ("Band1,sid" if sids else "Band1,z")]
             subprocess.run(ncrename_cmd, cwd=outfile_dir) #, capture_output=True)
 
             # # 2. Make the units 'meters'.
@@ -135,16 +175,31 @@ def gtiff_to_netcdf(dir_or_file_name: str,
             # subprocess.run(ncatted_sn_cmd, cwd=outfile_dir) #, capture_output=True)
 
             # 6. Set a variable for the vertical reference name, the vertical reference epsg, and then copy (without the command history) over to the non-temp output file.
-            ncatted_sn_cmd = ["ncatted",
-                              "-a", "units,z,a,c,meters",
-                              "-a", "positive,z,a,c,up",
-                              "-a", "long_name,z,o,c,z",
-                              "-a", "standard_name,z,a,c,height",
-                              "-a", "vert_crs_name,z,a,c,EGM2008",
-                              "-a", "vert_crs_epsg,z,a,c,EPSG:3855",
-                              "-a", "history,global,d,,",
-                              "-h", # -h makes sure not to append the history, so we don't see this whole command in there.
-                              outfile_basename]
+            if sids:
+                ncatted_sn_cmd = ["ncatted",
+                                  "-a", "long_name,sid,o,c,sid",
+                                  "-a", "standard_name,sid,a,c,source_id",
+                                  "-a", "actual_range,lat,c,d,{0},{1}".format(bbox[1], bbox[3]),
+                                  "-a", "actual_range,lon,c,d,{0},{1}".format(bbox[0], bbox[2]),
+                                  "-h",
+                                  outfile_basename]
+            else:
+                ncatted_sn_cmd = ["ncatted",
+                                  "-a", "units,z,a,c,meters",
+                                  "-a", "positive,z,a,c,up",
+                                  "-a", "long_name,z,o,c,z",
+                                  "-a", "standard_name,z,a,c,height",
+                                  "-a", "vert_crs_name,z,a,c," + vdatum_name,
+                                  "-a", "vert_crs_epsg,z,a,c,EPSG:" + str(vdatum_epsg),
+                                  "-a", "actual_range,lat,c,d,{0},{1}".format(bbox[1], bbox[3]),
+                                  "-a", "actual_range,lon,c,d,{0},{1}".format(bbox[0], bbox[2]),
+                                  "-a", "actual_range,z,c,d,{0},{1}".format(data_min, data_max),
+                                  "-a", "history,global,d,,",
+                                  "-h", # -h makes sure not to append the history, so we don't see this whole command in there.
+                                  outfile_basename]
+            if verbose:
+                print(" ".join(ncatted_sn_cmd))
+
             subprocess.run(ncatted_sn_cmd, cwd=outfile_dir) #, capture_output=True)
 
             # Check to make sure the output file exists.
@@ -179,7 +234,10 @@ def define_and_parse_args():
     parser.add_argument("-dest_subdir", default="netcdf", help="A sub-directory (relative to each file's local directory) in which to put the destination .nc file. Default 'netcdf'.")
     parser.add_argument("-gtif_regex", default=r"\.tif\Z", help="A regular expression (see python 're' library) for which to search for geotiff files. Defaults to any file ending in '.tif'.")
     parser.add_argument("-omit_regex", default="_w\.tif\Z", help="A regular expression to omit certain files from processing. Defaults to r'_w\.tif\Z', while filters out weights files ending in _w.tif.")
+    parser.add_argument("-vdatum_str", default="EGM2008", help="The string of the vertical datum of the dataset. Default: EMG2008")
+    parser.add_argument("-vdatum_epsg", default=3855, type=int, help="The integer EPSG code of the vertical datum of the dataset. Default: 3855")
     # parser.add_argument("--omit_weights", default=False, action="store_true", help="Omit weights ('_w.tif') files.")
+    parser.add_argument("--sid", default=False, action="store_true", help="Treat as a source_id (sid) file rather than DEM. This changes the header information accordingly.")
     parser.add_argument("--overwrite", "-o", default=False, action="store_true", help="Overwrite existing files.")
     parser.add_argument("--recurse", "-r", default=False, action="store_true", help="Recurse into sub-directories.")
     parser.add_argument("--quiet", "-q", default=False, action="store_true", help="Execute quietly.")
@@ -200,6 +258,8 @@ if __name__ == "__main__":
                     dest_subdir = args.dest_subdir,
                     gtif_regex=args.gtif_regex,
                     omit_regex=args.omit_regex,
+                    sids=args.sid,
+                    vdatum_name=args.vdatum_str,
+                    vdatum_epsg=args.vdatum_epsg,
                     overwrite=args.overwrite,
                     verbose=not args.quiet)
-

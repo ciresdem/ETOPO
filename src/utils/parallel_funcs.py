@@ -170,7 +170,7 @@ def process_parallel(target_func,
                     # (c) or just a count using the progress bar.
                     if verbose:
                         if use_progress_bar_only:
-                            utils.progress_bar.ProgressBar(i+1, len(args_lists), suffix="{0:,}/{1:,}".format(num_finished, len(args_lists)))
+                            utils.progress_bar.ProgressBar(num_finished, len(args_lists), suffix="{0:,}/{1:,}".format(num_finished, len(args_lists)))
                         elif type(d_outf) == str:
                             print("{0:,}/{1:,} ".format(num_finished, len(args_lists)), end="")
                             written_qualifier = "" if os.path.exists(d_outf) else "NOT "

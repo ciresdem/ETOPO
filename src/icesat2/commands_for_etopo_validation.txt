@@ -1,0 +1,8 @@
+# Do 2 of these running, picking random.
+python validate_etopo.py -subdir 2022.09.29 -max_photons 600 --randomize --subset -repeat 15
+
+# Do 1 of these, mowing the lawn
+python validate_etopo.py -subdir 2022.09.29 -max_photons 600 --subset
+
+# To print the overall progress stats:
+python validate_etopo.py -subdir 2022.09.29 --subset --print_progress

@@ -171,6 +171,8 @@ TEMP_15_sec_tiles.datalist*
 /data/ETOPO_2022_release_compressed/*
 /data/validation_results/*
 /data/empty_tiles/*
+/data/finished_tiles/*
+/data/icesat2/*
 
 tileindex_NCEI_*
 tides:s*.inf

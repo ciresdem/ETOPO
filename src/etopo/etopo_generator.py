@@ -1138,7 +1138,7 @@ class ETOPO_Generator:
 
             utils.gtif_to_netcdf.gtiff_to_netcdf(dirname,
                                                  recurse_subdirs=recurse,
-                                                 omit_regex=r"_w\.tif\Z",
+                                                 omit_regex=r"_[wu]\.tif\Z",
                                                  dest_subdir="netcdf",
                                                  overwrite=overwrite,
                                                  verbose=verbose)
@@ -1346,7 +1346,7 @@ def translate_1s_etopo_tilenames_to_crm_template(subdir=None,
 
     This is a temporary function. I need to refactor the code to get it to do this natively when creating the files,
     but right now it's easier to create them as-is and then change the names after-the-fact. So that's what I'm doing here."""
-    etopo_tile_regex = r"ETOPO_2022_v1_1s_[NS](\d{2})[EW](\d{3})(_\d{4}\.\d{2}\.\d{2})?(_sid)?.tif\Z"
+    etopo_tile_regex = r"ETOPO_2022_v1_1s_[NS](\d{2})[EW](\d{3})(_\d{4}\.\d{2}\.\d{2})?(_sid)?.((tif)|(nc))\Z"
     crm_outfile_template=etopo_config.crm_1deg_filename_template
 
     tile_directory = os.path.join(etopo_config._abspath(etopo_config.etopo_finished_tiles_directory),
@@ -1381,6 +1381,10 @@ def translate_1s_etopo_tilenames_to_crm_template(subdir=None,
                                                     year,
                                                     version_num)
 
+        # The outfile template uses .tif files. If we're looking at a .nc file, make sure the outputs are .nc as well.
+        if os.path.splitext(tname)[1] == '.nc':
+            tbasename_out = os.path.splitext(tbasename_out)[0] + '.nc'
+
         # If the filename includes a date, include it in the output.
         date_regex = r"_\d{4}\.\d{2}\.\d{2}"
         re_result = re.search(date_regex, etopo_tile_basename)
@@ -1389,7 +1393,7 @@ def translate_1s_etopo_tilenames_to_crm_template(subdir=None,
             base, ext = os.path.splitext(tbasename_out)
             tbasename_out = base + date_str + ext
 
-        if etopo_tile_basename.find("_sid.tif") > -1:
+        if etopo_tile_basename.find("_sid") > -1:
             base, ext = os.path.splitext(tbasename_out)
             tbasename_out = base + "_sid" + ext
 
@@ -1526,6 +1530,7 @@ def define_and_parse_args():
     parser.add_argument("--ini_to_csv", default=False, action="store_true", help="Crank out the latest datasets CSV, from the current config files.")
     parser.add_argument("--csv_to_ini", default=False, action="store_true", help="Read any changes made in the CSV, back into the respective .INI files. All old .ini's will be saved to a _old.ini file. Any previous _old.ini's will be overwritten though, so be careful and make sure that changes are what we want.")
     parser.add_argument("--remove_inf", default=False, action="store_true", help="Remove all .inf files from finished_tiles directory.")
+    parser.add_argument("--translate_crms", default=False, action="store_true", help="Just translate the 1s CRMs from ETOPO to NCEI naming convention. Do nothing else.")
     parser.add_argument("--move_to_subdir", default=False, action="store_true", help="Just move the created tiles into a sub-directory. '-subdir' must be specified.")
     parser.add_argument("--weights_to_sids", "-w2s", default=False, action="store_true", help="Convert floating-point 'weights' files to byte 'sid' files.")
     parser.add_argument("--skip_datalists", "-sd", default=False, action="store_true", help="Skip recreating the datalists (just use whatever was there already).")
@@ -1588,6 +1593,9 @@ if __name__ == "__main__":
                                  recurse=True,
                                  overwrite=args.overwrite,
                                  verbose=not args.quiet)
+
+    elif args.translate_crms:
+        translate_1s_etopo_tilenames_to_crm_template(args.subdir, verbose=not args.quiet)
 
     elif args.all_tiles:
         EG = ETOPO_Generator()
@@ -1662,15 +1670,15 @@ if __name__ == "__main__":
                                 overwrite=args.overwrite,
                                 verbose=not args.quiet)
 
-                if res == 1:
-                    translate_1s_etopo_tilenames_to_crm_template(subdir=args.subdir, verbose=not args.quiet)
-
                 if args.to_netcdf:
                     EG.convert_to_netcdf(res,
                                          subdir=args.subdir,
                                          recurse=True,
                                          overwrite=args.overwrite,
                                          verbose=not args.quiet)
+
+                if res == 1:
+                    translate_1s_etopo_tilenames_to_crm_template(subdir=args.subdir, verbose=not args.quiet)
 
                 remove_extraneous_files_from_outputs(resolution_s=res, subdir=args.subdir, verbose=not args.quiet)
         # remove_all_inf_files(verbose = not args.quiet)

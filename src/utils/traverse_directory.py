@@ -49,6 +49,7 @@ def define_and_parse_args():
 
 if __name__ == "__main__":
     args = define_and_parse_args()
+
     fnames = list_files(args.DIR,
                         regex_match=args.text,
                         depth=args.depth)
